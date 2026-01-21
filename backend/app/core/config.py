@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     debug: bool = False
     
     # Chain - using Alchemy RPC for reliability
-    base_rpc_url: str = "https://base-mainnet.g.alchemy.com/v2/YOUR_KEY"
+    # Set BASE_RPC_URL environment variable (e.g., in .env file)
+    base_rpc_url: str  # Required: must be set via BASE_RPC_URL env var
     chain_id: int = 8453
     
     # CORS - allow all origins in development

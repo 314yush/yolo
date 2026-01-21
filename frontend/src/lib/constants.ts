@@ -50,11 +50,21 @@ export const COLORS = {
 };
 
 // Chain config
+// Set NEXT_PUBLIC_BASE_RPC_URL environment variable in your .env.local file
+const baseRpcUrl = process.env.NEXT_PUBLIC_BASE_RPC_URL;
+if (!baseRpcUrl) {
+  throw new Error(
+    'NEXT_PUBLIC_BASE_RPC_URL environment variable is required. ' +
+    'Please create a .env.local file in the frontend directory and add: ' +
+    'NEXT_PUBLIC_BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY'
+  );
+}
+
 export const CHAIN_CONFIG = {
   chainId: 8453,
   name: 'Base',
   // Use Alchemy RPC to avoid rate limiting from public endpoint
-  rpcUrl: process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://base-mainnet.g.alchemy.com/v2/YOUR_KEY',
+  rpcUrl: baseRpcUrl,
 };
 
 // Contract addresses on Base
