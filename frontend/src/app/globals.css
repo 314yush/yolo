@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+:root {
+  --color-primary: #CCFF00;
+  --color-secondary: #FF006E;
+  --color-background: #000000;
+  --color-btc: #FF9500;
+  --color-eth: #627EEA;
+  --color-sol: #14F195;
+  --color-xrp: #00AAE4;
+  --color-warning: #FFD60A;
+}
+
+/* Neo-brutalist base styles */
+body {
+  background-color: var(--color-background);
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* Brutal button styles */
+.brutal-button {
+  border: 8px solid black;
+  box-shadow: 8px 8px 0px 0px rgba(0, 0, 0, 1);
+  transition: all 0.1s ease-out;
+}
+
+.brutal-button:active:not(:disabled) {
+  transform: translate(4px, 4px);
+  box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 1);
+}
+
+.brutal-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Selection chip styles */
+.selection-chip {
+  border: 4px solid black;
+  box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 1);
+}
+
+/* YOLO logo styles */
+.yolo-logo {
+  border: 8px solid var(--color-primary);
+  color: var(--color-primary);
+  box-shadow: 12px 12px 0px 0px rgba(204, 255, 0, 0.5);
+  transform: rotate(-2deg);
+}
+
+/* Bounce animation for chips */
+@keyframes bounceIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) translateY(-20px);
+  }
+  50% {
+    transform: scale(1.05) translateY(0);
+  }
+  70% {
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-bounce-in {
+  animation: bounceIn 0.5s ease-out forwards;
+}
+
+/* Pulse animation for PnL */
+@keyframes pnlPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+.animate-pnl-pulse {
+  animation: pnlPulse 0.5s ease-in-out infinite;
+}
+
+/* Glow effect for positive PnL */
+.pnl-glow-green {
+  text-shadow: 0 0 20px rgba(204, 255, 0, 0.5),
+               0 0 40px rgba(204, 255, 0, 0.3),
+               0 0 60px rgba(204, 255, 0, 0.1);
+}
+
+/* Glow effect for negative PnL */
+.pnl-glow-red {
+  text-shadow: 0 0 20px rgba(255, 0, 110, 0.5),
+               0 0 40px rgba(255, 0, 110, 0.3),
+               0 0 60px rgba(255, 0, 110, 0.1);
+}
+
+/* Hide scrollbar but keep functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Touch action for wheel */
+.touch-none {
+  touch-action: none;
+}
+
+/* Safe area for mobile */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
