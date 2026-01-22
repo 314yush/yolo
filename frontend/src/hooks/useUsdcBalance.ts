@@ -35,12 +35,12 @@ export function useUsdcBalance() {
     setError(null);
 
     try {
-      const balanceBigInt = await publicClient.readContract({
+      const balanceBigInt = (await publicClient.readContract({
         address: CONTRACTS.USDC,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [userAddress],
-      });
+      })) as bigint;
 
       // USDC has 6 decimals
       const balanceFormatted = parseFloat(formatUnits(balanceBigInt, 6));

@@ -196,7 +196,7 @@ class ApiClient {
         },
       };
     }
-    return result as ApiResponse<TradesResponse>;
+    return result as unknown as ApiResponse<TradesResponse>;
   }
 
   // Get PnL for all positions
@@ -215,7 +215,7 @@ class ApiClient {
         },
       };
     }
-    return result as ApiResponse<PnLResponse>;
+    return result as unknown as ApiResponse<PnLResponse>;
   }
 }
 
