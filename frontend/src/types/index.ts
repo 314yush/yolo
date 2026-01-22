@@ -12,6 +12,7 @@ export interface Leverage {
   name: string;
   value: number;
   color: string;
+  weight: number; // Probability weight for weighted random selection
 }
 
 // Direction types
@@ -55,6 +56,14 @@ export interface Trade {
   openedAt: number;
 }
 
+// Closed trade (includes final PnL and close timestamp)
+export interface ClosedTrade extends Trade {
+  closedAt: number;
+  finalPnL: number;
+  finalPnLPercentage: number;
+  closePrice: number;
+}
+
 // PnL data
 export interface PnLData {
   trade: Trade;
@@ -78,6 +87,20 @@ export interface DelegateStatus {
   isSetup: boolean;
   delegateAddress: string | null;
   usdcApproved: boolean;
+}
+
+// Settings
+export interface Settings {
+  collateral: number; // $5-$1000
+  audioEnabled: boolean;
+  musicEnabled: boolean;
+}
+
+// Trade statistics (non-deterring)
+export interface TradeStats {
+  totalTrades: number; // Total trades ever opened
+  activePositions: number; // Current open positions count
+  // NO PnL, win-rate, streaks, best/worst trades
 }
 
 // API responses

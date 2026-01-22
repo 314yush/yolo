@@ -172,13 +172,81 @@ class AvantisService:
         )
 
         # Step 1: Build the inner openTrade transaction (this gives us the calldata)
-        inner_tx = await self.client.trade.build_trade_open_tx(
-            trade_input,
-            TradeInputOrderType.MARKET_ZERO_FEE,
-            slippage_percentage=1,
-        )
-        inner_calldata = inner_tx.get("data")
-        execution_fee = inner_tx.get("value", 0)
+        # Try SDK method first, but it may hang on gas estimation
+        # If it hangs, we'll manually encode similar to close trade
+        import asyncio
+        try:
+            inner_tx = await asyncio.wait_for(
+                self.client.trade.build_trade_open_tx(
+                    trade_input,
+                    TradeInputOrderType.MARKET_ZERO_FEE,
+                    slippage_percentage=1,
+                ),
+                timeout=10.0  # 10 second timeout
+            )
+            
+            inner_calldata = inner_tx.get("data")
+            execution_fee = inner_tx.get("value", 0)
+            # Ensure execution_fee is an integer
+            if isinstance(execution_fee, str):
+                execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
+            execution_fee = int(execution_fee)
+        except asyncio.TimeoutError:
+            print(f"   ⚠️ build_trade_open_tx timed out, manually encoding...")
+            
+            # Manual encoding fallback - use TradeInput object directly
+            # Get execution fee separately
+            try:
+                execution_fee = await self.client.trade.get_trade_execution_fee()
+                # Ensure execution_fee is an integer
+                if isinstance(execution_fee, str):
+                    execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
+                execution_fee = int(execution_fee)
+            except Exception as fee_error:
+                print(f"   ⚠️ Failed to get execution fee: {fee_error}, using default")
+                execution_fee = 1000000000000000  # 0.001 ETH default
+            
+            # Get Trading contract
+            Trading = self.client.contracts.get("Trading")
+            if Trading is None:
+                raise ValueError("Trading contract not found")
+            
+            # Manual encoding: Convert TradeInput to tuple format expected by contract
+            # The SDK's TradeInput struct fields need to be converted to the contract's tuple format
+            # Based on SDK TradeInput: (trader, open_price, pair_index, collateral_in_trade, is_long, leverage, index, tp, sl)
+            # Contract expects struct with these fields in order
+            
+            # Price scaling: Avantis uses 8 decimals for prices (like Chainlink/Pyth)
+            PRICE_DECIMALS = 10**8
+            open_price_scaled = int(open_price * PRICE_DECIMALS)
+            tp_scaled = int(tp * PRICE_DECIMALS)
+            
+            # Collateral scaling: USDC has 6 decimals
+            COLLATERAL_DECIMALS = 10**6
+            collateral_scaled = int(collateral * COLLATERAL_DECIMALS)
+            
+            # Convert TradeInput to tuple matching contract struct
+            # Contract struct order: trader, openPrice, pairIndex, collateralInTrade, isLong, leverage, index, tp, sl
+            trade_input_tuple = (
+                trader,  # address
+                open_price_scaled,  # uint256 - openPrice (scaled by 10^8)
+                pair_index,  # uint256 - pairIndex
+                collateral_scaled,  # uint256 - collateralInTrade (scaled by 10^6 for USDC)
+                is_long,  # bool - isLong
+                leverage,  # uint256 - leverage
+                0,  # uint256 - index
+                tp_scaled,  # uint256 - tp (scaled by 10^8)
+                0,  # uint256 - sl (stop loss, 0 for market orders)
+            )
+            
+            inner_calldata = Trading.functions.openTrade(
+                trade_input_tuple,
+                TradeInputOrderType.MARKET_ZERO_FEE.value,  # uint8 order type
+                1,  # uint256 - slippage_percentage (1 = 1%)
+            )._encode_transaction_data()
+            
+            print(f"   ✅ Manually encoded inner calldata length: {len(inner_calldata)} bytes")
+            print(f"   📋 TradeInput tuple: trader={trader[:10]}..., price={open_price_scaled}, pair={pair_index}, collateral={collateral_scaled}, long={is_long}, lev={leverage}, tp={tp_scaled}")
         
         print(f"   Inner calldata length: {len(inner_calldata)}")
         print(f"   Execution fee: {execution_fee} wei")
@@ -195,13 +263,14 @@ class AvantisService:
         )._encode_transaction_data()
         
         trading_address = Trading.address
-        print(f"   Delegate tx built: to={trading_address}")
-        print(f"   delegatedAction calldata length: {len(delegate_calldata)}")
+        print(f"   ✅ Delegate tx built: to={trading_address}")
+        print(f"   📊 delegatedAction calldata length: {len(delegate_calldata)} bytes")
+        print(f"   💰 Execution fee: {execution_fee} wei ({execution_fee / 1e18:.6f} ETH)")
 
         return UnsignedTx(
             to=trading_address,
             data=delegate_calldata,
-            value=hex(execution_fee),
+            value=hex(execution_fee) if isinstance(execution_fee, int) else execution_fee,
             chain_id=self.settings.chain_id,
         )
 
@@ -215,46 +284,72 @@ class AvantisService:
         """
         Build unsigned close trade transaction for delegate signing.
         
-        Uses delegatedAction(trader, closeTradeCalldata) pattern.
-        Manually encodes to avoid simulation which would fail.
+        Manually encodes closeTradeMarket to avoid gas estimation (which fails with dummy signer).
+        Same pattern as open trade - manually encode inner call, wrap in delegatedAction.
+        
+        IMPORTANT: pair_index and trade_index together uniquely identify the trade to close.
+        trade_index is per-pair, so different pairs can have the same trade_index.
         """
-        trader = to_checksum_address(trader)
-        print(f"   Building close tx: trader={trader}, pair={pair_index}, trade={trade_index}, collateral={collateral_to_close}")
-        
-        Trading = self.client.contracts.get("Trading")
-        
-        # Convert collateral to USDC units (6 decimals)
-        collateral_usdc = int(collateral_to_close * 10**6)
-        
-        # Get execution fee
-        execution_fee = await self.client.trade.get_trade_execution_fee()
-        print(f"   Execution fee: {execution_fee} wei")
-        
-        # Step 1: Encode the inner closeTradeMarket call
-        inner_calldata = Trading.functions.closeTradeMarket(
-            pair_index,
-            trade_index,
-            collateral_usdc,
-        )._encode_transaction_data()
-        
-        print(f"   Inner close calldata length: {len(inner_calldata)}")
-        
-        # Step 2: Wrap in delegatedAction(trader, innerCalldata)
-        delegate_calldata = Trading.functions.delegatedAction(
-            trader,
-            inner_calldata
-        )._encode_transaction_data()
-        
-        trading_address = Trading.address
-        print(f"   Delegate close tx built: to={trading_address}")
-        print(f"   delegatedAction calldata length: {len(delegate_calldata)}")
-
-        return UnsignedTx(
-            to=trading_address,
-            data=delegate_calldata,
-            value=hex(execution_fee),
-            chain_id=self.settings.chain_id,
-        )
+        try:
+            trader = to_checksum_address(trader)
+            print(f"   Building close tx: trader={trader}, pair_index={pair_index}, trade_index={trade_index}, collateral={collateral_to_close}")
+            
+            # Validate inputs
+            if pair_index < 0:
+                raise ValueError(f"Invalid pair_index: {pair_index}. Must be >= 0")
+            if trade_index < 0:
+                raise ValueError(f"Invalid trade_index: {trade_index}. Must be >= 0")
+            if collateral_to_close <= 0:
+                raise ValueError(f"Invalid collateral_to_close: {collateral_to_close}. Must be > 0")
+            
+            # Convert collateral to USDC units (6 decimals)
+            collateral_usdc = int(collateral_to_close * 10**6)
+            print(f"   Collateral in USDC units: {collateral_usdc}")
+            
+            # Get execution fee (this doesn't require gas estimation)
+            execution_fee = await self.client.trade.get_trade_execution_fee()
+            print(f"   Execution fee: {execution_fee} wei")
+            
+            # Get Trading contract
+            Trading = self.client.contracts.get("Trading")
+            if Trading is None:
+                raise ValueError("Trading contract not found")
+            
+            # Step 1: Manually encode the inner closeTradeMarket call
+            # Use _encode_transaction_data() to avoid gas estimation
+            inner_calldata = Trading.functions.closeTradeMarket(
+                int(pair_index),
+                int(trade_index),
+                int(collateral_usdc),
+            )._encode_transaction_data()
+            
+            print(f"   Inner close calldata length: {len(inner_calldata)}")
+            
+            # Step 2: Wrap in delegatedAction(trader, innerCalldata)
+            # Use _encode_transaction_data() to avoid gas estimation
+            delegate_calldata = Trading.functions.delegatedAction(
+                trader,
+                inner_calldata
+            )._encode_transaction_data()
+            
+            trading_address = Trading.address
+            print(f"   Delegate close tx built: to={trading_address}")
+            print(f"   delegatedAction calldata length: {len(delegate_calldata)}")
+            
+            tx = UnsignedTx(
+                to=trading_address,
+                data=delegate_calldata,
+                value=hex(execution_fee),
+                chain_id=self.settings.chain_id,
+            )
+            
+            print(f"   UnsignedTx created successfully")
+            return tx
+        except Exception as e:
+            print(f"   ❌ Error in build_close_trade_tx_delegate: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     async def build_update_tpsl_tx_delegate(
         self,
@@ -277,7 +372,7 @@ class AvantisService:
         return self._extract_tx_data(tx)
 
     async def get_trades(self, trader: str) -> list[Trade]:
-        """Get open trades for a trader."""
+        """Get open trades for a trader (includes confirmed trades only)."""
         try:
             trader = to_checksum_address(trader)
             trades, pending = await self.client.trade.get_trades(trader)
@@ -306,22 +401,163 @@ class AvantisService:
             import traceback
             traceback.print_exc()
             return []
+    
+    async def get_all_trades(self, trader: str) -> tuple[list[Trade], list[Trade]]:
+        """Get both confirmed and pending trades."""
+        try:
+            trader = to_checksum_address(trader)
+            trades, pending = await self.client.trade.get_trades(trader)
+            
+            confirmed = []
+            for t in trades:
+                trade_data = t.trade
+                pair_name = await self.client.pairs_cache.get_pair_name_from_index(trade_data.pair_index)
+                confirmed.append(Trade(
+                    trade_index=trade_data.trade_index,
+                    pair_index=trade_data.pair_index,
+                    pair=pair_name,
+                    collateral=float(trade_data.open_collateral),
+                    leverage=int(trade_data.leverage),
+                    is_long=trade_data.is_long,
+                    open_price=float(trade_data.open_price),
+                    tp=float(trade_data.tp),
+                    sl=float(trade_data.sl),
+                    opened_at=0,
+                ))
+            
+            # Convert pending limit orders to Trade objects if needed
+            pending_trades = []
+            # Note: pending might be limit orders, not trades - handle accordingly
+            # For now, return empty list for pending trades
+            
+            return confirmed, pending_trades
+        except Exception as e:
+            print(f"Error fetching all trades: {e}")
+            import traceback
+            traceback.print_exc()
+            return [], []
+    
+    async def get_trades_with_pnl(self, trader: str) -> list[dict]:
+        """Get open trades with gross PnL calculated from SDK trade data."""
+        try:
+            trader = to_checksum_address(trader)
+            trades, pending = await self.client.trade.get_trades(trader)
+            
+            # Get current prices for all pairs
+            pair_indices = list(set(t.trade.pair_index for t in trades))
+            pair_names = []
+            for pair_index in pair_indices:
+                try:
+                    pair_name = await self.client.pairs_cache.get_pair_name_from_index(pair_index)
+                    pair_names.append(pair_name)
+                except Exception:
+                    pass
+            
+            # Fetch prices
+            from app.services.price_feed import price_feed_service
+            prices = await price_feed_service.get_prices(pair_names) if pair_names else {}
+            
+            result = []
+            for extended_trade in trades:
+                trade_data = extended_trade.trade
+                
+                # Get pair name from SDK
+                sdk_pair_name = await self.client.pairs_cache.get_pair_name_from_index(trade_data.pair_index)
+                
+                # CORRECTION: SDK's pair_index mapping may be incorrect. Use open_price to verify/correct.
+                # Price ranges: BTC ~$60k-$100k, ETH ~$2k-$4k, SOL ~$100-$200, XRP ~$0.5-$2
+                open_price = float(trade_data.open_price)
+                if open_price > 50000:  # BTC range
+                    correct_pair = "BTC/USD"
+                elif 1000 < open_price < 5000:  # ETH range
+                    correct_pair = "ETH/USD"
+                elif 50 < open_price < 500:  # SOL range
+                    correct_pair = "SOL/USD"
+                elif 0.1 < open_price < 5:  # XRP range
+                    correct_pair = "XRP/USD"
+                else:
+                    correct_pair = sdk_pair_name  # Fallback to SDK's answer
+                
+                # Use corrected pair name
+                pair_name = correct_pair
+                
+                # Get current price - fetch if not already fetched for corrected pair
+                price_data = prices.get(pair_name)
+                if not price_data and pair_name not in pair_names:
+                    # Fetch price for corrected pair
+                    from app.services.price_feed import price_feed_service
+                    corrected_prices = await price_feed_service.get_prices([pair_name])
+                    if corrected_prices:
+                        prices.update(corrected_prices)
+                        price_data = corrected_prices.get(pair_name)
+                
+                current_price = price_data[0] if price_data else open_price
+                
+                # Calculate gross PnL (simple price movement, no fees)
+                position_size = float(trade_data.open_collateral) * int(trade_data.leverage)
+                # open_price already defined above
+                
+                if trade_data.is_long:
+                    price_change_pct = (current_price - open_price) / open_price
+                else:
+                    price_change_pct = (open_price - current_price) / open_price
+                
+                gross_pnl = position_size * price_change_pct
+                gross_pnl_percentage = (gross_pnl / float(trade_data.open_collateral)) * 100
+                
+                result.append({
+                    'trade': Trade(
+                        trade_index=trade_data.trade_index,
+                        pair_index=trade_data.pair_index,
+                        pair=pair_name,
+                        collateral=float(trade_data.open_collateral),
+                        leverage=int(trade_data.leverage),
+                        is_long=trade_data.is_long,
+                        open_price=open_price,
+                        tp=float(trade_data.tp),
+                        sl=float(trade_data.sl),
+                        opened_at=0,
+                    ),
+                    'gross_pnl': gross_pnl,
+                    'gross_pnl_percentage': gross_pnl_percentage,
+                })
+            
+            return result
+        except Exception as e:
+            print(f"Error fetching trades with PnL: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
     def calculate_pnl(
-        self, trade: Trade, current_price: float
+        self, trade: Trade, current_price: float, position_size_usdc: float = None, margin_fee: float = 0
     ) -> tuple[float, float]:
-        """Calculate PnL for a trade."""
-        position_size = trade.collateral * trade.leverage
+        """
+        Calculate PnL for a trade using Avantis SDK methodology.
         
+        Uses positionSizeUSDC from SDK if provided, otherwise calculates it.
+        Accounts for margin fees that accrue over time.
+        """
+        # Use SDK's positionSizeUSDC if provided, otherwise calculate
+        if position_size_usdc is None:
+            position_size_usdc = trade.collateral * trade.leverage
+        
+        # Calculate price change percentage
         if trade.is_long:
             price_change_pct = (current_price - trade.open_price) / trade.open_price
         else:
             price_change_pct = (trade.open_price - current_price) / trade.open_price
         
-        pnl = position_size * price_change_pct
-        pnl_percentage = (pnl / trade.collateral) * 100
+        # Gross PnL (before fees)
+        gross_pnl = position_size_usdc * price_change_pct
         
-        return pnl, pnl_percentage
+        # Net PnL (after margin fees)
+        net_pnl = gross_pnl - margin_fee
+        
+        # PnL percentage based on collateral
+        pnl_percentage = (net_pnl / trade.collateral) * 100
+        
+        return net_pnl, pnl_percentage
 
     async def get_trading_storage_address(self) -> str:
         """Get the Trading Storage contract address from SDK."""

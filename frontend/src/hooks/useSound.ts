@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import { Howl } from 'howler';
+import { useTradeStore } from '@/store/tradeStore';
 
 interface Sounds {
   spin: Howl | null;
@@ -11,6 +12,7 @@ interface Sounds {
 }
 
 export function useSound() {
+  const { settings } = useTradeStore();
   const soundsRef = useRef<Sounds>({
     spin: null,
     tick: null,
@@ -53,34 +55,56 @@ export function useSound() {
   }, []);
 
   const startSpin = useCallback(() => {
-    soundsRef.current.spin?.play();
-  }, []);
+    if (settings.audioEnabled) {
+      soundsRef.current.spin?.play();
+    }
+  }, [settings.audioEnabled]);
 
   const stopSpin = useCallback(() => {
-    soundsRef.current.spin?.stop();
+    const spinSound = soundsRef.current.spin;
+    if (spinSound && spinSound.playing()) {
+      // Fade out over 200ms for smooth stop
+      spinSound.fade(spinSound.volume(), 0, 200);
+      setTimeout(() => {
+        spinSound.stop();
+        spinSound.volume(0.5); // Reset volume for next play
+      }, 200);
+    } else {
+      spinSound?.stop();
+    }
   }, []);
 
   const playTick = useCallback(() => {
-    soundsRef.current.tick?.play();
-  }, []);
+    if (settings.audioEnabled) {
+      soundsRef.current.tick?.play();
+    }
+  }, [settings.audioEnabled]);
 
   const playDing = useCallback(() => {
-    soundsRef.current.ding?.play();
-  }, []);
+    if (settings.audioEnabled) {
+      soundsRef.current.ding?.play();
+    }
+  }, [settings.audioEnabled]);
 
   const playBoom = useCallback(() => {
-    soundsRef.current.boom?.play();
-  }, []);
+    if (settings.audioEnabled) {
+      soundsRef.current.boom?.play();
+    }
+  }, [settings.audioEnabled]);
 
   const playWin = useCallback(() => {
     // Play a celebratory sound
-    soundsRef.current.ding?.play();
-  }, []);
+    if (settings.audioEnabled) {
+      soundsRef.current.ding?.play();
+    }
+  }, [settings.audioEnabled]);
 
   const playLose = useCallback(() => {
     // Play a loss sound
-    soundsRef.current.boom?.play();
-  }, []);
+    if (settings.audioEnabled) {
+      soundsRef.current.boom?.play();
+    }
+  }, [settings.audioEnabled]);
 
   return {
     startSpin,

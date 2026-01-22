@@ -17,7 +17,7 @@ class OpenTradeRequest(BaseModel):
     delegate: str = Field(..., description="Delegate wallet address")
     pair: str = Field(..., description="Trading pair (e.g., 'BTC/USD')")
     pair_index: int = Field(..., description="Pair index from Avantis")
-    leverage: int = Field(..., ge=75, le=250, description="Leverage (75-250)")
+    leverage: int = Field(..., ge=250, le=500, description="Leverage (250-500)")
     is_long: bool = Field(..., description="True for long, False for short")
     collateral: float = Field(..., gt=0, description="Collateral amount in USDC")
 

@@ -2,30 +2,28 @@ import type { Asset, Leverage, Direction } from '@/types';
 
 // Assets available for zero-fee perps (PnL order type)
 // Data from Avantis SDK - pairIndex and max leverage verified
-// PnL mode requires minimum 75x leverage
+// All assets support 500x leverage for maximum degen energy
 export const ASSETS: Asset[] = [
-  { name: 'ETH', color: '#627EEA', icon: 'Ξ', pairIndex: 0, maxLeverage: 500 },   // pnl_max: 500x
-  { name: 'BTC', color: '#FF9500', icon: '₿', pairIndex: 1, maxLeverage: 500 },   // pnl_max: 500x
-  { name: 'SOL', color: '#14F195', icon: '◎', pairIndex: 2, maxLeverage: 500 },   // pnl_max: 500x
-  { name: 'DOGE', color: '#C3A634', icon: 'Ð', pairIndex: 5, maxLeverage: 100 },  // pnl_max: 100x (LOWER!)
-  { name: 'XRP', color: '#00AAE4', icon: '✕', pairIndex: 59, maxLeverage: 500 },  // pnl_max: 500x
+  { name: 'ETH', color: '#627EEA', icon: '/logos/eth.svg', pairIndex: 0, maxLeverage: 500 },
+  { name: 'BTC', color: '#FF9500', icon: '/logos/btc.svg', pairIndex: 1, maxLeverage: 500 },
+  { name: 'SOL', color: '#14F195', icon: '/logos/sol.svg', pairIndex: 2, maxLeverage: 500 },
+  { name: 'XRP', color: '#00AAE4', icon: '/logos/xrp.svg', pairIndex: 59, maxLeverage: 500 },
 ];
 
-// Leverage options (color-coded by risk)
-// Note: Must be between 75x (min for ZFP) and asset's max leverage
-// DOGE only supports up to 100x, so we use 75x and 100x as safe options
+// Leverage options (color-coded by risk level)
+// High leverage only - minimum 250x for maximum excitement
+// Weights determine probability: higher leverage = more likely to be selected
 export const LEVERAGES: Leverage[] = [
-  { name: '75x', value: 75, color: '#CCFF00' },   // Safest - works for all assets
-  { name: '100x', value: 100, color: '#CCFF00' }, // Max for DOGE
-  { name: '150x', value: 150, color: '#FFD60A' }, // Works for ETH, BTC, SOL, XRP
-  { name: '200x', value: 200, color: '#FFD60A' }, // Works for ETH, BTC, SOL, XRP
-  { name: '250x', value: 250, color: '#FF006E' }, // Works for ETH, BTC, SOL, XRP
+  { name: '250x', value: 250, color: '#FFD60A', weight: 20 },  // 20% chance
+  { name: '300x', value: 300, color: '#FF9500', weight: 20 },  // 20% chance
+  { name: '400x', value: 400, color: '#FF006E', weight: 25 },  // 25% chance
+  { name: '500x', value: 500, color: '#FF006E', weight: 35 },  // 35% chance - MAX DEGEN
 ];
 
 // Direction options
 export const DIRECTIONS: Direction[] = [
-  { name: 'LONG', symbol: '↑', color: '#CCFF00', isLong: true },
-  { name: 'SHORT', symbol: '↓', color: '#FF006E', isLong: false },
+  { name: 'LONG', symbol: 'LONG', color: '#CCFF00', isLong: true },
+  { name: 'SHORT', symbol: 'SHORT', color: '#FF006E', isLong: false },
 ];
 
 // Default collateral amount

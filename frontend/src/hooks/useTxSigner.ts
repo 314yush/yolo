@@ -47,13 +47,26 @@ export function useTxSigner() {
         
         const walletClient = createDelegateWalletClient();
         
-        const hash = await walletClient.sendTransaction({
+        const txParams = {
           to: unsignedTx.to,
           data: unsignedTx.data,
           value: BigInt(unsignedTx.value || '0'),
+        };
+        
+        console.log('[signAndBroadcast] Sending transaction:', {
+          to: txParams.to,
+          dataLength: txParams.data.length,
+          value: txParams.value.toString(),
         });
         
-        return hash;
+        try {
+          const hash = await walletClient.sendTransaction(txParams);
+          console.log('[signAndBroadcast] ✅ Transaction sent, hash:', hash);
+          return hash;
+        } catch (error) {
+          console.error('[signAndBroadcast] ❌ Transaction failed:', error);
+          throw error;
+        }
       } finally {
         setIsPending(false);
       }

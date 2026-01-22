@@ -14,7 +14,7 @@ interface PickerWheelProps {
 export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: PickerWheelProps) {
   const { stage, selection, randomizeSelection, setStage } = useTradeStore();
   const hasTriggeredRef = React.useRef(false);
-  const { startSpin, stopSpin, playTick, playDing } = useSound();
+  const { startSpin, stopSpin, playTick } = useSound();
   
   const animationRef = useRef<number | null>(null);
   const [rotation1, setRotation1] = React.useState(0);
@@ -85,25 +85,24 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
       // Show chips when wheels stop
       if (progress1 >= 1 && !showAssetChip) {
         setShowAssetChip(true);
-        playTick();
       }
       if (progress2 >= 1 && !showLeverageChip) {
         setShowLeverageChip(true);
-        playTick();
       }
       if (progress3 >= 1 && !showDirectionChip) {
         setShowDirectionChip(true);
-        playDing();
-        stopSpin();
       }
 
-      if (progress3 < 1) {
-        animationRef.current = requestAnimationFrame(animate);
-      } else {
+      // Stop spin sound and play tick when ALL wheels have stopped
+      if (progress3 >= 1) {
+        stopSpin();
+        playTick();
         // Animation complete
         setTimeout(() => {
           onSpinComplete();
         }, 500);
+      } else {
+        animationRef.current = requestAnimationFrame(animate);
       }
     };
 
@@ -116,7 +115,6 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     startSpin,
     stopSpin,
     playTick,
-    playDing,
     onSpinComplete,
     showAssetChip,
     showLeverageChip,
@@ -157,7 +155,8 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     outerRadius: number,
     color: string,
     label: string,
-    fontSize: number
+    fontSize: number,
+    isImage: boolean = false
   ) => {
     const segmentAngle = 360 / total;
     const startAngle = ((index * segmentAngle - 90) * Math.PI) / 180;
@@ -177,6 +176,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     const textRadius = (innerRadius + outerRadius) / 2;
     const textX = 200 + textRadius * Math.cos(((textAngle - 90) * Math.PI) / 180);
     const textY = 200 + textRadius * Math.sin(((textAngle - 90) * Math.PI) / 180);
+    const imageSize = fontSize * 1.2; // Smaller size for cleaner look
 
     return (
       <g key={index}>
@@ -186,18 +186,29 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           stroke="#000"
           strokeWidth="3"
         />
-        <text
-          x={textX}
-          y={textY}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill="#000"
-          fontSize={fontSize}
-          fontWeight="bold"
-          transform={`rotate(${textAngle}, ${textX}, ${textY})`}
-        >
-          {label}
-        </text>
+        {isImage ? (
+          <image
+            href={label}
+            x={textX - imageSize / 2}
+            y={textY - imageSize / 2}
+            width={imageSize}
+            height={imageSize}
+            transform={`rotate(${textAngle}, ${textX}, ${textY})`}
+          />
+        ) : (
+          <text
+            x={textX}
+            y={textY}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill="#000"
+            fontSize={fontSize}
+            fontWeight="bold"
+            transform={`rotate(${textAngle}, ${textX}, ${textY})`}
+          >
+            {label}
+          </text>
+        )}
       </g>
     );
   };
@@ -208,10 +219,11 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
       <div className="flex flex-wrap gap-3 mb-8 justify-center min-h-[60px]">
         {showAssetChip && selection?.asset && (
           <div
-            className="selection-chip px-6 py-3 text-black font-bold text-xl animate-bounce-in"
+            className="selection-chip px-6 py-3 text-black font-bold text-xl animate-bounce-in flex items-center gap-2"
             style={{ backgroundColor: selection.asset.color }}
           >
-            {selection.asset.icon} {selection.asset.name}
+            <img src={selection.asset.icon} alt={selection.asset.name} className="w-6 h-6" />
+            {selection.asset.name}
           </div>
         )}
         {showLeverageChip && selection?.leverage && (
@@ -227,7 +239,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             className="selection-chip px-6 py-3 text-black font-bold text-xl animate-bounce-in"
             style={{ backgroundColor: selection.direction.color }}
           >
-            {selection.direction.symbol} {selection.direction.name}
+            {selection.direction.name}
           </div>
         )}
       </div>
@@ -247,7 +259,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             }}
           >
             {ASSETS.map((asset, i) =>
-              renderRingSegment(i, ASSETS.length, 130, 190, asset.color, asset.icon, 28)
+              renderRingSegment(i, ASSETS.length, 130, 190, asset.color, asset.icon, 28, true)
             )}
           </g>
 
@@ -271,7 +283,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             }}
           >
             {DIRECTIONS.map((direction, i) =>
-              renderRingSegment(i, DIRECTIONS.length, 30, 70, direction.color, direction.symbol, 28)
+              renderRingSegment(i, DIRECTIONS.length, 30, 70, direction.color, direction.symbol, 20, false)
             )}
           </g>
 

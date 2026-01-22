@@ -1,6 +1,9 @@
 import { create } from 'zustand';
-import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus } from '@/types';
+import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats } from '@/types';
 import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constants';
+import { loadSettings } from '@/lib/settings';
+import { loadStats, saveStats } from '@/lib/stats';
+import type { Toast } from '@/components/Toast';
 
 interface TradeState {
   // App stage
@@ -34,7 +37,7 @@ interface TradeState {
   delegateStatus: DelegateStatus;
   setDelegateStatus: (status: DelegateStatus) => void;
 
-  // Collateral amount
+  // Collateral amount (now part of settings)
   collateral: number;
   setCollateral: (amount: number) => void;
 
@@ -42,11 +45,35 @@ interface TradeState {
   userAddress: `0x${string}` | null;
   setUserAddress: (address: `0x${string}` | null) => void;
 
+  // Open trades (for open trades page)
+  openTrades: Trade[];
+  setOpenTrades: (trades: Trade[]) => void;
+  
+  // Pending trade transaction hashes (for optimistic updates)
+  pendingTradeHashes: Set<`0x${string}`>;
+  addPendingTradeHash: (hash: `0x${string}`) => void;
+  removePendingTradeHash: (hash: `0x${string}`) => void;
+
+  // Settings
+  settings: Settings;
+  setSettings: (settings: Settings) => void;
+
+  // Trade statistics
+  tradeStats: TradeStats;
+  setTradeStats: (stats: TradeStats) => void;
+  incrementTotalTrades: () => void;
+  updateActivePositions: (count: number) => void;
+
+  // Toast notifications
+  toasts: Toast[];
+  showToast: (message: string, type?: 'success' | 'error' | 'info', duration?: number) => void;
+  removeToast: (id: string) => void;
+
   // Reset state for new roll
   reset: () => void;
 }
 
-export const useTradeStore = create<TradeState>((set) => ({
+export const useTradeStore = create<TradeState>((set, get) => ({
   // Initial state
   stage: 'idle',
   selection: null,
@@ -62,6 +89,35 @@ export const useTradeStore = create<TradeState>((set) => ({
   },
   collateral: DEFAULT_COLLATERAL,
   userAddress: null,
+  openTrades: [],
+  pendingTradeHashes: (() => {
+    // Create Set in a way that works with Zustand
+    if (typeof window !== 'undefined') {
+      return new Set<`0x${string}`>();
+    }
+    return new Set<`0x${string}`>();
+  })(),
+  settings: (() => {
+    // Load settings from localStorage on store init
+    if (typeof window !== 'undefined') {
+      return loadSettings();
+    }
+    return {
+      collateral: DEFAULT_COLLATERAL,
+      audioEnabled: true,
+      musicEnabled: false,
+    };
+  })(),
+  tradeStats: (() => {
+    // Load stats from localStorage on store init
+    if (typeof window !== 'undefined') {
+      return loadStats();
+    }
+    return {
+      totalTrades: 0,
+      activePositions: 0,
+    };
+  })(),
 
   // Setters
   setStage: (stage) => set({ stage }),
@@ -74,15 +130,85 @@ export const useTradeStore = create<TradeState>((set) => ({
   setDelegateStatus: (delegateStatus) => set({ delegateStatus }),
   setCollateral: (collateral) => set({ collateral }),
   setUserAddress: (userAddress) => set({ userAddress }),
+  setOpenTrades: (openTrades) => set({ openTrades }),
+  addPendingTradeHash: (hash) => set((state) => {
+    const newSet = new Set(state.pendingTradeHashes);
+    newSet.add(hash);
+    return { pendingTradeHashes: newSet };
+  }),
+  removePendingTradeHash: (hash) => set((state) => {
+    const newSet = new Set(state.pendingTradeHashes);
+    newSet.delete(hash);
+    return { pendingTradeHashes: newSet };
+  }),
+  setSettings: (settings) => {
+    set({ settings });
+    // Also update collateral when settings change
+    set({ collateral: settings.collateral });
+  },
+  setTradeStats: (tradeStats) => set({ tradeStats }),
+  incrementTotalTrades: () => {
+    set((state) => {
+      const newStats = {
+        ...state.tradeStats,
+        totalTrades: state.tradeStats.totalTrades + 1,
+      };
+      // Save to localStorage
+      if (typeof window !== 'undefined') {
+        saveStats(newStats);
+      }
+      return { tradeStats: newStats };
+    });
+  },
+  updateActivePositions: (count) => {
+    set((state) => {
+      const newStats = {
+        ...state.tradeStats,
+        activePositions: count,
+      };
+      // Save to localStorage
+      if (typeof window !== 'undefined') {
+        saveStats(newStats);
+      }
+      return { tradeStats: newStats };
+    });
+  },
+
+  // Toast notifications
+  toasts: [],
+  showToast: (message, type = 'info', duration = 5000) => {
+    const id = `${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, message, type, duration };
+    set((state) => ({
+      toasts: [...state.toasts, toast],
+    }));
+  },
+  removeToast: (id) => {
+    set((state) => ({
+      toasts: state.toasts.filter((t) => t.id !== id),
+    }));
+  },
 
   // Randomly select asset, leverage, direction
-  // Ensures leverage is compatible with the selected asset's max leverage
+  // Uses weighted random selection for leverage - higher leverage = more likely
   randomizeSelection: () => {
     const asset = ASSETS[Math.floor(Math.random() * ASSETS.length)];
     
     // Filter leverages that are compatible with this asset's max leverage
     const compatibleLeverages = LEVERAGES.filter(l => l.value <= asset.maxLeverage);
-    const leverage = compatibleLeverages[Math.floor(Math.random() * compatibleLeverages.length)];
+    
+    // Weighted random selection for leverage
+    const totalWeight = compatibleLeverages.reduce((sum, l) => sum + l.weight, 0);
+    let random = Math.random() * totalWeight;
+    let leverage = compatibleLeverages[0];
+    
+    for (const l of compatibleLeverages) {
+      random -= l.weight;
+      if (random <= 0) {
+        leverage = l;
+        break;
+      }
+    }
     
     const direction = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
     

@@ -60,7 +60,7 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout (reduced from 30s for better UX)
 
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         ...options,

@@ -3,6 +3,7 @@
 import React from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { usePnL } from '@/hooks/usePnL';
+import { useFlipTrade } from '@/hooks/useFlipTrade';
 
 interface PnLScreenProps {
   onClose: () => void;
@@ -12,9 +13,21 @@ interface PnLScreenProps {
 
 export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const { selection, pnlData, currentTrade } = useTradeStore();
+  const { flipTrade, isFlipping } = useFlipTrade();
   
   // Start PnL polling
   usePnL({ enabled: true, interval: 1000 });
+
+  const handleFlip = async () => {
+    if (!currentTrade) return;
+    try {
+      await flipTrade(currentTrade);
+      // PnL screen will update automatically via usePnL hook
+    } catch (error) {
+      console.error('Failed to flip trade:', error);
+      alert(error instanceof Error ? error.message : 'Failed to flip trade');
+    }
+  };
 
   // Calculate display values
   const pnl = pnlData?.pnl ?? 0;
@@ -29,10 +42,11 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
       <div className="flex gap-3 flex-wrap justify-center">
         {selection?.asset && (
           <div
-            className="selection-chip px-4 py-2 text-black font-bold text-lg"
+            className="selection-chip px-4 py-2 text-black font-bold text-lg flex items-center gap-2"
             style={{ backgroundColor: selection.asset.color }}
           >
-            {selection.asset.icon} {selection.asset.name}
+            <img src={selection.asset.icon} alt={selection.asset.name} className="w-5 h-5" />
+            {selection.asset.name}
           </div>
         )}
         {selection?.leverage && (
@@ -48,7 +62,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
             className="selection-chip px-4 py-2 text-black font-bold text-lg"
             style={{ backgroundColor: selection.direction.color }}
           >
-            {selection.direction.symbol} {selection.direction.name}
+            {selection.direction.name}
           </div>
         )}
       </div>
@@ -86,22 +100,36 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
       )}
 
       {/* Action buttons */}
-      <div className="flex gap-4 w-full max-w-md">
+      <div className="flex flex-col gap-4 w-full max-w-md items-center">
+        {/* Circular FLIP button */}
         <button
-          onClick={onClose}
-          disabled={isClosing}
-          className="flex-1 py-4 text-xl font-bold bg-white text-black brutal-button disabled:opacity-50"
-        >
-          {isClosing ? 'CLOSING...' : 'CLOSE EARLY'}
-        </button>
-        <button
-          onClick={onRollAgain}
-          disabled={isClosing}
-          className="flex-1 py-4 text-xl font-bold brutal-button disabled:opacity-50"
+          onClick={handleFlip}
+          disabled={isFlipping || isClosing}
+          className="w-20 h-20 rounded-full font-bold text-lg brutal-button disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
           style={{ backgroundColor: '#CCFF00', color: '#000' }}
+          aria-label="Flip trade"
         >
-          ROLL AGAIN
+          {isFlipping ? '...' : '↻'}
         </button>
+        
+        {/* Secondary actions */}
+        <div className="flex gap-4 w-full">
+          <button
+            onClick={onClose}
+            disabled={isClosing || isFlipping}
+            className="flex-1 py-3 text-sm font-bold bg-white/10 text-white brutal-button disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white/20"
+          >
+            {isClosing ? 'CLOSING...' : 'CLOSE'}
+          </button>
+          <button
+            onClick={onRollAgain}
+            disabled={isClosing || isFlipping}
+            className="flex-1 py-3 text-sm font-bold brutal-button disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ backgroundColor: '#CCFF00', color: '#000' }}
+          >
+            ROLL AGAIN
+          </button>
+        </div>
       </div>
 
       {/* TP info */}

@@ -3,6 +3,7 @@ Trade transaction building endpoints.
 """
 
 from fastapi import APIRouter, HTTPException
+from pydantic import ValidationError
 
 from app.models.schemas import (
     OpenTradeRequest,
@@ -46,7 +47,12 @@ async def build_open_trade_tx(request: OpenTradeRequest):
             open_price=current_price,
         )
         
-        print(f"   Built tx: to={tx.to}, data_len={len(tx.data)}")
+        print(f"   ✅ Built tx: to={tx.to}, data_len={len(tx.data)}, value={tx.value}")
+        print(f"   📋 Transaction details:")
+        print(f"      - To: {tx.to}")
+        print(f"      - Data length: {len(tx.data)} bytes")
+        print(f"      - Value: {tx.value}")
+        print(f"      - Chain ID: {tx.chain_id}")
         return BuildTxResponse(tx=tx)
     except HTTPException:
         raise
@@ -71,7 +77,18 @@ async def build_close_trade_tx(request: CloseTradeRequest):
         )
         
         print(f"   Built close tx: to={tx.to}, data_len={len(tx.data)}")
-        return BuildTxResponse(tx=tx)
+        print(f"   Response validation: tx.to={tx.to}, tx.data={tx.data[:50]}..., tx.value={tx.value}, tx.chain_id={tx.chain_id}")
+        
+        response = BuildTxResponse(tx=tx)
+        print(f"   Response created successfully")
+        return response
+    except ValidationError as e:
+        print(f"   ❌ Validation error building close tx: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"   ❌ Error building close tx: {e}")
         import traceback
@@ -118,36 +135,35 @@ async def get_trades(address: str):
 @trades_router.get("/{address}/pnl", response_model=PnLResponse)
 async def get_pnl(address: str):
     """
-    Get PnL for all open positions.
+    Get PnL for all open positions - fetch gross PnL directly from Avantis SDK.
     """
     try:
-        trades = await avantis_service.get_trades(address)
+        # Get trades with PnL data from SDK
+        trades_with_pnl = await avantis_service.get_trades_with_pnl(address)
         
-        if not trades:
+        if not trades_with_pnl:
             return PnLResponse(positions=[])
         
-        # Collect unique pair names from trades (now dynamically set by get_trades)
-        pair_names = list(set(t.pair for t in trades))
-        
-        # Fetch all prices at once
+        # Get current prices for display
+        pair_names = list(set(item['trade'].pair for item in trades_with_pnl))
         prices = await price_feed_service.get_prices(pair_names)
         
         positions = []
-        for trade in trades:
-            price_data = prices.get(trade.pair)
+        for item in trades_with_pnl:
+            trade = item['trade']
+            gross_pnl = item['gross_pnl']
+            gross_pnl_percentage = item['gross_pnl_percentage']
             
-            if price_data:
-                current_price, _ = price_data
-                pnl, pnl_percentage = avantis_service.calculate_pnl(trade, current_price)
-                
-                positions.append(PnLData(
-                    trade=trade,
-                    current_price=current_price,
-                    pnl=pnl,
-                    pnl_percentage=pnl_percentage,
-                ))
-            else:
-                print(f"   Warning: No price data for {trade.pair}")
+            # Get current price for display
+            price_data = prices.get(trade.pair)
+            current_price = price_data[0] if price_data else trade.openPrice
+            
+            positions.append(PnLData(
+                trade=trade,
+                current_price=current_price,
+                pnl=gross_pnl,
+                pnl_percentage=gross_pnl_percentage,
+            ))
         
         return PnLResponse(positions=positions)
     except Exception as e:

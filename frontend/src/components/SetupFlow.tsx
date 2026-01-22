@@ -124,12 +124,19 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       setStep('checking');
       setError(null);
       
-      // Ensure we have a delegate wallet (this is our local viem wallet)
+      // Step 1: Ensure we have a delegate wallet locally (instant - localStorage check)
+      // This is fast and doesn't require any network calls
       const wallet = ensureDelegateWallet();
-      console.log('Delegate wallet created:', wallet.address);
+      console.log('Local delegate wallet:', wallet.address);
       
-      // Check if delegation is set up on-chain
-      const status = await checkDelegateStatus(userAddress);
+      // Step 2: Check if delegation is set up on-chain (API call - can be slow)
+      // Use Promise.race to add a timeout fallback
+      const statusPromise = checkDelegateStatus(userAddress);
+      const timeoutPromise = new Promise<{ isSetup: false; delegateAddress: null; error: string }>((resolve) => {
+        setTimeout(() => resolve({ isSetup: false, delegateAddress: null, error: 'Request timed out' }), 10000); // 10s timeout
+      });
+      
+      const status = await Promise.race([statusPromise, timeoutPromise]);
       console.log('Delegation status:', status);
       
       // Handle API errors gracefully
@@ -159,9 +166,21 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         
         console.log('Delegation already set up with:', wallet.address);
         
-        // Check if USDC allowance is sufficient for the Trading contract
-        const allowanceCheck = await checkUsdcAllowance(userAddress);
+        // Step 3: Run USDC allowance check and balance check in parallel
+        // Both are independent checks that can run simultaneously
+        const [allowanceCheck, balance] = await Promise.all([
+          checkUsdcAllowance(userAddress).catch((err) => {
+            console.warn('USDC allowance check failed:', err);
+            return { hasSufficient: false, allowance: 0 };
+          }),
+          checkDelegateBalance().catch((err) => {
+            console.warn('Balance check failed:', err);
+            return 0;
+          }),
+        ]);
+        
         console.log('USDC allowance check:', allowanceCheck);
+        console.log('Delegate ETH balance:', balance);
         
         if (!allowanceCheck.hasSufficient) {
           // Need to approve USDC for the Trading contract
@@ -169,10 +188,6 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           setStep('approve');
           return;
         }
-        
-        // Check if delegate has enough ETH for gas
-        const balance = await checkDelegateBalance();
-        console.log('Delegate ETH balance:', balance);
         
         if (balance < MIN_DELEGATE_ETH) {
           // Need to fund the delegate wallet
