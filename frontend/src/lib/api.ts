@@ -56,31 +56,95 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options?: RequestInit
+    options?: RequestInit,
+    retryCount: number = 0
   ): Promise<ApiResponse<T>> {
+    const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const startTime = Date.now();
+    const maxRetries = 2; // Retry up to 2 times (3 total attempts)
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:57',message:'Request started',data:{requestId,endpoint,baseUrl:this.baseUrl,method:options?.method||'GET',retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D'})}).catch(()=>{});
+    // #endregion
+    
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout (accounts for Avantis SDK latency ~8-10s + network overhead)
+      const timeoutMs = 35000;
+      const timeoutId = setTimeout(() => {
+        // #region agent log
+        fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:63',message:'Timeout fired',data:{requestId,endpoint,elapsedMs:Date.now()-startTime,timeoutMs,retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        controller.abort();
+      }, timeoutMs);
 
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:66',message:'Fetch initiated',data:{requestId,endpoint,timeoutId,retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C,D'})}).catch(()=>{});
+      // #endregion
+
+      // Add Connection: keep-alive header to maintain HTTP connections
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         ...options,
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
+          'Connection': 'keep-alive',
           ...options?.headers,
         },
+        // Force a new connection for retries to avoid stale connections
+        cache: retryCount > 0 ? 'no-store' : options?.cache || 'default',
       });
+
+      const elapsedMs = Date.now() - startTime;
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:75',message:'Response received',data:{requestId,endpoint,elapsedMs,status:response.status,ok:response.ok,retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
+      // #endregion
 
       clearTimeout(timeoutId);
 
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:78',message:'Timeout cleared',data:{requestId,endpoint,retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        // #region agent log
+        fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:81',message:'Response not OK',data:{requestId,endpoint,status:response.status,error:error.detail,retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
         return { success: false, error: error.detail || `HTTP ${response.status}` };
       }
 
       const data = await response.json();
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:87',message:'Request succeeded',data:{requestId,endpoint,elapsedMs:Date.now()-startTime,retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
+      // #endregion
       return { success: true, data };
     } catch (error) {
+      const elapsedMs = Date.now() - startTime;
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:91',message:'Request error',data:{requestId,endpoint,elapsedMs,errorName:error instanceof Error?error.name:'unknown',errorMessage:error instanceof Error?error.message:'unknown',isAbortError:error instanceof Error&&error.name==='AbortError',retryCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B,C,D'})}).catch(()=>{});
+      // #endregion
+      
+      // Retry logic: retry on timeout or network errors, but not on abort errors from user cancellation
+      const isRetryableError = error instanceof Error && (
+        error.name === 'AbortError' || // Timeout
+        error.message.includes('Failed to fetch') ||
+        error.message.includes('NetworkError')
+      );
+      
+      if (isRetryableError && retryCount < maxRetries) {
+        // Wait a bit before retrying (exponential backoff)
+        const delayMs = Math.min(1000 * Math.pow(2, retryCount), 5000);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:95',message:'Retrying request',data:{requestId,endpoint,retryCount:retryCount+1,maxRetries,delayMs},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        
+        return this.request<T>(endpoint, options, retryCount + 1);
+      }
+      
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
           return { success: false, error: 'Request timed out. Is the backend running?' };

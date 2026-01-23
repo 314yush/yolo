@@ -89,6 +89,21 @@ export default function HomePage() {
       return;
     }
 
+    // Validate minimum position size before building transaction
+    // Avantis requires minimum position size of $100
+    const MIN_POSITION_SIZE_USD = 100.0;
+    const positionSize = collateral * currentSelection.leverage.value;
+    if (positionSize < MIN_POSITION_SIZE_USD) {
+      const minCollateral = MIN_POSITION_SIZE_USD / currentSelection.leverage.value;
+      setError(
+        `Position size $${positionSize.toFixed(2)} is below minimum $${MIN_POSITION_SIZE_USD.toFixed(2)}. ` +
+        `With ${currentSelection.leverage.value}x leverage, minimum collateral is $${minCollateral.toFixed(2)} USDC. ` +
+        `Current collateral: $${collateral.toFixed(2)} USDC`
+      );
+      setStage('error');
+      return;
+    }
+
     console.log('Opening trade with:', {
       trader: traderAddress,
       delegate: delegateAddress,
@@ -97,9 +112,14 @@ export default function HomePage() {
       leverage: currentSelection.leverage.value,
       isLong: currentSelection.direction.isLong,
       collateral: collateral,
+      positionSize: positionSize,
     });
 
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:119',message:'handleSpinStart calling buildOpenTradeTx',data:{pair:`${currentSelection.asset.name}/USD`,pairIndex:currentSelection.asset.pairIndex,leverage:currentSelection.leverage.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
+      // #endregion
+      
       // Build the trade transaction
       const unsignedTx = await buildOpenTradeTx({
         trader: traderAddress,
@@ -110,6 +130,10 @@ export default function HomePage() {
         isLong: currentSelection.direction.isLong,
         collateral: collateral,
       });
+
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:132',message:'buildOpenTradeTx result',data:{hasUnsignedTx:!!unsignedTx},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
+      // #endregion
 
       if (!unsignedTx) {
         setError('Failed to build trade transaction');

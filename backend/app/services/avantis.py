@@ -156,6 +156,16 @@ class AvantisService:
         2. Executes the inner openTrade call on behalf of trader
         3. USDC is transferred from trader's wallet (not delegate)
         """
+        import time
+        import json
+        start_time = time.time()
+        request_id = f"{int(time.time()*1000)}-{id(self)}"
+        
+        # #region agent log
+        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"avantis.py:140","message":"build_open_trade_tx_delegate started","data":{"requestId":request_id,"pair":pair,"pairIndex":pair_index},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        # #endregion
+        
         trader = to_checksum_address(trader)
         
         # Validate minimum position size
@@ -192,6 +202,12 @@ class AvantisService:
         # Try SDK method first, but it may hang on gas estimation
         # If it hangs, we'll manually encode similar to close trade
         import asyncio
+        sdk_start = time.time()
+        # #region agent log
+        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"avantis.py:196","message":"SDK build_trade_open_tx started","data":{"requestId":request_id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        # #endregion
+        
         try:
             inner_tx = await asyncio.wait_for(
                 self.client.trade.build_trade_open_tx(
@@ -202,6 +218,11 @@ class AvantisService:
                 timeout=15.0  # 15 second timeout (SDK can take 8-10s for trade building)
             )
             
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:205","message":"SDK build_trade_open_tx completed","data":{"requestId":request_id,"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
+            
             inner_calldata = inner_tx.get("data")
             execution_fee = inner_tx.get("value", 0)
             # Ensure execution_fee is an integer
@@ -209,15 +230,30 @@ class AvantisService:
                 execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
             execution_fee = int(execution_fee)
         except asyncio.TimeoutError:
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:212","message":"SDK build_trade_open_tx timeout","data":{"requestId":request_id,"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
             logger.warning("build_trade_open_tx timed out, manually encoding...")
             
             # Manual encoding fallback - use TradeInput object directly
             # Get execution fee separately
+            fee_start = time.time()
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:218","message":"SDK get_trade_execution_fee started","data":{"requestId":request_id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
+            
             try:
                 execution_fee = await asyncio.wait_for(
                     self.client.trade.get_trade_execution_fee(),
                     timeout=12.0  # 12 second timeout (SDK calls can be slow)
                 )
+                
+                # #region agent log
+                with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({"location":"avantis.py:225","message":"SDK get_trade_execution_fee completed","data":{"requestId":request_id,"elapsedMs":int((time.time()-fee_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+                # #endregion
                 # Ensure execution_fee is an integer
                 if isinstance(execution_fee, str):
                     execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
@@ -282,6 +318,12 @@ class AvantisService:
         # Step 2: Wrap in delegatedAction(trader, innerCalldata)
         # We manually encode the call instead of using build_transaction
         # to avoid simulation (which would fail without the delegate's private key)
+        delegate_start = time.time()
+        # #region agent log
+        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"avantis.py:285","message":"Building delegate tx started","data":{"requestId":request_id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        # #endregion
+        
         Trading = self.client.contracts.get("Trading")
         
         # Encode the delegatedAction call
@@ -292,6 +334,11 @@ class AvantisService:
         
         trading_address = Trading.address
         logger.debug(f"Delegate tx built: to={trading_address}, calldata length: {len(delegate_calldata)} bytes, fee: {execution_fee / 1e18:.6f} ETH")
+
+        # #region agent log
+        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"avantis.py:338","message":"build_open_trade_tx_delegate completed","data":{"requestId":request_id,"delegateElapsedMs":int((time.time()-delegate_start)*1000),"totalElapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        # #endregion
 
         return UnsignedTx(
             to=trading_address,
@@ -404,11 +451,28 @@ class AvantisService:
 
     async def get_trades(self, trader: str) -> list[Trade]:
         """Get open trades for a trader (includes confirmed trades only)."""
+        import time
+        import json
+        start_time = time.time()
+        request_id = f"{int(time.time()*1000)}-{id(self)}"
+        
+        # #region agent log
+        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"avantis.py:452","message":"get_trades started","data":{"requestId":request_id,"trader":trader},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        # #endregion
+        
         try:
             trader = to_checksum_address(trader)
+            sdk_start = time.time()
             trades, pending = await self.client.trade.get_trades(trader)
             
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:456","message":"SDK get_trades completed","data":{"requestId":request_id,"tradeCount":len(trades),"pendingCount":len(pending),"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
+            
             result = []
+            pair_cache_start = time.time()
             for t in trades:
                 trade_data = t.trade
                 # Get pair name from SDK
@@ -426,8 +490,17 @@ class AvantisService:
                     opened_at=0,
                 ))
             
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:475","message":"get_trades completed","data":{"requestId":request_id,"resultCount":len(result),"pairCacheElapsedMs":int((time.time()-pair_cache_start)*1000),"totalElapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
+            
             return result
         except Exception as e:
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:477","message":"get_trades error","data":{"requestId":request_id,"trader":trader,"error":str(e),"elapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
             logger.error(f"Error fetching trades: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
@@ -470,13 +543,30 @@ class AvantisService:
     
     async def get_trades_with_pnl(self, trader: str) -> list[dict]:
         """Get open trades with gross PnL calculated from SDK trade data."""
+        import time
+        import json
+        start_time = time.time()
+        request_id = f"{int(time.time()*1000)}-{id(self)}"
+        
+        # #region agent log
+        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"location":"avantis.py:518","message":"get_trades_with_pnl started","data":{"requestId":request_id,"trader":trader},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        # #endregion
+        
         try:
             trader = to_checksum_address(trader)
+            sdk_start = time.time()
             trades, pending = await self.client.trade.get_trades(trader)
+            
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:522","message":"SDK get_trades completed (with_pnl)","data":{"requestId":request_id,"tradeCount":len(trades),"pendingCount":len(pending),"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
             
             # Get current prices for all pairs
             pair_indices = list(set(t.trade.pair_index for t in trades))
             pair_names = []
+            pair_cache_start = time.time()
             for pair_index in pair_indices:
                 try:
                     pair_name = await self.client.pairs_cache.get_pair_name_from_index(pair_index)
@@ -484,9 +574,20 @@ class AvantisService:
                 except Exception:
                     pass
             
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:536","message":"Pair cache lookups completed","data":{"requestId":request_id,"pairCount":len(pair_names),"elapsedMs":int((time.time()-pair_cache_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
+            
             # Fetch prices
             from app.services.price_feed import price_feed_service
+            prices_start = time.time()
             prices = await price_feed_service.get_prices(pair_names) if pair_names else {}
+            
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:536","message":"Price fetch completed (with_pnl)","data":{"requestId":request_id,"pairCount":len(pair_names),"elapsedMs":int((time.time()-prices_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
             
             result = []
             for extended_trade in trades:
@@ -553,8 +654,17 @@ class AvantisService:
                     'gross_pnl_percentage': gross_pnl_percentage,
                 })
             
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:657","message":"get_trades_with_pnl completed","data":{"requestId":request_id,"resultCount":len(result),"totalElapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
+            
             return result
         except Exception as e:
+            # #region agent log
+            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"location":"avantis.py:659","message":"get_trades_with_pnl error","data":{"requestId":request_id,"trader":trader,"error":str(e),"elapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            # #endregion
             logger.error(f"Error fetching trades with PnL: {e}", exc_info=True)
             import traceback
             traceback.print_exc()

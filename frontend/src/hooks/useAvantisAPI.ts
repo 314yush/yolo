@@ -79,9 +79,18 @@ export function useAvantisAPI() {
   // Build open trade transaction
   const buildOpenTradeTx = useCallback(
     async (params: TradeParams): Promise<UnsignedTx | null> => {
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAvantisAPI.ts:82',message:'buildOpenTradeTx called',data:{params},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
+      // #endregion
+      
       console.log('[buildOpenTradeTx] Starting with params:', params);
       try {
         const response = await api.buildOpenTradeTx(params);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAvantisAPI.ts:87',message:'buildOpenTradeTx response',data:{success:response.success,hasData:!!response.data,error:response.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
+        // #endregion
+        
         console.log('[buildOpenTradeTx] Response:', response);
         
         if (!response.success || !response.data) {

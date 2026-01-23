@@ -51,7 +51,10 @@ export function useFlipTrade() {
       trade = matchingTrade;
     }
 
-    console.log(`[flipTrade] Closing trade: pairIndex=${trade.pairIndex}, tradeIndex=${trade.tradeIndex}, pair=${trade.pair}, isLong=${trade.isLong}`);
+    // Ensure we're using the matching trade's pair (which matches the pairIndex)
+    const pairToUse = matchingTrade.pair; // Use the verified trade's pair
+    
+    console.log(`[flipTrade] Closing trade: pairIndex=${trade.pairIndex}, tradeIndex=${trade.tradeIndex}, pair=${pairToUse}, isLong=${trade.isLong}`);
 
     setIsFlipping(true);
 
@@ -67,6 +70,11 @@ export function useFlipTrade() {
       const finalPnL = pnlMap.get(tradeKey) || null;
 
       // 1. Close current trade - ensure we're closing the correct trade by pairIndex and tradeIndex
+      // Using the same pattern as handleCloseTrade
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:74',message:'Building close tx',data:{pairIndex:trade.pairIndex,tradeIndex:trade.tradeIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
+      // #endregion
+      
       const closeTx = await buildCloseTradeTx(
         userAddress,
         delegateAddress,
@@ -74,6 +82,10 @@ export function useFlipTrade() {
         trade.tradeIndex,
         trade.collateral
       );
+
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:84',message:'Close tx result',data:{hasCloseTx:!!closeTx},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
+      // #endregion
 
       if (!closeTx) {
         throw new Error('Failed to build close transaction');
@@ -84,16 +96,38 @@ export function useFlipTrade() {
       // Save closed trade (flip closes the original trade)
       saveClosedTrade(userAddress, trade, finalPnL);
 
-      // 2. Open opposite direction
+      // Validate minimum position size before opening new trade
+      // Avantis requires minimum position size of $100
+      const MIN_POSITION_SIZE_USD = 100.0;
+      const positionSize = trade.collateral * trade.leverage;
+      if (positionSize < MIN_POSITION_SIZE_USD) {
+        const minCollateral = MIN_POSITION_SIZE_USD / trade.leverage;
+        throw new Error(
+          `Cannot flip trade: Position size $${positionSize.toFixed(2)} is below minimum $${MIN_POSITION_SIZE_USD.toFixed(2)}. ` +
+          `With ${trade.leverage}x leverage, minimum collateral is $${minCollateral.toFixed(2)} USDC. ` +
+          `Current collateral: $${trade.collateral.toFixed(2)} USDC`
+        );
+      }
+
+      // 2. Open opposite direction - using the verified pair that matches pairIndex
+      // Using the same pattern as handleSpinStart
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:106',message:'Building open tx after close',data:{pair:pairToUse,pairIndex:trade.pairIndex,leverage:trade.leverage,isLong:!trade.isLong},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
+      // #endregion
+      
       const openTx = await buildOpenTradeTx({
         trader: userAddress,
         delegate: delegateAddress,
-        pair: trade.pair,
+        pair: pairToUse, // Use verified pair that matches pairIndex
         pairIndex: trade.pairIndex,
         leverage: trade.leverage,
         isLong: !trade.isLong, // Flip direction
         collateral: trade.collateral,
       });
+
+      // #region agent log
+      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:118',message:'Open tx result',data:{hasOpenTx:!!openTx},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
+      // #endregion
 
       if (!openTx) {
         throw new Error('Failed to build open transaction');

@@ -102,25 +102,24 @@ export default function ActivityPage() {
   const handleFlip = async (trade: Trade) => {
     if (!userAddress || !delegateAddress) return;
 
-    const tradeIndex = tradesWithPnL.findIndex((t) => 
+    // Find the trade in the current list to ensure we have the correct data
+    const tradeWithPnL = tradesWithPnL.find((t) => 
       t.trade.pairIndex === trade.pairIndex && t.trade.tradeIndex === trade.tradeIndex
+    );
+    
+    if (!tradeWithPnL) {
+      alert('Trade not found. Please refresh and try again.');
+      return;
+    }
+
+    // Use the verified trade data to ensure consistency
+    const verifiedTrade = tradeWithPnL.trade;
+    const tradeIndex = tradesWithPnL.findIndex((t) => 
+      t.trade.pairIndex === verifiedTrade.pairIndex && t.trade.tradeIndex === verifiedTrade.tradeIndex
     );
     setFlippingTradeIndex(tradeIndex);
 
     try {
-      // 1. Close current trade
-      const closeTx = await buildCloseTradeTx(
-        userAddress,
-        delegateAddress,
-        trade.pairIndex,
-        trade.tradeIndex,
-        trade.collateral
-      );
-
-      if (!closeTx) {
-        throw new Error('Failed to build close transaction');
-      }
-
       // Get final PnL before closing
       const positions = await getPnL(userAddress);
       const pnlMap = new Map<string, PnLData>();
@@ -128,28 +127,55 @@ export default function ActivityPage() {
         const key = `${pos.trade.pairIndex}-${pos.trade.tradeIndex}`;
         pnlMap.set(key, pos);
       });
-      const tradeKey = `${trade.pairIndex}-${trade.tradeIndex}`;
+      const tradeKey = `${verifiedTrade.pairIndex}-${verifiedTrade.tradeIndex}`;
       const finalPnL = pnlMap.get(tradeKey) || null;
+
+      // 1. Close current trade - using the same pattern as handleCloseTrade
+      const closeTx = await buildCloseTradeTx(
+        userAddress,
+        delegateAddress,
+        verifiedTrade.pairIndex,
+        verifiedTrade.tradeIndex,
+        verifiedTrade.collateral
+      );
+
+      if (!closeTx) {
+        throw new Error('Failed to build close transaction');
+      }
 
       await signAndWait(closeTx);
 
       // Save closed trade (flip closes the original trade)
       if (userAddress) {
-        saveClosedTrade(userAddress, trade, finalPnL);
+        saveClosedTrade(userAddress, verifiedTrade, finalPnL);
         // Reload closed trades
         const updatedClosed = loadClosedTrades(userAddress);
         setClosedTrades(updatedClosed);
       }
 
-      // 2. Open opposite direction
+      // Validate minimum position size before opening new trade
+      // Avantis requires minimum position size of $100
+      const MIN_POSITION_SIZE_USD = 100.0;
+      const positionSize = verifiedTrade.collateral * verifiedTrade.leverage;
+      if (positionSize < MIN_POSITION_SIZE_USD) {
+        const minCollateral = MIN_POSITION_SIZE_USD / verifiedTrade.leverage;
+        throw new Error(
+          `Cannot flip trade: Position size $${positionSize.toFixed(2)} is below minimum $${MIN_POSITION_SIZE_USD.toFixed(2)}. ` +
+          `With ${verifiedTrade.leverage}x leverage, minimum collateral is $${minCollateral.toFixed(2)} USDC. ` +
+          `Current collateral: $${verifiedTrade.collateral.toFixed(2)} USDC`
+        );
+      }
+
+      // 2. Open opposite direction - using verified pair that matches pairIndex
+      // Using the same pattern as handleSpinStart
       const openTx = await buildOpenTradeTx({
         trader: userAddress,
         delegate: delegateAddress,
-        pair: trade.pair,
-        pairIndex: trade.pairIndex,
-        leverage: trade.leverage,
-        isLong: !trade.isLong, // Flip direction
-        collateral: trade.collateral,
+        pair: verifiedTrade.pair, // Use verified pair that matches pairIndex
+        pairIndex: verifiedTrade.pairIndex,
+        leverage: verifiedTrade.leverage,
+        isLong: !verifiedTrade.isLong, // Flip direction
+        collateral: verifiedTrade.collateral,
       });
 
       if (!openTx) {
