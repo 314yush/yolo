@@ -192,6 +192,210 @@ async def get_trades(address: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/debug/encode-trade")
+async def debug_encode_trade(request: OpenTradeRequest):
+    """
+    Debug endpoint to test MANUAL encoding (no SDK simulation).
+    
+    Compares two encoding approaches:
+    1. Backend's current approach (8 decimals for price, raw leverage)
+    2. Guide's approach (10 decimals for price and leverage)
+    
+    This helps verify which format the contract actually expects.
+    """
+    from eth_abi import encode, decode
+    from web3 import Web3
+    import time as time_module
+    
+    logger.info(f"Debug encode trade: pair={request.pair}, trader={request.trader[:10]}...")
+    
+    try:
+        # Get current price
+        import asyncio
+        try:
+            price_result = await asyncio.wait_for(
+                price_feed_service.get_price(request.pair),
+                timeout=12.0
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail=f"Price feed timeout for {request.pair}")
+        
+        if not price_result:
+            raise HTTPException(status_code=400, detail=f"Could not fetch price for {request.pair}")
+        
+        current_price, _ = price_result
+        
+        # Contract addresses from guide
+        TRADING_CONTRACT = "0x44914408af82bC9983bbb330e3578E1105e11d4e"
+        
+        # Function selectors (first 4 bytes of keccak256 hash of signature)
+        # openTrade((address,uint256,uint256,uint256,uint256,uint256,bool,uint256,uint256,uint256,uint256),uint8,uint256)
+        OPEN_TRADE_SELECTOR = Web3.keccak(text="openTrade((address,uint256,uint256,uint256,uint256,uint256,bool,uint256,uint256,uint256,uint256),uint8,uint256)")[:4]
+        # delegatedAction(address,bytes)
+        DELEGATED_ACTION_SELECTOR = Web3.keccak(text="delegatedAction(address,bytes)")[:4]
+        
+        # Calculate TP (5x price for long, 0.2x for short)
+        if request.is_long:
+            tp_price = current_price * 5
+        else:
+            tp_price = current_price * 0.2
+        
+        # ============================================
+        # APPROACH 1: Backend's current format
+        # - Price: 8 decimals
+        # - Leverage: raw integer
+        # - Execution fee: ~0.000002 ETH
+        # ============================================
+        backend_price_scaled = int(current_price * (10**8))
+        backend_tp_scaled = int(tp_price * (10**8))
+        backend_leverage = request.leverage  # Raw: 250 = 250x
+        backend_collateral = int(request.collateral * (10**6))
+        backend_position_size = int(request.collateral * request.leverage * (10**6))
+        backend_slippage = 1  # Raw: 1 = 1%
+        backend_execution_fee = 100000000000000  # ~0.0001 ETH (updated based on real tx analysis)
+        
+        # ============================================
+        # APPROACH 2: Guide's format
+        # - Price: 10 decimals
+        # - Leverage: 10 decimals (2x = 20000000000)
+        # - Slippage: 10 decimals (1% = 10000000000)
+        # - Execution fee: ~0.00035 ETH
+        # ============================================
+        guide_price_scaled = int(current_price * (10**10))
+        guide_tp_scaled = int(tp_price * (10**10))
+        guide_leverage = int(request.leverage * (10**10))  # 250x = 2500000000000
+        guide_collateral = int(request.collateral * (10**6))  # Still 6 decimals for USDC
+        guide_position_size = int(request.collateral * (10**6))  # positionSizeUSDC = collateral (not * leverage)
+        guide_slippage = int(1 * (10**10))  # 1% = 10000000000
+        guide_execution_fee = int(0.00035 * (10**18))  # 0.00035 ETH in wei
+        
+        timestamp = int(time_module.time())
+        trader = Web3.to_checksum_address(request.trader)
+        
+        # Build both versions of the trade struct
+        def build_trade_tuple(price, tp, leverage, collateral, position_size):
+            return (
+                trader,           # address trader
+                request.pair_index,  # uint256 pairIndex
+                0,                # uint256 index
+                0,                # uint256 initialPosToken (0 for USDC)
+                position_size,    # uint256 positionSizeUSDC
+                price,            # uint256 openPrice
+                request.is_long,  # bool buy
+                leverage,         # uint256 leverage
+                tp,               # uint256 tp
+                0,                # uint256 sl
+                timestamp,        # uint256 timestamp
+            )
+        
+        backend_trade = build_trade_tuple(
+            backend_price_scaled, backend_tp_scaled, backend_leverage, 
+            backend_collateral, backend_position_size
+        )
+        
+        guide_trade = build_trade_tuple(
+            guide_price_scaled, guide_tp_scaled, guide_leverage,
+            guide_collateral, guide_position_size
+        )
+        
+        # Encode the inner openTrade call
+        def encode_open_trade(trade_tuple, slippage):
+            # Encode the struct and parameters
+            encoded_params = encode(
+                ['(address,uint256,uint256,uint256,uint256,uint256,bool,uint256,uint256,uint256,uint256)', 'uint8', 'uint256'],
+                [trade_tuple, 3, slippage]  # 3 = MARKET_ZERO_FEE
+            )
+            return OPEN_TRADE_SELECTOR + encoded_params
+        
+        backend_inner = encode_open_trade(backend_trade, backend_slippage)
+        guide_inner = encode_open_trade(guide_trade, guide_slippage)
+        
+        # Wrap in delegatedAction
+        def encode_delegated_action(trader_addr, inner_calldata):
+            encoded_params = encode(
+                ['address', 'bytes'],
+                [trader_addr, inner_calldata]
+            )
+            return DELEGATED_ACTION_SELECTOR + encoded_params
+        
+        backend_calldata = encode_delegated_action(trader, backend_inner)
+        guide_calldata = encode_delegated_action(trader, guide_inner)
+        
+        return {
+            "input": {
+                "trader": request.trader,
+                "pair": request.pair,
+                "pair_index": request.pair_index,
+                "leverage": request.leverage,
+                "is_long": request.is_long,
+                "collateral": request.collateral,
+                "current_price": current_price,
+                "tp_price": tp_price,
+            },
+            "backend_encoding": {
+                "description": "Current backend format (8 decimals for price, raw leverage)",
+                "tx": {
+                    "to": TRADING_CONTRACT,
+                    "data": "0x" + backend_calldata.hex(),
+                    "value": hex(backend_execution_fee),
+                    "chain_id": 8453,
+                },
+                "decoded_values": {
+                    "openPrice_raw": backend_price_scaled,
+                    "openPrice_human": backend_price_scaled / (10**8),
+                    "leverage_raw": backend_leverage,
+                    "leverage_human": f"{backend_leverage}x",
+                    "positionSizeUSDC_raw": backend_position_size,
+                    "positionSizeUSDC_human": backend_position_size / (10**6),
+                    "slippage_raw": backend_slippage,
+                    "execution_fee_wei": backend_execution_fee,
+                    "execution_fee_eth": backend_execution_fee / (10**18),
+                },
+            },
+            "guide_encoding": {
+                "description": "Guide format (10 decimals for price and leverage)",
+                "tx": {
+                    "to": TRADING_CONTRACT,
+                    "data": "0x" + guide_calldata.hex(),
+                    "value": hex(guide_execution_fee),
+                    "chain_id": 8453,
+                },
+                "decoded_values": {
+                    "openPrice_raw": guide_price_scaled,
+                    "openPrice_human": guide_price_scaled / (10**10),
+                    "leverage_raw": guide_leverage,
+                    "leverage_human": f"{guide_leverage / (10**10)}x",
+                    "positionSizeUSDC_raw": guide_position_size,
+                    "positionSizeUSDC_human": guide_position_size / (10**6),
+                    "slippage_raw": guide_slippage,
+                    "slippage_human": f"{guide_slippage / (10**10)}%",
+                    "execution_fee_wei": guide_execution_fee,
+                    "execution_fee_eth": guide_execution_fee / (10**18),
+                },
+            },
+            "comparison": {
+                "price_difference": f"Backend uses {backend_price_scaled}, Guide uses {guide_price_scaled} (100x difference)",
+                "leverage_difference": f"Backend uses {backend_leverage} (raw), Guide uses {guide_leverage} (10 decimals)",
+                "execution_fee_difference": f"Backend: {backend_execution_fee / (10**18):.8f} ETH, Guide: {guide_execution_fee / (10**18):.5f} ETH",
+            },
+            "next_steps": [
+                "1. Find a successful trade tx hash on Basescan",
+                "2. Decode its calldata to see which format matches",
+                "3. Or try both formats with a small test trade",
+            ],
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in debug encode: {e}", exc_info=True)
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
+
+
 @trades_router.get("/{address}/pnl", response_model=PnLResponse)
 async def get_pnl(address: str):
     """

@@ -1,183 +1,136 @@
 'use client';
 
 import { useCallback } from 'react';
-import { api } from '@/lib/api';
 import { useTradeStore } from '@/store/tradeStore';
-import type { TradeParams, UnsignedTx } from '@/types';
+import { fetchTrades, fetchPnL } from '@/lib/avantisApi';
+import { publicClient } from '@/lib/viemClient';
+import {
+  buildSetDelegateTx,
+  buildUsdcApprovalTx as buildUsdcApprovalTxDirect,
+  AVANTIS_CONTRACTS,
+  DELEGATIONS_ABI,
+  ERC20_ALLOWANCE_ABI,
+} from '@/lib/avantisEncoder';
+import type { UnsignedTx } from '@/types';
+
+// Minimum USDC allowance considered "sufficient" (1 million USDC in 6 decimals)
+const MIN_SUFFICIENT_ALLOWANCE = 1_000_000n * 10n ** 6n;
 
 export function useAvantisAPI() {
-  const { setError } = useTradeStore();
-
-  // Build delegation setup transaction
+  // Build delegation setup transaction - Direct encoding (no backend!)
   const buildDelegateSetupTx = useCallback(
-    async (trader: string, delegateAddress: string): Promise<UnsignedTx | null> => {
-      const response = await api.buildDelegateSetupTx(trader, delegateAddress);
-      
-      if (!response.success || !response.data) {
-        setError(response.error || 'Failed to build delegate setup tx');
+    async (_trader: string, delegateAddress: string): Promise<UnsignedTx | null> => {
+      try {
+        const tx = buildSetDelegateTx(delegateAddress as `0x${string}`);
+        return {
+          to: tx.to,
+          data: tx.data,
+          value: tx.value,
+          chainId: tx.chainId,
+        };
+      } catch (error) {
+        console.error('Failed to build delegate setup tx:', error);
         return null;
       }
-      
-      return response.data.tx;
     },
-    [setError]
+    []
   );
 
-  // Check delegate status
+  // Check delegate status - Direct contract read (no backend!)
   const checkDelegateStatus = useCallback(
     async (trader: string) => {
-      const response = await api.getDelegateStatus(trader);
-      
-      if (!response.success || !response.data) {
-        console.warn('Failed to check delegate status:', response.error);
-        // Return error info so caller can decide what to do
-        return { isSetup: false, delegateAddress: null, error: response.error };
+      try {
+        const delegateAddress = await publicClient.readContract({
+          address: AVANTIS_CONTRACTS.Trading,
+          abi: DELEGATIONS_ABI,
+          functionName: 'delegations',
+          args: [trader as `0x${string}`],
+        });
+
+        const isSetup = delegateAddress !== '0x0000000000000000000000000000000000000000';
+        return {
+          isSetup,
+          delegateAddress: isSetup ? delegateAddress : null,
+          error: null,
+        };
+      } catch (error) {
+        console.error('Failed to check delegate status:', error);
+        return { isSetup: false, delegateAddress: null, error: 'Failed to read contract' };
       }
-      
-      return {
-        isSetup: response.data.is_setup,
-        delegateAddress: response.data.delegate_address,
-        error: null,
-      };
     },
     []
   );
 
-  // Build USDC approval transaction
+  // Build USDC approval transaction - Direct encoding (no backend!)
   const buildUsdcApprovalTx = useCallback(
-    async (trader: string): Promise<UnsignedTx | null> => {
-      const response = await api.buildUsdcApprovalTx(trader);
-      
-      if (!response.success || !response.data) {
-        setError(response.error || 'Failed to build USDC approval tx');
+    async (_trader: string): Promise<UnsignedTx | null> => {
+      try {
+        const tx = buildUsdcApprovalTxDirect();
+        return {
+          to: tx.to,
+          data: tx.data,
+          value: tx.value,
+          chainId: tx.chainId,
+        };
+      } catch (error) {
+        console.error('Failed to build USDC approval tx:', error);
         return null;
       }
-      
-      return response.data.tx;
     },
-    [setError]
+    []
   );
 
-  // Check if trader has sufficient USDC allowance
+  // Check USDC allowance - Direct contract read (no backend!)
   const checkUsdcAllowance = useCallback(
     async (trader: string): Promise<{ hasSufficient: boolean; allowance: number }> => {
-      const response = await api.checkUsdcAllowance(trader);
-      
-      if (!response.success || !response.data) {
-        console.warn('Failed to check USDC allowance:', response.error);
+      try {
+        const allowance = await publicClient.readContract({
+          address: AVANTIS_CONTRACTS.USDC,
+          abi: ERC20_ALLOWANCE_ABI,
+          functionName: 'allowance',
+          args: [trader as `0x${string}`, AVANTIS_CONTRACTS.TradingStorage],
+        });
+
+        // Convert from 6 decimals to human readable
+        const allowanceNumber = Number(allowance) / 1e6;
+        const hasSufficient = allowance >= MIN_SUFFICIENT_ALLOWANCE;
+
+        return { hasSufficient, allowance: allowanceNumber };
+      } catch (error) {
+        console.error('Failed to check USDC allowance:', error);
         return { hasSufficient: false, allowance: 0 };
       }
-      
-      return {
-        hasSufficient: response.data.has_sufficient,
-        allowance: response.data.allowance,
-      };
     },
     []
   );
 
-  // Build open trade transaction
-  const buildOpenTradeTx = useCallback(
-    async (params: TradeParams): Promise<UnsignedTx | null> => {
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAvantisAPI.ts:82',message:'buildOpenTradeTx called',data:{params},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
-      // #endregion
-      
-      console.log('[buildOpenTradeTx] Starting with params:', params);
-      try {
-        const response = await api.buildOpenTradeTx(params);
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useAvantisAPI.ts:87',message:'buildOpenTradeTx response',data:{success:response.success,hasData:!!response.data,error:response.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
-        // #endregion
-        
-        console.log('[buildOpenTradeTx] Response:', response);
-        
-        if (!response.success || !response.data) {
-          console.error('[buildOpenTradeTx] Failed:', response.error);
-          setError(response.error || 'Failed to build open trade tx');
-          return null;
-        }
-        
-        console.log('[buildOpenTradeTx] Success, tx:', response.data.tx);
-        return response.data.tx;
-      } catch (err) {
-        console.error('[buildOpenTradeTx] Exception:', err);
-        throw err;
-      }
-    },
-    [setError]
-  );
-
-  // Build close trade transaction
-  const buildCloseTradeTx = useCallback(
-    async (
-      trader: string,
-      delegate: string,
-      pairIndex: number,
-      tradeIndex: number,
-      collateralToClose: number
-    ): Promise<UnsignedTx | null> => {
-      const response = await api.buildCloseTradeTx(
-        trader,
-        delegate,
-        pairIndex,
-        tradeIndex,
-        collateralToClose
-      );
-      
-      if (!response.success || !response.data) {
-        setError(response.error || 'Failed to build close trade tx');
-        return null;
-      }
-      
-      return response.data.tx;
-    },
-    [setError]
-  );
-
-  // Get open trades
+  // Get open trades - Direct from Avantis API (no backend!)
   const getTrades = useCallback(async (address: string) => {
-    const response = await api.getTrades(address);
-    
-    if (!response.success || !response.data) {
+    try {
+      return await fetchTrades(address);
+    } catch {
       return [];
     }
-    
-    return response.data.trades;
   }, []);
 
-  // Get PnL for all positions
+  // Get PnL for all positions - Direct from Avantis API + Pyth prices (no backend!)
   const getPnL = useCallback(async (address: string) => {
-    const response = await api.getPnL(address);
-    
-    if (!response.success || !response.data) {
+    try {
+      const currentPrices = useTradeStore.getState().prices;
+      return await fetchPnL(address, currentPrices);
+    } catch {
       return [];
     }
-    
-    return response.data.positions;
-  }, []);
-
-  // Get current price
-  const getPrice = useCallback(async (pair: string) => {
-    const response = await api.getPrice(pair);
-    
-    if (!response.success || !response.data) {
-      return null;
-    }
-    
-    return response.data;
   }, []);
 
   return {
+    // Setup operations - Direct encoding (no backend!)
     buildDelegateSetupTx,
     checkDelegateStatus,
     buildUsdcApprovalTx,
     checkUsdcAllowance,
-    buildOpenTradeTx,
-    buildCloseTradeTx,
+    // Read operations - Direct from Avantis API (no backend!)
     getTrades,
     getPnL,
-    getPrice,
   };
 }

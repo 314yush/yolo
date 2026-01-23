@@ -4,6 +4,8 @@ import React from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { usePnL } from '@/hooks/usePnL';
 import { useFlipTrade } from '@/hooks/useFlipTrade';
+import { usePrebuiltCloseTx } from '@/hooks/usePrebuiltCloseTx';
+import { usePrebuiltFlipTx } from '@/hooks/usePrebuiltFlipTx';
 
 interface PnLScreenProps {
   onClose: () => void;
@@ -14,6 +16,10 @@ interface PnLScreenProps {
 export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const { selection, pnlData, currentTrade } = useTradeStore();
   const { flipTrade, isFlipping } = useFlipTrade();
+  
+  // Activate pre-building when trade exists (builds close & flip txs in background)
+  usePrebuiltCloseTx();
+  usePrebuiltFlipTx();
   
   // Start PnL polling
   usePnL({ enabled: true, interval: 1000 });

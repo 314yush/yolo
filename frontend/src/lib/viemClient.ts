@@ -9,16 +9,29 @@ export const publicClient = createPublicClient({
   transport: http(CHAIN_CONFIG.rpcUrl),
 });
 
+// Flashblock client for faster tx broadcasting (~200ms preconfirmation)
+// Uses Base Flashblocks RPC endpoint for optimistic preconfirmations
+export const flashblockClient = createPublicClient({
+  chain: base,
+  transport: http(CHAIN_CONFIG.flashblockRpcUrl),
+});
+
 /**
  * Create a wallet client for the delegate to sign transactions
+ * Uses Flashblock RPC when enabled for faster preconfirmations
  */
 export function createDelegateWalletClient() {
   const account = getDelegateAccount();
   
+  // Use Flashblock RPC for broadcasting if enabled (faster preconfirmations)
+  const rpcUrl = CHAIN_CONFIG.useFlashblock 
+    ? CHAIN_CONFIG.flashblockRpcUrl 
+    : CHAIN_CONFIG.rpcUrl;
+  
   return createWalletClient({
     account,
     chain: base,
-    transport: http(CHAIN_CONFIG.rpcUrl),
+    transport: http(rpcUrl),
   });
 }
 

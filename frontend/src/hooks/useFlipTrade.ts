@@ -6,13 +6,27 @@ import { useDelegateWallet } from './useDelegateWallet';
 import { useAvantisAPI } from './useAvantisAPI';
 import { useTxSigner } from './useTxSigner';
 import { saveClosedTrade } from '@/lib/closedTrades';
+import { buildFlipTradeTxs } from '@/lib/avantisEncoder';
 import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
 
 export function useFlipTrade() {
-  const { userAddress, setCurrentTrade, setPnLData, incrementTotalTrades, setSelection, selection, addPendingTradeHash, removePendingTradeHash, showToast } = useTradeStore();
+  const { 
+    userAddress, 
+    setCurrentTrade, 
+    setPnLData, 
+    incrementTotalTrades, 
+    setSelection, 
+    selection, 
+    addPendingTradeHash, 
+    removePendingTradeHash, 
+    showToast,
+    prices,           // Real-time Pyth prices
+    prebuiltFlipTxs,  // Pre-built txs (if available)
+    setPrebuiltFlipTxs,
+  } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
-  const { buildCloseTradeTx, buildOpenTradeTx, getTrades, getPnL } = useAvantisAPI();
+  const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
   const { signAndWait, signAndBroadcast } = useTxSigner();
   const [isFlipping, setIsFlipping] = useState(false);
 
@@ -69,34 +83,7 @@ export function useFlipTrade() {
       const tradeKey = `${trade.pairIndex}-${trade.tradeIndex}`;
       const finalPnL = pnlMap.get(tradeKey) || null;
 
-      // 1. Close current trade - ensure we're closing the correct trade by pairIndex and tradeIndex
-      // Using the same pattern as handleCloseTrade
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:74',message:'Building close tx',data:{pairIndex:trade.pairIndex,tradeIndex:trade.tradeIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
-      // #endregion
-      
-      const closeTx = await buildCloseTradeTx(
-        userAddress,
-        delegateAddress,
-        trade.pairIndex,
-        trade.tradeIndex,
-        trade.collateral
-      );
-
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:84',message:'Close tx result',data:{hasCloseTx:!!closeTx},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
-      // #endregion
-
-      if (!closeTx) {
-        throw new Error('Failed to build close transaction');
-      }
-
-      await signAndWait(closeTx);
-
-      // Save closed trade (flip closes the original trade)
-      saveClosedTrade(userAddress, trade, finalPnL);
-
-      // Validate minimum position size before opening new trade
+      // Validate minimum position size before proceeding
       // Avantis requires minimum position size of $100
       const MIN_POSITION_SIZE_USD = 100.0;
       const positionSize = trade.collateral * trade.leverage;
@@ -109,30 +96,38 @@ export function useFlipTrade() {
         );
       }
 
-      // 2. Open opposite direction - using the verified pair that matches pairIndex
-      // Using the same pattern as handleSpinStart
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:106',message:'Building open tx after close',data:{pair:pairToUse,pairIndex:trade.pairIndex,leverage:trade.leverage,isLong:!trade.isLong},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
-      // #endregion
-      
-      const openTx = await buildOpenTradeTx({
-        trader: userAddress,
-        delegate: delegateAddress,
-        pair: pairToUse, // Use verified pair that matches pairIndex
-        pairIndex: trade.pairIndex,
-        leverage: trade.leverage,
-        isLong: !trade.isLong, // Flip direction
-        collateral: trade.collateral,
-      });
+      let closeTx, openTx;
 
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useFlipTrade.ts:118',message:'Open tx result',data:{hasOpenTx:!!openTx},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
-      // #endregion
+      // Use pre-built txs if available, otherwise build on-demand
+      if (prebuiltFlipTxs) {
+        closeTx = prebuiltFlipTxs.closeTx;
+        openTx = prebuiltFlipTxs.openTx;
+        setPrebuiltFlipTxs(null);
+      } else {
+        const currentPrice = prices[pairToUse]?.price;
+        if (!currentPrice) {
+          throw new Error(`No price available for ${pairToUse}. Wait for Pyth connection.`);
+        }
 
-      if (!openTx) {
-        throw new Error('Failed to build open transaction');
+        const txs = buildFlipTradeTxs({
+          trader: userAddress,
+          pairIndex: trade.pairIndex,
+          tradeIndex: trade.tradeIndex,
+          collateral: trade.collateral,
+          leverage: trade.leverage,
+          currentIsLong: trade.isLong,
+          currentPrice,
+        });
+        
+        closeTx = txs.closeTx;
+        openTx = txs.openTx;
       }
 
+      // Close position
+      await signAndWait(closeTx);
+      saveClosedTrade(userAddress, trade, finalPnL);
+
+      // Open opposite position
       const hash = await signAndBroadcast(openTx);
 
       // Add to pending trades for tracking
@@ -265,8 +260,6 @@ export function useFlipTrade() {
   }, [
     userAddress,
     delegateAddress,
-    buildCloseTradeTx,
-    buildOpenTradeTx,
     getTrades,
     getPnL,
     signAndWait,
@@ -279,6 +272,9 @@ export function useFlipTrade() {
     addPendingTradeHash,
     removePendingTradeHash,
     showToast,
+    prices,
+    prebuiltFlipTxs,
+    setPrebuiltFlipTxs,
   ]);
 
   return { flipTrade, isFlipping };

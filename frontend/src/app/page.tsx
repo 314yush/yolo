@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
@@ -9,12 +9,19 @@ import { useTxSigner } from '@/hooks/useTxSigner';
 import { useSound } from '@/hooks/useSound';
 import { useUsdcBalance } from '@/hooks/useUsdcBalance';
 import { useOpenTrades } from '@/hooks/useOpenTrades';
+import { useFastConfirmation } from '@/hooks/useFastConfirmation';
+import { usePythPricesSync } from '@/hooks/usePythPrices';
+import { usePrebuiltTx } from '@/hooks/usePrebuiltTx';
 import { PickerWheel } from '@/components/PickerWheel';
 import { PnLScreen } from '@/components/PnLScreen';
 import { LoginButton } from '@/components/LoginButton';
 import { SetupFlow } from '@/components/SetupFlow';
 import { ToastContainer } from '@/components/Toast';
 import { saveClosedTrade } from '@/lib/closedTrades';
+import { 
+  buildCloseTradeTx as buildCloseTradeTxDirect,
+  buildOpenTradeTx as buildOpenTradeTxDirect,
+} from '@/lib/avantisEncoder';
 import Link from 'next/link';
 import type { Trade, PnLData } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -40,6 +47,7 @@ export default function HomePage() {
     reset,
     toasts,
     removeToast,
+    prices,
   } = useTradeStore();
   
   const { delegateAddress } = useDelegateWallet();
@@ -53,7 +61,7 @@ export default function HomePage() {
       }
     }
   }, [authenticated, user, userAddress, setUserAddress]);
-  const { buildOpenTradeTx, buildCloseTradeTx, getTrades, getPnL } = useAvantisAPI();
+  const { getTrades, getPnL } = useAvantisAPI();  // Only read operations from backend
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playWin, playBoom } = useSound();
   const { balance: usdcBalance } = useUsdcBalance();
@@ -61,79 +69,73 @@ export default function HomePage() {
   // Start fetching open trades + PnL immediately when user logs in
   useOpenTrades();
   
+  // Stream real-time prices from Pyth (syncs to store)
+  usePythPricesSync();
+  
+  // Pre-build transactions when selection changes
+  const { prebuiltTx, isPrebuilding, rebuildNow } = usePrebuiltTx();
+  
+  // Track if trade was confirmed via Pusher before wheel finished
+  const tradeConfirmedRef = useRef(false);
+  const confirmationLatencyRef = useRef<number | null>(null);
+  
+  // Fast confirmation via Pusher events
+  const { startConfirmation } = useFastConfirmation(userAddress, {
+    onPickedUp: () => {},
+    onPreconfirmed: () => {},
+    onConfirmed: (latency) => {
+      tradeConfirmedRef.current = true;
+      confirmationLatencyRef.current = latency;
+    },
+    onFailed: (reason) => {
+      setError(reason || 'Trade failed');
+      setStage('error');
+    },
+  });
+  
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
 
   // Handle spin start - fire trade immediately
   const handleSpinStart = useCallback(async () => {
+    // Reset confirmation tracking
+    tradeConfirmedRef.current = false;
+    confirmationLatencyRef.current = null;
+    
     // Get selection directly from store to avoid stale closure
     const storeState = useTradeStore.getState();
     const currentSelection = storeState.selection;
+    const storedPrebuiltTx = storeState.prebuiltTx;
     
     // Get user address - from store or directly from Privy user
     const traderAddress = userAddress || (user?.wallet?.address as `0x${string}` | undefined);
     
-    console.log('handleSpinStart called:', {
-      traderAddress,
-      delegateAddress,
-      selection: currentSelection,
-    });
-    
-    if (!traderAddress || !delegateAddress || !currentSelection) {
-      console.error('Missing data for trade:', { 
-        traderAddress: traderAddress || 'MISSING', 
-        delegateAddress: delegateAddress || 'MISSING', 
-        currentSelection: currentSelection || 'MISSING' 
-      });
-      return;
-    }
+    if (!traderAddress || !delegateAddress || !currentSelection) return;
 
-    // Validate minimum position size before building transaction
-    // Avantis requires minimum position size of $100
+    // Validate minimum position size ($100 minimum)
     const MIN_POSITION_SIZE_USD = 100.0;
     const positionSize = collateral * currentSelection.leverage.value;
     if (positionSize < MIN_POSITION_SIZE_USD) {
       const minCollateral = MIN_POSITION_SIZE_USD / currentSelection.leverage.value;
       setError(
         `Position size $${positionSize.toFixed(2)} is below minimum $${MIN_POSITION_SIZE_USD.toFixed(2)}. ` +
-        `With ${currentSelection.leverage.value}x leverage, minimum collateral is $${minCollateral.toFixed(2)} USDC. ` +
-        `Current collateral: $${collateral.toFixed(2)} USDC`
+        `With ${currentSelection.leverage.value}x leverage, minimum collateral is $${minCollateral.toFixed(2)} USDC.`
       );
       setStage('error');
       return;
     }
 
-    console.log('Opening trade with:', {
-      trader: traderAddress,
-      delegate: delegateAddress,
-      pair: `${currentSelection.asset.name}/USD`,
-      pairIndex: currentSelection.asset.pairIndex,
-      leverage: currentSelection.leverage.value,
-      isLong: currentSelection.direction.isLong,
-      collateral: collateral,
-      positionSize: positionSize,
-    });
-
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:119',message:'handleSpinStart calling buildOpenTradeTx',data:{pair:`${currentSelection.asset.name}/USD`,pairIndex:currentSelection.asset.pairIndex,leverage:currentSelection.leverage.value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
-      // #endregion
-      
-      // Build the trade transaction
-      const unsignedTx = await buildOpenTradeTx({
+      // Use pre-built tx if available, otherwise build on-demand with direct encoding
+      const unsignedTx = storedPrebuiltTx ?? buildOpenTradeTxDirect({
         trader: traderAddress,
-        delegate: delegateAddress,
-        pair: `${currentSelection.asset.name}/USD`,
         pairIndex: currentSelection.asset.pairIndex,
+        collateral: collateral,
         leverage: currentSelection.leverage.value,
         isLong: currentSelection.direction.isLong,
-        collateral: collateral,
+        openPrice: prices[`${currentSelection.asset.name}/USD`]?.price || 0,
       });
-
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/24bed7da-def9-45ba-bbd5-6531501907f2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:132',message:'buildOpenTradeTx result',data:{hasUnsignedTx:!!unsignedTx},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'})}).catch(()=>{});
-      // #endregion
 
       if (!unsignedTx) {
         setError('Failed to build trade transaction');
@@ -141,19 +143,15 @@ export default function HomePage() {
         return;
       }
 
-      console.log('[handleSpinStart] Built unsigned tx:', unsignedTx);
-      console.log('[handleSpinStart] Transaction details:', {
-        to: unsignedTx.to,
-        dataLength: unsignedTx.data.length,
-        value: unsignedTx.value,
-        chainId: unsignedTx.chainId,
-      });
-
       // Sign and broadcast with delegate key
-      console.log('[handleSpinStart] Signing and broadcasting transaction...');
       const hash = await signAndBroadcast(unsignedTx);
-      console.log('[handleSpinStart] ✅ Trade tx hash:', hash);
       setTxHash(hash);
+      
+      // Clear the pre-built tx (it's been used)
+      useTradeStore.getState().setPrebuiltTx(null);
+      
+      // Start fast confirmation tracking via Pusher + polling
+      startConfirmation(hash);
       
       // Add to pending trades for optimistic update
       addPendingTradeHash(hash);
@@ -169,34 +167,33 @@ export default function HomePage() {
     user,
     delegateAddress,
     collateral,
-    buildOpenTradeTx,
+    prices,
     signAndBroadcast,
     setTxHash,
     setStage,
     setError,
     addPendingTradeHash,
+    startConfirmation,
   ]);
 
   // Handle spin complete - check trade status and show PnL
   const handleSpinComplete = useCallback(async () => {
     if (!userAddress) return;
+    
+    const wasConfirmedViaPusher = tradeConfirmedRef.current;
 
     try {
-      // Poll aggressively for the new trade (check every 500ms for first 10 seconds)
+      // Faster polling if already confirmed via Pusher
+      const pollingInterval = wasConfirmedViaPusher ? 100 : 500;
+      const maxAttempts = wasConfirmedViaPusher ? 50 : 20;
       let attempts = 0;
-      const maxAttempts = 20; // 20 * 500ms = 10 seconds
       
       const pollForTrade = async (): Promise<boolean> => {
         attempts++;
-        
-        // Fetch trades to get the newly opened position
         const trades = await getTrades(userAddress);
-        console.log(`[handleSpinComplete] Attempt ${attempts}: Fetched ${trades.length} trades`);
         
         if (trades.length > 0) {
-          // Get the most recent trade
           const latestTrade = trades[trades.length - 1];
-          console.log('[handleSpinComplete] Setting current trade:', latestTrade);
           setCurrentTrade(latestTrade);
           
           // Initialize PnL data
@@ -247,47 +244,41 @@ export default function HomePage() {
         return;
       }
       
-      // Poll every 500ms
+      // Poll at determined interval
       while (attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, pollingInterval));
         if (await pollForTrade()) {
           return;
         }
       }
       
-      // Still no trade after aggressive polling - show PnL screen, it will continue polling
-      console.warn('[handleSpinComplete] Trade not found after aggressive polling, showing PnL screen');
+      // Still no trade after polling - show PnL screen, it will continue polling
       setStage('pnl');
-    } catch (err) {
-      console.error('[handleSpinComplete] Failed to fetch trade:', err);
-      setStage('pnl'); // Still show PnL screen, it will poll for updates
+    } catch {
+      setStage('pnl'); // Show PnL screen, it will poll for updates
     }
   }, [userAddress, getTrades, getPnL, setCurrentTrade, setPnLData, setStage, playWin, incrementTotalTrades, removePendingTradeHash]);
 
-  // Handle close trade
+  // Handle close trade - uses pre-built tx or direct encoding (no SDK)
   const handleCloseTrade = useCallback(async () => {
-    const { currentTrade, pnlData } = useTradeStore.getState();
+    const { currentTrade, pnlData, prebuiltCloseTx, setPrebuiltCloseTx } = useTradeStore.getState();
     if (!userAddress || !delegateAddress || !currentTrade) return;
 
     playBoom();
     setIsClosing(true);
 
     try {
-      const unsignedTx = await buildCloseTradeTx(
-        userAddress,
-        delegateAddress,
-        currentTrade.pairIndex,
-        currentTrade.tradeIndex,
-        currentTrade.collateral
-      );
+      // Use pre-built tx if available, otherwise build on-demand
+      const closeTx = prebuiltCloseTx 
+        ? (setPrebuiltCloseTx(null), prebuiltCloseTx)
+        : buildCloseTradeTxDirect({
+            trader: userAddress,
+            pairIndex: currentTrade.pairIndex,
+            tradeIndex: currentTrade.tradeIndex,
+            collateralToClose: currentTrade.collateral,
+          });
 
-      if (!unsignedTx) {
-        setError('Failed to build close transaction');
-        return;
-      }
-
-      const { hash, receipt } = await signAndWait(unsignedTx);
-      console.log('Trade closed:', hash, receipt);
+      await signAndWait(closeTx);
       
       // Save closed trade with current PnL data
       if (userAddress && currentTrade) {
@@ -297,12 +288,11 @@ export default function HomePage() {
       // Reset and go back to idle
       reset();
     } catch (err) {
-      console.error('Close trade error:', err);
       setError(err instanceof Error ? err.message : 'Failed to close trade');
     } finally {
       setIsClosing(false);
     }
-  }, [userAddress, delegateAddress, buildCloseTradeTx, signAndWait, setError, reset, playBoom]);
+  }, [userAddress, delegateAddress, signAndWait, setError, reset, playBoom]);
 
   // Handle roll again
   const handleRollAgain = useCallback(() => {

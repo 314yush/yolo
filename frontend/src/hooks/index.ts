@@ -1,5 +1,11 @@
 export { useAvantisAPI } from './useAvantisAPI';
 export { useDelegateWallet } from './useDelegateWallet';
+export { useFastConfirmation } from './useFastConfirmation';
 export { usePnL } from './usePnL';
+export { usePrebuiltTx } from './usePrebuiltTx';
+export { usePrebuiltCloseTx } from './usePrebuiltCloseTx';
+export { usePrebuiltFlipTx } from './usePrebuiltFlipTx';
+export { usePusherEvents, useAutoPusherEvents } from './usePusherEvents';
+export { usePythPrices, usePythPricesSync } from './usePythPrices';
 export { useSound } from './useSound';
 export { useTxSigner } from './useTxSigner';

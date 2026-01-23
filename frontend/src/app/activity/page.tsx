@@ -9,14 +9,16 @@ import { useTxSigner } from '@/hooks/useTxSigner';
 import { TradeCard } from '@/components/TradeCard';
 import { ToastContainer } from '@/components/Toast';
 import { saveClosedTrade, loadClosedTrades } from '@/lib/closedTrades';
+import { buildCloseTradeTx as buildCloseTradeTxDirect, buildFlipTradeTxs } from '@/lib/avantisEncoder';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 export default function ActivityPage() {
   const router = useRouter();
   const { userAddress, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
-  const { getTrades, getPnL, buildCloseTradeTx, buildOpenTradeTx } = useAvantisAPI();
+  const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
   const { signAndWait, signAndBroadcast } = useTxSigner();
+  const { prices } = useTradeStore();  // Real-time Pyth prices
   
   const [tradesWithPnL, setTradesWithPnL] = useState<Array<{ trade: Trade; pnlData?: PnLData }>>([]);
   const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
@@ -130,29 +132,6 @@ export default function ActivityPage() {
       const tradeKey = `${verifiedTrade.pairIndex}-${verifiedTrade.tradeIndex}`;
       const finalPnL = pnlMap.get(tradeKey) || null;
 
-      // 1. Close current trade - using the same pattern as handleCloseTrade
-      const closeTx = await buildCloseTradeTx(
-        userAddress,
-        delegateAddress,
-        verifiedTrade.pairIndex,
-        verifiedTrade.tradeIndex,
-        verifiedTrade.collateral
-      );
-
-      if (!closeTx) {
-        throw new Error('Failed to build close transaction');
-      }
-
-      await signAndWait(closeTx);
-
-      // Save closed trade (flip closes the original trade)
-      if (userAddress) {
-        saveClosedTrade(userAddress, verifiedTrade, finalPnL);
-        // Reload closed trades
-        const updatedClosed = loadClosedTrades(userAddress);
-        setClosedTrades(updatedClosed);
-      }
-
       // Validate minimum position size before opening new trade
       // Avantis requires minimum position size of $100
       const MIN_POSITION_SIZE_USD = 100.0;
@@ -166,22 +145,34 @@ export default function ActivityPage() {
         );
       }
 
-      // 2. Open opposite direction - using verified pair that matches pairIndex
-      // Using the same pattern as handleSpinStart
-      const openTx = await buildOpenTradeTx({
-        trader: userAddress,
-        delegate: delegateAddress,
-        pair: verifiedTrade.pair, // Use verified pair that matches pairIndex
-        pairIndex: verifiedTrade.pairIndex,
-        leverage: verifiedTrade.leverage,
-        isLong: !verifiedTrade.isLong, // Flip direction
-        collateral: verifiedTrade.collateral,
-      });
-
-      if (!openTx) {
-        throw new Error('Failed to build open transaction');
+      // Get current price from Pyth
+      const currentPrice = prices[verifiedTrade.pair]?.price;
+      if (!currentPrice) {
+        throw new Error(`No price available for ${verifiedTrade.pair}. Wait for Pyth connection.`);
       }
 
+      // Build flip txs with direct encoding
+      const { closeTx, openTx } = buildFlipTradeTxs({
+        trader: userAddress,
+        pairIndex: verifiedTrade.pairIndex,
+        tradeIndex: verifiedTrade.tradeIndex,
+        collateral: verifiedTrade.collateral,
+        leverage: verifiedTrade.leverage,
+        currentIsLong: verifiedTrade.isLong,
+        currentPrice,
+      });
+
+      // Close position
+      await signAndWait(closeTx);
+
+      // Save closed trade
+      if (userAddress) {
+        saveClosedTrade(userAddress, verifiedTrade, finalPnL);
+        const updatedClosed = loadClosedTrades(userAddress);
+        setClosedTrades(updatedClosed);
+      }
+
+      // Open opposite position
       await signAndBroadcast(openTx);
 
       // Refresh trades after a delay
@@ -227,18 +218,6 @@ export default function ActivityPage() {
     setClosingTradeIndex(tradeIndex);
 
     try {
-      const closeTx = await buildCloseTradeTx(
-        userAddress,
-        delegateAddress,
-        trade.pairIndex,
-        trade.tradeIndex,
-        trade.collateral
-      );
-
-      if (!closeTx) {
-        throw new Error('Failed to build close transaction');
-      }
-
       // Get final PnL before closing
       const positions = await getPnL(userAddress);
       const pnlMap = new Map<string, PnLData>();
@@ -248,6 +227,14 @@ export default function ActivityPage() {
       });
       const tradeKey = `${trade.pairIndex}-${trade.tradeIndex}`;
       const finalPnL = pnlMap.get(tradeKey) || null;
+
+      // Build close tx with direct encoding
+      const closeTx = buildCloseTradeTxDirect({
+        trader: userAddress,
+        pairIndex: trade.pairIndex,
+        tradeIndex: trade.tradeIndex,
+        collateralToClose: trade.collateral,
+      });
 
       await signAndWait(closeTx);
 

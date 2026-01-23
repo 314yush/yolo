@@ -282,14 +282,41 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
 
       console.log('Unsigned tx:', unsignedTx);
 
-      // Send transaction on Base
+      // Estimate gas to avoid eth_fillTransaction (not supported on Base)
+      let estimatedGas: string;
+      try {
+        estimatedGas = await provider.request({
+          method: 'eth_estimateGas',
+          params: [{
+            from: userAddress,
+            to: unsignedTx.to,
+            data: unsignedTx.data,
+            value: unsignedTx.value || '0x0',
+          }],
+        });
+        console.log('Estimated gas for delegation:', estimatedGas);
+      } catch (error) {
+        console.warn('Gas estimation failed, using fallback:', error);
+        estimatedGas = '0x493e0'; // 300k gas fallback
+      }
+
+      // Get gas price
+      const gasPrice = await provider.request({
+        method: 'eth_gasPrice',
+        params: [],
+      });
+      console.log('Gas price:', gasPrice);
+
+      // Send transaction on Base with explicit gas fields
       const txHash = await provider.request({
         method: 'eth_sendTransaction',
         params: [{
           from: userAddress,
           to: unsignedTx.to,
           data: unsignedTx.data,
-          value: unsignedTx.value,
+          value: unsignedTx.value || '0x0',
+          gas: estimatedGas,
+          gasPrice: gasPrice,
         }],
       });
 
@@ -337,13 +364,39 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
 
       console.log('USDC approval tx:', unsignedTx);
 
+      // Estimate gas to avoid eth_fillTransaction (not supported on Base)
+      let estimatedGas: string;
+      try {
+        estimatedGas = await provider.request({
+          method: 'eth_estimateGas',
+          params: [{
+            from: userAddress,
+            to: unsignedTx.to,
+            data: unsignedTx.data,
+            value: unsignedTx.value || '0x0',
+          }],
+        });
+        console.log('Estimated gas for approval:', estimatedGas);
+      } catch (error) {
+        console.warn('Gas estimation failed, using fallback:', error);
+        estimatedGas = '0x493e0'; // 300k gas fallback
+      }
+
+      // Get gas price
+      const gasPrice = await provider.request({
+        method: 'eth_gasPrice',
+        params: [],
+      });
+
       const txHash = await provider.request({
         method: 'eth_sendTransaction',
         params: [{
           from: userAddress,
           to: unsignedTx.to,
           data: unsignedTx.data,
-          value: unsignedTx.value,
+          value: unsignedTx.value || '0x0',
+          gas: estimatedGas,
+          gasPrice: gasPrice,
         }],
       });
 
@@ -400,12 +453,23 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       
       console.log(`Funding delegate with ${RECOMMENDED_DELEGATE_ETH} ETH (${amountHex} wei)`);
       
+      // Estimate gas for simple ETH transfer (21000 gas standard)
+      const estimatedGas = '0x5208'; // 21000 gas for simple transfer
+      
+      // Get gas price
+      const gasPrice = await provider.request({
+        method: 'eth_gasPrice',
+        params: [],
+      });
+      
       const txHash = await provider.request({
         method: 'eth_sendTransaction',
         params: [{
           from: userAddress,
           to: delegateAddress,
           value: amountHex,
+          gas: estimatedGas,
+          gasPrice: gasPrice,
         }],
       });
 

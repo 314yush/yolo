@@ -31,12 +31,12 @@ export const DIRECTIONS: Direction[] = [
 // We use $10 to provide a comfortable buffer and ensure trades succeed
 export const DEFAULT_COLLATERAL = 10; // $10 USDC (ensures $5,000 position at 500x, well above $100 minimum)
 
-// Animation timings (in ms)
+// Animation timings (in ms) - Fast mode for instant trading
 export const WHEEL_TIMINGS = {
-  ASSET_STOP: 2500,
-  LEVERAGE_STOP: 5000,
-  DIRECTION_STOP: 7500,
-  TOTAL_DURATION: 8000,
+  ASSET_STOP: 1000,       // 1s
+  LEVERAGE_STOP: 2000,    // 2s  
+  DIRECTION_STOP: 3000,   // 3s
+  TOTAL_DURATION: 3500,   // 3.5s total
 };
 
 // Colors
@@ -60,26 +60,25 @@ if (!baseRpcUrl) {
   );
 }
 
+// Flashblock RPC for faster preconfirmations (optional)
+// Base Flashblocks provide ~200ms preconfirmation vs ~2s block time
+const flashblockRpcUrl = process.env.NEXT_PUBLIC_FLASHBLOCK_RPC_URL || 'https://mainnet-preconf.base.org';
+
 export const CHAIN_CONFIG = {
   chainId: 8453,
   name: 'Base',
   // Use Alchemy RPC to avoid rate limiting from public endpoint
   rpcUrl: baseRpcUrl,
+  // Flashblock RPC for faster preconfirmations (used for tx broadcast)
+  flashblockRpcUrl,
+  // Whether to use Flashblock RPC for broadcasting (can be toggled)
+  useFlashblock: process.env.NEXT_PUBLIC_USE_FLASHBLOCK === 'true',
 };
 
 // Contract addresses on Base
 export const CONTRACTS = {
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`,
-  // Avantis contracts - these will be used by the backend
 };
-
-// API URL
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-// Debug: Log API URL (only in browser, not during build)
-if (typeof window !== 'undefined') {
-  console.log('🔗 API URL:', apiUrl);
-}
-export const API_URL = apiUrl;
 
 // Local storage keys
 export const STORAGE_KEYS = {

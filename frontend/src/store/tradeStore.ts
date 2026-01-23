@@ -4,11 +4,28 @@ import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constan
 import { loadSettings } from '@/lib/settings';
 import { loadStats, saveStats } from '@/lib/stats';
 import type { Toast } from '@/components/Toast';
+import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
+
+// Confirmation stages for fast trading feedback
+export type ConfirmationStage = 
+  | 'none'           // No active confirmation
+  | 'broadcasting'   // TX being broadcast
+  | 'submitted'      // TX submitted to mempool
+  | 'picked_up'      // Keeper picked up order (Pusher: OrderPickedUpForExecution)
+  | 'preconfirmed'   // Flashblock preconfirmation (Pusher: ExecutionConfirmedInFlashblock)
+  | 'confirmed'      // Final confirmation (Pusher: OrderFilled)
+  | 'failed';        // Order canceled/failed (Pusher: OrderCanceled)
 
 interface TradeState {
   // App stage
   stage: AppStage;
   setStage: (stage: AppStage) => void;
+  
+  // Fast trading confirmation stage
+  confirmationStage: ConfirmationStage;
+  setConfirmationStage: (stage: ConfirmationStage) => void;
+  confirmationTimestamp: number | null; // When confirmation started (for latency tracking)
+  setConfirmationTimestamp: (ts: number | null) => void;
 
   // Wheel selection (determined immediately on roll)
   selection: WheelSelection | null;
@@ -69,6 +86,30 @@ interface TradeState {
   showToast: (message: string, type?: 'success' | 'error' | 'info', duration?: number) => void;
   removeToast: (id: string) => void;
 
+  // Real-time prices from Pyth
+  prices: Record<string, { price: number; timestamp: number }>;
+  setPrices: (prices: Record<string, { price: number; timestamp: number }>) => void;
+  
+  // Pre-built transaction for instant execution
+  prebuiltTx: { to: string; data: string; value: string; chainId: number } | null;
+  setPrebuiltTx: (tx: { to: string; data: string; value: string; chainId: number } | null) => void;
+  isPrebuilding: boolean;
+  setIsPrebuilding: (building: boolean) => void;
+  prebuildError: string | null;
+  setPrebuildError: (error: string | null) => void;
+
+  // Pre-built CLOSE transaction (for current trade)
+  prebuiltCloseTx: EncodedTransaction | null;
+  setPrebuiltCloseTx: (tx: EncodedTransaction | null) => void;
+  isPrebuildingClose: boolean;
+  setIsPrebuildingClose: (building: boolean) => void;
+
+  // Pre-built FLIP transactions (close + open opposite)
+  prebuiltFlipTxs: FlipTradeResult | null;
+  setPrebuiltFlipTxs: (txs: FlipTradeResult | null) => void;
+  isPrebuildingFlip: boolean;
+  setIsPrebuildingFlip: (building: boolean) => void;
+
   // Reset state for new roll
   reset: () => void;
 }
@@ -97,6 +138,20 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
     return new Set<`0x${string}`>();
   })(),
+  // Fast trading confirmation state
+  confirmationStage: 'none',
+  confirmationTimestamp: null,
+  // Real-time prices from Pyth
+  prices: {},
+  // Pre-built transaction
+  prebuiltTx: null,
+  isPrebuilding: false,
+  prebuildError: null,
+  // Pre-built close/flip transactions
+  prebuiltCloseTx: null,
+  isPrebuildingClose: false,
+  prebuiltFlipTxs: null,
+  isPrebuildingFlip: false,
   settings: (() => {
     // Load settings from localStorage on store init
     if (typeof window !== 'undefined') {
@@ -122,6 +177,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   // Setters
   setStage: (stage) => set({ stage }),
   setSelection: (selection) => set({ selection }),
+  setConfirmationStage: (confirmationStage) => set({ confirmationStage }),
+  setConfirmationTimestamp: (confirmationTimestamp) => set({ confirmationTimestamp }),
   setCurrentTrade: (currentTrade) => set({ currentTrade }),
   setPnLData: (pnlData) => set({ pnlData }),
   setTxHash: (txHash) => set({ txHash }),
@@ -189,6 +246,20 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }));
   },
 
+  // Real-time prices
+  setPrices: (prices) => set({ prices }),
+  
+  // Pre-built transaction
+  setPrebuiltTx: (prebuiltTx) => set({ prebuiltTx }),
+  setIsPrebuilding: (isPrebuilding) => set({ isPrebuilding }),
+  setPrebuildError: (prebuildError) => set({ prebuildError }),
+
+  // Pre-built close/flip transactions
+  setPrebuiltCloseTx: (prebuiltCloseTx) => set({ prebuiltCloseTx }),
+  setIsPrebuildingClose: (isPrebuildingClose) => set({ isPrebuildingClose }),
+  setPrebuiltFlipTxs: (prebuiltFlipTxs) => set({ prebuiltFlipTxs }),
+  setIsPrebuildingFlip: (isPrebuildingFlip) => set({ isPrebuildingFlip }),
+
   // Randomly select asset, leverage, direction
   // Uses weighted random selection for leverage - higher leverage = more likely
   randomizeSelection: () => {
@@ -226,5 +297,14 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     txHash: null,
     isExecuting: false,
     error: null,
+    confirmationStage: 'none',
+    confirmationTimestamp: null,
+    prebuiltTx: null,
+    isPrebuilding: false,
+    prebuildError: null,
+    prebuiltCloseTx: null,
+    isPrebuildingClose: false,
+    prebuiltFlipTxs: null,
+    isPrebuildingFlip: false,
   }),
 }));
