@@ -6,7 +6,7 @@ import { useDelegateWallet } from './useDelegateWallet';
 import { useAvantisAPI } from './useAvantisAPI';
 import { useTxSigner } from './useTxSigner';
 import { saveClosedTrade } from '@/lib/closedTrades';
-import { buildFlipTradeTxs } from '@/lib/avantisEncoder';
+import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect } from '@/lib/avantisEncoder';
 import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
 
@@ -22,8 +22,6 @@ export function useFlipTrade() {
     removePendingTradeHash, 
     showToast,
     prices,           // Real-time Pyth prices
-    prebuiltFlipTxs,  // Pre-built txs (if available)
-    setPrebuiltFlipTxs,
   } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
   const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
@@ -96,36 +94,37 @@ export function useFlipTrade() {
         );
       }
 
-      let closeTx, openTx;
+      // Build close transaction
+      const closeTx = buildCloseTradeTxDirect({
+        trader: userAddress,
+        pairIndex: trade.pairIndex,
+        tradeIndex: trade.tradeIndex,
+        collateralToClose: trade.collateral,
+      });
 
-      // Use pre-built txs if available, otherwise build on-demand
-      if (prebuiltFlipTxs) {
-        closeTx = prebuiltFlipTxs.closeTx;
-        openTx = prebuiltFlipTxs.openTx;
-        setPrebuiltFlipTxs(null);
-      } else {
-        const currentPrice = prices[pairToUse]?.price;
-        if (!currentPrice) {
-          throw new Error(`No price available for ${pairToUse}. Wait for Pyth connection.`);
-        }
-
-        const txs = buildFlipTradeTxs({
-          trader: userAddress,
-          pairIndex: trade.pairIndex,
-          tradeIndex: trade.tradeIndex,
-          collateral: trade.collateral,
-          leverage: trade.leverage,
-          currentIsLong: trade.isLong,
-          currentPrice,
-        });
-        
-        closeTx = txs.closeTx;
-        openTx = txs.openTx;
-      }
-
-      // Close position
+      // Close position first
       await signAndWait(closeTx);
       saveClosedTrade(userAddress, trade, finalPnL);
+
+      // Wait a moment for the close to settle
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Rebuild open transaction with fresh price data after closing
+      // This ensures we use the latest price and that the close has completed
+      const currentPrice = prices[pairToUse]?.price;
+      if (!currentPrice) {
+        throw new Error(`No price available for ${pairToUse}. Wait for Pyth connection.`);
+      }
+
+      // Build open transaction with fresh price
+      const openTx = buildOpenTradeTxDirect({
+        trader: userAddress,
+        pairIndex: trade.pairIndex,
+        collateral: trade.collateral, // Use same collateral amount
+        leverage: trade.leverage,
+        isLong: !trade.isLong, // Flip direction
+        openPrice: currentPrice, // Use current price
+      });
 
       // Open opposite position
       const hash = await signAndBroadcast(openTx);
@@ -273,8 +272,6 @@ export function useFlipTrade() {
     removePendingTradeHash,
     showToast,
     prices,
-    prebuiltFlipTxs,
-    setPrebuiltFlipTxs,
   ]);
 
   return { flipTrade, isFlipping };

@@ -21,7 +21,7 @@ export function LoginButton() {
     return (
       <button
         disabled
-        className="px-6 py-3 text-lg font-bold bg-gray-600 text-gray-400 brutal-button"
+        className="px-5 sm:px-6 py-2.5 sm:py-3 text-base sm:text-lg font-bold bg-gray-600 text-gray-400 brutal-button min-h-[44px] touch-manipulation"
       >
         LOADING...
       </button>
@@ -34,11 +34,11 @@ export function LoginButton() {
       : 'Connected';
 
     return (
-      <div className="flex items-center gap-4">
-        <span className="text-white/70 text-sm font-mono">{displayAddress}</span>
+      <div className="flex items-center gap-2 sm:gap-3">
+        <span className="text-white/70 text-xs sm:text-sm font-mono hidden sm:inline">{displayAddress}</span>
         <button
           onClick={logout}
-          className="px-4 py-2 text-sm font-bold bg-white/10 text-white border-2 border-white/20 hover:bg-white/20 transition-colors"
+          className="px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold bg-white/10 text-white border-2 border-white/20 hover:bg-white/20 transition-colors rounded touch-manipulation min-h-[44px]"
         >
           LOGOUT
         </button>
@@ -49,8 +49,7 @@ export function LoginButton() {
   return (
     <button
       onClick={login}
-      className="px-6 py-3 text-lg font-bold brutal-button"
-      style={{ backgroundColor: '#CCFF00', color: '#000' }}
+      className="px-5 sm:px-6 py-2.5 sm:py-3 text-base sm:text-lg font-bold brutal-button bg-[#CCFF00] text-black min-h-[44px] touch-manipulation"
     >
       CONNECT
     </button>

@@ -214,30 +214,47 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
   };
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center w-full px-4">
       {/* Selection chips */}
-      <div className="flex flex-wrap gap-3 mb-8 justify-center min-h-[60px]">
+      <div 
+        className="flex flex-wrap gap-2 sm:gap-3 mb-6 sm:mb-8 justify-center min-h-[60px] items-start"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label="Selected trade parameters"
+      >
         {showAssetChip && selection?.asset && (
           <div
-            className="selection-chip px-6 py-3 text-black font-bold text-xl animate-bounce-in flex items-center gap-2"
+            className="selection-chip px-4 sm:px-6 py-2 sm:py-3 text-black font-bold text-lg sm:text-xl animate-bounce-in flex items-center gap-2"
             style={{ backgroundColor: selection.asset.color }}
+            role="status"
+            aria-label={`Selected asset: ${selection.asset.name}`}
           >
-            <img src={selection.asset.icon} alt={selection.asset.name} className="w-6 h-6" />
-            {selection.asset.name}
+            <img 
+              src={selection.asset.icon} 
+              alt={`${selection.asset.name} icon`} 
+              className="w-5 h-5 sm:w-6 sm:h-6"
+              aria-hidden="true"
+            />
+            <span>{selection.asset.name}</span>
           </div>
         )}
         {showLeverageChip && selection?.leverage && (
           <div
-            className="selection-chip px-6 py-3 text-black font-bold text-xl animate-bounce-in"
+            className="selection-chip px-4 sm:px-6 py-2 sm:py-3 text-black font-bold text-lg sm:text-xl animate-bounce-in"
             style={{ backgroundColor: selection.leverage.color }}
+            role="status"
+            aria-label={`Selected leverage: ${selection.leverage.name}`}
           >
             {selection.leverage.name}
           </div>
         )}
         {showDirectionChip && selection?.direction && (
           <div
-            className="selection-chip px-6 py-3 text-black font-bold text-xl animate-bounce-in"
+            className="selection-chip px-4 sm:px-6 py-2 sm:py-3 text-black font-bold text-lg sm:text-xl animate-bounce-in"
             style={{ backgroundColor: selection.direction.color }}
+            role="status"
+            aria-label={`Selected direction: ${selection.direction.name}`}
           >
             {selection.direction.name}
           </div>
@@ -246,11 +263,28 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
 
       {/* Wheel container */}
       <div
-        className="relative touch-none cursor-pointer"
-        style={{ width: '400px', height: '400px' }}
+        className="relative touch-none cursor-pointer w-full max-w-[400px] aspect-square"
         onClick={handleWheelClick}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && stage === 'idle') {
+            e.preventDefault();
+            handleWheelClick();
+          }
+        }}
+        role="button"
+        tabIndex={stage === 'idle' ? 0 : -1}
+        aria-label="Spin the wheel to select trade parameters"
+        aria-disabled={stage !== 'idle'}
+        aria-busy={stage === 'spinning' || stage === 'executing'}
       >
-        <svg width="400" height="400" className="absolute inset-0 pointer-events-none">
+        <svg 
+          className="w-full h-full" 
+          viewBox="0 0 400 400" 
+          preserveAspectRatio="xMidYMid meet"
+          aria-hidden="true"
+          role="img"
+          aria-label="Trading wheel with asset, leverage, and direction segments"
+        >
           {/* OUTER RING - Assets */}
           <g
             style={{
@@ -292,26 +326,28 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
         </svg>
 
         {/* Pointer at top */}
-        <div className="absolute -top-1 left-1/2 -translate-x-1/2 z-10">
-          <svg width="50" height="50" viewBox="0 0 50 50">
+        <div className="absolute -top-1 left-1/2 -translate-x-1/2 z-10 w-12 h-12 sm:w-14 sm:h-14">
+          <svg className="w-full h-full" viewBox="0 0 50 50" preserveAspectRatio="xMidYMid meet">
             <polygon points="25,40 8,8 42,8" fill="#CCFF00" stroke="#000" strokeWidth="4" />
           </svg>
         </div>
 
         {/* Outer border with shadow */}
-        <div
-          className="absolute inset-0 rounded-full border-8 border-black pointer-events-none"
-          style={{ boxShadow: '8px 8px 0px 0px rgba(0,0,0,1)' }}
-        />
+        <div className="absolute inset-0 rounded-full border-8 border-black pointer-events-none shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]" />
       </div>
 
       {/* Status text */}
       {stage === 'spinning' && (
-        <div className="mt-6 text-white text-sm opacity-50 text-center">
-          {!showAssetChip && 'SPINNING ASSET...'}
-          {showAssetChip && !showLeverageChip && 'SPINNING LEVERAGE...'}
-          {showAssetChip && showLeverageChip && !showDirectionChip && 'SPINNING DIRECTION...'}
-          {showAssetChip && showLeverageChip && showDirectionChip && 'OPENING POSITION...'}
+        <div 
+          className="mt-6 sm:mt-8 text-white/60 text-sm sm:text-base text-center font-medium px-4 min-h-[24px]"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {!showAssetChip && <span>SPINNING ASSET...</span>}
+          {showAssetChip && !showLeverageChip && <span>SPINNING LEVERAGE...</span>}
+          {showAssetChip && showLeverageChip && !showDirectionChip && <span>SPINNING DIRECTION...</span>}
+          {showAssetChip && showLeverageChip && showDirectionChip && <span>OPENING POSITION...</span>}
         </div>
       )}
     </div>

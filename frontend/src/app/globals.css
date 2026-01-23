@@ -9,6 +9,7 @@
   --color-sol: #14F195;
   --color-xrp: #00AAE4;
   --color-warning: #FFD60A;
+  --color-danger: #FF006E;
 }
 
 /* Neo-brutalist base styles */
@@ -19,11 +20,16 @@ body {
   overflow-x: hidden;
 }
 
-/* Brutal button styles */
+/* Brutal button styles - PRIMARY (lime) */
 .brutal-button {
   border: 8px solid black;
   box-shadow: 8px 8px 0px 0px rgba(0, 0, 0, 1);
   transition: all 0.1s ease-out;
+  border-radius: 0; /* NO rounded corners */
+}
+
+.brutal-button:hover:not(:disabled) {
+  box-shadow: 10px 10px 0px 0px rgba(0, 0, 0, 1);
 }
 
 .brutal-button:active:not(:disabled) {
@@ -36,10 +42,145 @@ body {
   cursor: not-allowed;
 }
 
-/* Selection chip styles */
+/* Brutal button DANGER variant (pink/red) */
+.brutal-button-danger {
+  border: 8px solid black;
+  box-shadow: 8px 8px 0px 0px rgba(0, 0, 0, 1);
+  transition: all 0.1s ease-out;
+  border-radius: 0;
+  background-color: #FF006E;
+  color: white;
+}
+
+.brutal-button-danger:hover:not(:disabled) {
+  box-shadow: 10px 10px 0px 0px rgba(0, 0, 0, 1);
+}
+
+.brutal-button-danger:active:not(:disabled) {
+  transform: translate(4px, 4px);
+  box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 1);
+}
+
+.brutal-button-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Brutal button SECONDARY variant (dark) */
+.brutal-button-secondary {
+  border: 8px solid black;
+  box-shadow: 8px 8px 0px 0px rgba(0, 0, 0, 1);
+  transition: all 0.1s ease-out;
+  border-radius: 0;
+  background-color: #1a1a1a;
+  color: white;
+}
+
+.brutal-button-secondary:hover:not(:disabled) {
+  background-color: #2a2a2a;
+  box-shadow: 10px 10px 0px 0px rgba(0, 0, 0, 1);
+}
+
+.brutal-button-secondary:active:not(:disabled) {
+  transform: translate(4px, 4px);
+  box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 1);
+}
+
+.brutal-button-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Brutal card - NO rounded corners */
+.brutal-card {
+  border: 4px solid #333;
+  box-shadow: 6px 6px 0px 0px rgba(51, 51, 51, 0.5);
+  border-radius: 0;
+  background-color: #111827;
+}
+
+.brutal-card-winning {
+  border: 4px solid #CCFF00;
+  box-shadow: 6px 6px 0px 0px rgba(204, 255, 0, 0.3);
+  background-color: #111827;
+}
+
+.brutal-card-losing {
+  border: 4px solid #FF006E;
+  box-shadow: 6px 6px 0px 0px rgba(255, 0, 110, 0.3);
+  background-color: #111827;
+}
+
+/* Selection chip styles - NO rounded corners */
 .selection-chip {
   border: 4px solid black;
   box-shadow: 4px 4px 0px 0px rgba(0, 0, 0, 1);
+  border-radius: 0;
+}
+
+/* Brutal toggle - chunky ON/OFF */
+.brutal-toggle {
+  display: flex;
+  gap: 0;
+}
+
+.brutal-toggle-option {
+  border: 4px solid #CCFF00;
+  padding: 8px 16px;
+  font-weight: bold;
+  font-size: 14px;
+  transition: all 0.1s ease-out;
+  border-radius: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brutal-toggle-option:first-child {
+  border-right: 2px solid #CCFF00;
+}
+
+.brutal-toggle-option:last-child {
+  border-left: 2px solid #CCFF00;
+}
+
+.brutal-toggle-option.active {
+  background-color: #CCFF00;
+  color: black;
+  box-shadow: inset 4px 4px 0px 0px rgba(0, 0, 0, 0.3);
+}
+
+.brutal-toggle-option:not(.active) {
+  background-color: #1a1a1a;
+  color: #CCFF00;
+  box-shadow: 4px 4px 0px 0px rgba(204, 255, 0, 0.3);
+}
+
+.brutal-toggle-option:not(.active):hover {
+  background-color: #2a2a2a;
+}
+
+/* Brutal progress bar */
+.brutal-progress {
+  border: 4px solid black;
+  background-color: #1a1a1a;
+  height: 24px;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.brutal-progress-bar {
+  height: 100%;
+  transition: width 0.3s ease-out;
+}
+
+.brutal-progress-bar-green {
+  background-color: #CCFF00;
+}
+
+.brutal-progress-bar-red {
+  background-color: #FF006E;
 }
 
 /* YOLO logo styles */
@@ -72,18 +213,84 @@ body {
   animation: bounceIn 0.5s ease-out forwards;
 }
 
-/* Pulse animation for PnL */
+/* Pulse animation for PnL - more dramatic */
 @keyframes pnlPulse {
   0%, 100% {
     transform: scale(1);
   }
   50% {
-    transform: scale(1.02);
+    transform: scale(1.03);
   }
 }
 
 .animate-pnl-pulse {
-  animation: pnlPulse 0.5s ease-in-out infinite;
+  animation: pnlPulse 0.8s ease-in-out infinite;
+}
+
+/* PnL update flash animation */
+@keyframes pnlFlash {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  25% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-pnl-flash {
+  animation: pnlFlash 0.3s ease-out;
+}
+
+/* Danger pulse for near liquidation */
+@keyframes dangerPulse {
+  0%, 100% {
+    border-color: #FF006E;
+    box-shadow: 0 0 0 0 rgba(255, 0, 110, 0);
+  }
+  50% {
+    border-color: #FF006E;
+    box-shadow: 0 0 20px 4px rgba(255, 0, 110, 0.5);
+  }
+}
+
+.animate-danger-pulse {
+  animation: dangerPulse 1s ease-in-out infinite;
+}
+
+/* Success pulse for near TP */
+@keyframes successPulse {
+  0%, 100% {
+    border-color: #CCFF00;
+    box-shadow: 0 0 0 0 rgba(204, 255, 0, 0);
+  }
+  50% {
+    border-color: #CCFF00;
+    box-shadow: 0 0 20px 4px rgba(204, 255, 0, 0.5);
+  }
+}
+
+.animate-success-pulse {
+  animation: successPulse 1s ease-in-out infinite;
+}
+
+/* Timer tick animation */
+@keyframes timerTick {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.animate-timer-tick {
+  animation: timerTick 1s ease-in-out infinite;
 }
 
 /* Glow effect for positive PnL */
@@ -124,6 +331,12 @@ body {
   padding-top: env(safe-area-inset-top);
 }
 
+/* Touch manipulation for better mobile interactions */
+.touch-manipulation {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* Slide-in animation for toast */
 @keyframes slideIn {
   from {
@@ -138,4 +351,63 @@ body {
 
 .animate-slide-in {
   animation: slideIn 0.3s ease-out forwards;
+}
+
+/* Screen reader only - visually hidden but accessible to assistive tech */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.sr-only:not(:focus):not(:active) {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+}
+
+/* Focus visible styles for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid #CCFF00;
+  outline-offset: 4px;
+}
+
+/* Ensure focus styles work even when using custom focus classes */
+.focus\:outline-none:focus-visible {
+  outline: none;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .brutal-button {
+    border-width: 10px;
+  }
+  
+  .selection-chip {
+    border-width: 6px;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  .animate-pulse,
+  .animate-bounce-in,
+  .animate-pnl-pulse,
+  .animate-slide-in {
+    animation: none !important;
+  }
 }

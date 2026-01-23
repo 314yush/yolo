@@ -508,9 +508,9 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   // Show loading while Privy/wallets are initializing
   if (!privyReady || !walletsReady) {
     return (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <div className="text-2xl font-bold text-white mb-4">INITIALIZING...</div>
-        <div className="w-8 h-8 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
+      <div className="flex flex-col items-center justify-center p-6 sm:p-8 text-center">
+        <div className="text-xl sm:text-2xl font-bold text-white mb-4">INITIALIZING...</div>
+        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -518,9 +518,9 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   // Render based on step
   if (step === 'checking') {
     return (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <div className="text-2xl font-bold text-white mb-4">CHECKING SETUP...</div>
-        <div className="w-8 h-8 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
+      <div className="flex flex-col items-center justify-center p-6 sm:p-8 text-center">
+        <div className="text-xl sm:text-2xl font-bold text-white mb-4">CHECKING SETUP...</div>
+        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -530,30 +530,29 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto">
-      <div className="text-3xl font-bold text-[#CCFF00] mb-6">SETUP REQUIRED</div>
+    <div className="flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 text-center max-w-md mx-auto w-full">
+      <div className="text-2xl sm:text-3xl font-bold text-[#CCFF00] mb-6 sm:mb-8">SETUP REQUIRED</div>
       
       {step === 'delegate' && (
         <>
-          <div className="text-white mb-4">
+          <div className="text-white text-base sm:text-lg mb-4 leading-relaxed">
             To trade instantly, you need to authorize a delegate wallet to execute trades on your behalf.
           </div>
-          <div className="text-white/50 text-sm mb-8">
+          <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
             This is a one-time setup on Base network. Your funds remain in your wallet.
           </div>
           
           {/* Debug info */}
-          <div className="text-white/30 text-xs mb-4">
-            Your wallet: {userAddress?.slice(0, 8)}...{userAddress?.slice(-6)}<br/>
-            Delegate: {delegateAddress?.slice(0, 8)}...{delegateAddress?.slice(-6)}<br/>
-            Network: Base (Chain ID: 8453)
+          <div className="text-white/40 text-xs mb-6 font-mono space-y-1">
+            <div>Your wallet: {userAddress?.slice(0, 8)}...{userAddress?.slice(-6)}</div>
+            <div>Delegate: {delegateAddress?.slice(0, 8)}...{delegateAddress?.slice(-6)}</div>
+            <div>Network: Base (Chain ID: 8453)</div>
           </div>
           
           <button
             onClick={handleSetupDelegate}
             disabled={isProcessing}
-            className="w-full py-4 text-xl font-bold brutal-button disabled:opacity-50"
-            style={{ backgroundColor: '#CCFF00', color: '#000' }}
+            className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button disabled:opacity-50 bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
           >
             {isProcessing ? 'SWITCHING TO BASE...' : 'SETUP DELEGATION'}
           </button>
@@ -562,18 +561,17 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
 
       {step === 'approve' && (
         <>
-          <div className="text-white mb-4">
+          <div className="text-white text-base sm:text-lg mb-4 leading-relaxed">
             Step 2: Approve USDC spending to open trades.
           </div>
-          <div className="text-white/50 text-sm mb-8">
+          <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
             This allows the trading contract to use your USDC for positions.
           </div>
           
           <button
             onClick={handleApproveUSDC}
             disabled={isProcessing}
-            className="w-full py-4 text-xl font-bold brutal-button disabled:opacity-50"
-            style={{ backgroundColor: '#CCFF00', color: '#000' }}
+            className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button disabled:opacity-50 bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
           >
             {isProcessing ? 'APPROVING...' : 'APPROVE USDC'}
           </button>
@@ -582,30 +580,29 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
 
       {step === 'fund-delegate' && (
         <>
-          <div className="text-white mb-4">
+          <div className="text-white text-base sm:text-lg mb-4 leading-relaxed">
             Final Step: Fund your delegate wallet with ETH for gas.
           </div>
-          <div className="text-white/50 text-sm mb-4">
+          <div className="text-white/60 text-sm sm:text-base mb-4 leading-relaxed">
             Your delegate wallet needs a small amount of ETH to pay for transaction fees when executing trades.
           </div>
           
           {/* Delegate wallet info */}
-          <div className="w-full p-4 bg-black/40 border-2 border-white/20 mb-4">
-            <div className="text-white/50 text-xs mb-1">DELEGATE WALLET</div>
-            <div className="text-white text-sm font-mono break-all">{delegateAddress}</div>
-            <div className="text-white/50 text-xs mt-2">CURRENT BALANCE</div>
-            <div className="text-[#CCFF00] text-lg font-bold">{delegateBalance} ETH</div>
+          <div className="w-full p-4 sm:p-5 bg-black/40 border-2 border-white/20 mb-4 sm:mb-6 rounded-lg">
+            <div className="text-white/60 text-xs mb-2 font-bold uppercase tracking-wide">DELEGATE WALLET</div>
+            <div className="text-white text-xs sm:text-sm font-mono break-all mb-3">{delegateAddress}</div>
+            <div className="text-white/60 text-xs mb-1 font-bold uppercase tracking-wide">CURRENT BALANCE</div>
+            <div className="text-[#CCFF00] text-lg sm:text-xl font-bold">{delegateBalance} ETH</div>
           </div>
           
-          <div className="text-white/50 text-sm mb-8">
+          <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
             Recommended: {RECOMMENDED_DELEGATE_ETH} ETH (~$6-7, enough for ~50+ trades)
           </div>
           
           <button
             onClick={handleFundDelegate}
             disabled={isProcessing}
-            className="w-full py-4 text-xl font-bold brutal-button disabled:opacity-50"
-            style={{ backgroundColor: '#CCFF00', color: '#000' }}
+            className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button disabled:opacity-50 bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
           >
             {isProcessing ? 'SENDING ETH...' : `SEND ${RECOMMENDED_DELEGATE_ETH} ETH`}
           </button>
@@ -623,7 +620,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
                 onSetupComplete();
               }
             }}
-            className="w-full mt-4 py-2 text-sm text-white/50 hover:text-white"
+            className="w-full mt-4 py-2.5 text-sm text-white/60 hover:text-white transition-colors touch-manipulation min-h-[44px]"
           >
             Already funded? Click to check balance
           </button>
@@ -631,7 +628,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       )}
 
       {error && (
-        <div className="mt-4 p-4 bg-red-500/20 border-2 border-red-500 text-red-500 text-sm">
+        <div className="mt-6 p-4 bg-red-500/20 border-2 border-red-500 text-red-400 text-sm sm:text-base rounded-lg">
           {error}
         </div>
       )}

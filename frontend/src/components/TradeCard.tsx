@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Trade, PnLData } from '@/types';
 import { ASSETS, DIRECTIONS } from '@/lib/constants';
 
@@ -14,6 +14,8 @@ interface TradeCardProps {
 }
 
 export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosing }: TradeCardProps) {
+  const [timeOpen, setTimeOpen] = useState(0);
+  
   const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   
@@ -24,76 +26,117 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
   const color = isProfit ? '#CCFF00' : '#FF006E';
   
   const positionSize = trade.collateral * trade.leverage;
-  
-  // Calculate time open
-  const timeOpen = trade.openedAt > 0 
-    ? Math.floor((Date.now() - trade.openedAt) / 1000 / 60) // minutes
-    : 0;
-  const timeDisplay = timeOpen < 60 
-    ? `${timeOpen}m` 
-    : `${Math.floor(timeOpen / 60)}h ${timeOpen % 60}m`;
+
+  // Track time open
+  useEffect(() => {
+    if (!trade.openedAt) return;
+    
+    const updateTime = () => {
+      const elapsed = Math.floor((Date.now() - trade.openedAt) / 1000);
+      setTimeOpen(elapsed);
+    };
+    
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, [trade.openedAt]);
+
+  // Format time display
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins >= 60) {
+      const hours = Math.floor(mins / 60);
+      const remainingMins = mins % 60;
+      return `${hours}h ${remainingMins}m`;
+    }
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
+  };
+
+  // Card border color based on P&L
+  const cardClass = isProfit ? 'brutal-card-winning' : 'brutal-card-losing';
 
   return (
-    <div className="bg-white/5 rounded-lg p-4 border-2 border-white/10">
-      {/* Header: Asset and Direction */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          {asset && (
-            <div
-              className="px-3 py-1 text-sm font-bold text-black rounded flex items-center gap-1.5"
-              style={{ backgroundColor: asset.color }}
-            >
-              <img src={asset.icon} alt={asset.name} className="w-4 h-4" />
-              {asset.name}
-            </div>
-          )}
-          {direction && (
-            <div
-              className="px-3 py-1 text-sm font-bold text-black rounded"
-              style={{ backgroundColor: direction.color }}
-            >
-              {direction.name}
-            </div>
-          )}
-          <div className="px-3 py-1 text-sm font-bold bg-white/20 text-white rounded">
-            {trade.leverage}x
+    <div className={`brutal-card ${cardClass} p-4 sm:p-5`}>
+      {/* Header: Chips */}
+      <div className="flex items-center gap-2 flex-wrap mb-4">
+        {asset && (
+          <div
+            className="selection-chip px-2.5 py-1 text-xs font-bold text-black flex items-center gap-1"
+            style={{ backgroundColor: asset.color }}
+          >
+            <img src={asset.icon} alt="" className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{asset.name}</span>
+          </div>
+        )}
+        {direction && (
+          <div
+            className="selection-chip px-2.5 py-1 text-xs font-bold text-black"
+            style={{ backgroundColor: direction.color }}
+          >
+            {direction.name}
+          </div>
+        )}
+        <div className="selection-chip px-2.5 py-1 text-xs font-bold bg-white/20 text-white">
+          {trade.leverage}x
+        </div>
+        
+        {/* Time badge */}
+        {timeOpen > 0 && (
+          <div className="ml-auto text-white/60 text-xs font-mono flex items-center gap-1">
+            <span>⏱️</span>
+            <span>{formatTime(timeOpen)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* GIANT PnL Display */}
+      <div className="mb-4">
+        <div className={`text-4xl sm:text-5xl font-black`} style={{ color }}>
+          {isProfit ? '+' : ''}${Math.abs(pnl).toFixed(2)}
+        </div>
+        <div className={`text-xl sm:text-2xl font-bold`} style={{ color }}>
+          {isProfit ? '+' : ''}{pnlPercentage.toFixed(2)}%
+        </div>
+      </div>
+
+      {/* Price comparison */}
+      <div className="grid grid-cols-2 gap-2 mb-4 text-sm font-mono">
+        <div>
+          <div className="text-white/50 text-xs">Entry</div>
+          <div className="text-white font-bold">
+            ${trade.openPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </div>
+        </div>
+        <div>
+          <div className="text-white/50 text-xs">Current</div>
+          <div className="font-bold" style={{ color }}>
+            ${currentPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
           </div>
         </div>
       </div>
 
-      {/* PnL Display */}
-      <div className="mb-3">
-        <div className={`text-3xl font-bold mb-1`} style={{ color }}>
-          {isProfit ? '+' : ''}${pnl.toFixed(2)}
-        </div>
-        <div className={`text-lg font-bold mb-2`} style={{ color }}>
-          {isProfit ? '+' : ''}{pnlPercentage.toFixed(2)}%
-        </div>
-        <div className="text-white/50 text-xs">
-          Entry: ${trade.openPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })} • 
-          Current: ${currentPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-        </div>
-      </div>
-
       {/* Position Info */}
-      <div className="text-white/50 text-xs mb-3 space-y-1">
-        <div>Position: ${trade.collateral} × {trade.leverage}x = ${positionSize.toLocaleString()}</div>
-        {timeOpen > 0 && <div>Open: {timeDisplay}</div>}
+      <div className="text-white/60 text-xs mb-4 font-mono border-t border-white/10 pt-3">
+        Position: ${trade.collateral} × {trade.leverage}x = ${positionSize.toLocaleString()}
       </div>
 
-      {/* Actions */}
+      {/* Actions - Full neobrutalist buttons */}
       <div className="flex gap-2">
         <button
           onClick={() => onFlip(trade)}
           disabled={isFlipping || isClosing}
-          className="flex-1 py-2 px-4 text-sm font-bold bg-[#CCFF00] text-black rounded brutal-button disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-1 py-3 px-3 text-sm font-bold brutal-button bg-[#CCFF00] text-black disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[48px]"
+          aria-label={`Flip to ${trade.isLong ? 'SHORT' : 'LONG'}`}
         >
-          {isFlipping ? 'FLIPPING...' : 'FLIP'}
+          {isFlipping ? 'FLIPPING...' : `FLIP: ${trade.isLong ? 'SHORT' : 'LONG'}`}
         </button>
         <button
           onClick={() => onClose(trade)}
           disabled={isFlipping || isClosing}
-          className="px-4 py-2 text-sm font-bold bg-white/10 text-white rounded brutal-button disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white/20"
+          className="px-4 py-3 text-sm font-bold brutal-button-danger disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[48px]"
+          aria-label="Close trade"
         >
           {isClosing ? '...' : 'CLOSE'}
         </button>

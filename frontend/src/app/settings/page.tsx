@@ -15,13 +15,11 @@ export default function SettingsPage() {
   const [localSettings, setLocalSettings] = useState<Settings>(settings);
 
   useEffect(() => {
-    // Load settings from localStorage on mount
     const loadedSettings = loadSettings();
     setLocalSettings(loadedSettings);
     setSettings(loadedSettings);
     setCollateral(loadedSettings.collateral);
     
-    // Load stats from localStorage on mount
     const loadedStats = loadStats();
     setTradeStats(loadedStats);
   }, [setSettings, setCollateral, setTradeStats]);
@@ -34,139 +32,143 @@ export default function SettingsPage() {
     saveSettings(newSettings);
   };
 
-  const handleAudioToggle = () => {
-    const newSettings = { ...localSettings, audioEnabled: !localSettings.audioEnabled };
+  const handleAudioToggle = (enabled: boolean) => {
+    const newSettings = { ...localSettings, audioEnabled: enabled };
     setLocalSettings(newSettings);
     setSettings(newSettings);
     saveSettings(newSettings);
   };
 
-  const handleMusicToggle = () => {
-    const newSettings = { ...localSettings, musicEnabled: !localSettings.musicEnabled };
+  const handleMusicToggle = (enabled: boolean) => {
+    const newSettings = { ...localSettings, musicEnabled: enabled };
     setLocalSettings(newSettings);
     setSettings(newSettings);
     saveSettings(newSettings);
   };
 
   return (
-    <div className="min-h-screen bg-black flex flex-col p-4 md:p-8 font-mono safe-area-top safe-area-bottom">
+    <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 md:px-8 py-4 sm:py-6 md:py-8 font-mono safe-area-top safe-area-bottom">
       {/* Header */}
-      <header className="w-full flex justify-between items-center mb-8">
+      <header className="w-full flex justify-between items-center mb-6 sm:mb-8">
         <button
           onClick={() => router.back()}
-          className="text-[#CCFF00] text-xl font-bold hover:opacity-70"
+          className="text-[#CCFF00] text-lg sm:text-xl font-bold touch-manipulation min-h-[44px] flex items-center px-4 py-2 border-4 border-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors"
+          style={{ boxShadow: '4px 4px 0px 0px rgba(204, 255, 0, 0.5)' }}
+          aria-label="Go back"
         >
           ← BACK
         </button>
-        <div className="text-[#CCFF00] text-2xl font-bold">SETTINGS</div>
-        <div className="w-16" /> {/* Spacer for centering */}
+        <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">SETTINGS</h1>
+        <div className="w-24 sm:w-28" />
       </header>
 
       {/* Settings content */}
-      <main className="flex-1 flex flex-col gap-8 max-w-md mx-auto w-full">
-        {/* Trade Statistics */}
-        <div className="space-y-4">
-          <div className="text-white text-xl font-bold">STATISTICS</div>
-          <div className="space-y-2 p-4 bg-white/5 rounded-lg">
+      <main className="flex-1 flex flex-col gap-8 sm:gap-10 max-w-md mx-auto w-full overflow-y-auto min-h-0 pb-4">
+        
+        {/* STATISTICS - Brutalist card */}
+        <section className="space-y-4">
+          <h2 className="text-white text-lg sm:text-xl font-bold">STATISTICS</h2>
+          <div className="brutal-card p-4 sm:p-5 space-y-4">
             <div className="flex justify-between items-center">
-              <span className="text-white/70">Total Trades</span>
-              <span className="text-[#CCFF00] font-bold">{tradeStats.totalTrades}</span>
+              <span className="text-white/70 text-sm sm:text-base">Total Trades</span>
+              <span className="text-[#CCFF00] font-bold text-xl sm:text-2xl">{tradeStats.totalTrades}</span>
             </div>
+            <div className="border-t-2 border-black/50" />
             <div className="flex justify-between items-center">
-              <span className="text-white/70">Active Positions</span>
-              <span className="text-[#CCFF00] font-bold">{tradeStats.activePositions}</span>
+              <span className="text-white/70 text-sm sm:text-base">Active Positions</span>
+              <span className="text-[#CCFF00] font-bold text-xl sm:text-2xl">{tradeStats.activePositions}</span>
             </div>
           </div>
-        </div>
-        {/* Collateral Size */}
-        <div className="space-y-4">
-          <div className="text-white text-xl font-bold">COLLATERAL SIZE</div>
-          <div className="space-y-4">
-            {/* Slider */}
-            <div className="space-y-2">
-              <input
-                type="range"
-                min="5"
-                max="1000"
-                step="5"
-                value={localSettings.collateral}
-                onChange={(e) => handleCollateralChange(Number(e.target.value))}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-[#CCFF00]"
-                style={{
-                  background: `linear-gradient(to right, #CCFF00 0%, #CCFF00 ${((localSettings.collateral - 5) / (1000 - 5)) * 100}%, #333333 ${((localSettings.collateral - 5) / (1000 - 5)) * 100}%, #333333 100%)`,
-                }}
-              />
-              <div className="flex justify-between text-white/50 text-sm">
-                <span>$5</span>
-                <span className="text-[#CCFF00] font-bold">${localSettings.collateral}</span>
-                <span>$1000</span>
-              </div>
-            </div>
+        </section>
 
-            {/* Presets */}
-            <div className="flex flex-wrap gap-2">
-              {COLLATERAL_PRESETS.map((preset) => (
+        {/* COLLATERAL SIZE - Grid of brutalist buttons (NO slider) */}
+        <section className="space-y-4">
+          <h2 className="text-white text-lg sm:text-xl font-bold">COLLATERAL SIZE</h2>
+          <div className="text-[#CCFF00] text-center text-3xl sm:text-4xl font-black mb-4">
+            ${localSettings.collateral}
+          </div>
+          <div className="grid grid-cols-4 gap-2 sm:gap-3">
+            {COLLATERAL_PRESETS.map((preset) => {
+              const isSelected = localSettings.collateral === preset;
+              return (
                 <button
                   key={preset}
                   onClick={() => handleCollateralChange(preset)}
-                  className={`px-4 py-2 text-sm font-bold brutal-button ${
-                    localSettings.collateral === preset
-                      ? 'bg-[#CCFF00] text-black'
-                      : 'bg-white/10 text-white hover:bg-white/20'
-                  }`}
+                  className={`
+                    py-3 sm:py-4 text-sm sm:text-base font-bold touch-manipulation min-h-[56px]
+                    border-4 border-black transition-all
+                    ${isSelected
+                      ? 'bg-[#CCFF00] text-black shadow-[inset_4px_4px_0px_0px_rgba(0,0,0,0.2)]'
+                      : 'bg-[#1a1a1a] text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:bg-[#2a2a2a]'
+                    }
+                  `}
+                  aria-pressed={isSelected}
+                  aria-label={`Set collateral to $${preset}`}
                 >
                   ${preset}
                 </button>
-              ))}
+              );
+            })}
+          </div>
+        </section>
+
+        {/* AUDIO - Chunky ON/OFF toggles */}
+        <section className="space-y-4">
+          <h2 className="text-white text-lg sm:text-xl font-bold">AUDIO</h2>
+          
+          {/* Sound Effects Toggle */}
+          <div className="brutal-card p-4 sm:p-5">
+            <div className="flex justify-between items-center gap-4">
+              <div className="flex-1">
+                <div className="text-white font-bold text-sm sm:text-base">Sound Effects</div>
+                <div className="text-white/50 text-xs sm:text-sm">Wheel spin, win/loss sounds</div>
+              </div>
+              <div className="brutal-toggle shrink-0">
+                <button
+                  onClick={() => handleAudioToggle(true)}
+                  className={`brutal-toggle-option ${localSettings.audioEnabled ? 'active' : ''}`}
+                  aria-pressed={localSettings.audioEnabled}
+                >
+                  ON
+                </button>
+                <button
+                  onClick={() => handleAudioToggle(false)}
+                  className={`brutal-toggle-option ${!localSettings.audioEnabled ? 'active' : ''}`}
+                  aria-pressed={!localSettings.audioEnabled}
+                >
+                  OFF
+                </button>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Audio Settings */}
-        <div className="space-y-4">
-          <div className="text-white text-xl font-bold">AUDIO</div>
-          <div className="space-y-3">
-            {/* Sound Effects Toggle */}
-            <div className="flex justify-between items-center p-4 bg-white/5 rounded-lg">
-              <div>
-                <div className="text-white font-bold">Sound Effects</div>
-                <div className="text-white/50 text-sm">Wheel spin, win/loss sounds</div>
+          {/* Music Toggle */}
+          <div className="brutal-card p-4 sm:p-5">
+            <div className="flex justify-between items-center gap-4">
+              <div className="flex-1">
+                <div className="text-white font-bold text-sm sm:text-base">Background Music</div>
+                <div className="text-white/50 text-xs sm:text-sm">Ambient music during gameplay</div>
               </div>
-              <button
-                onClick={handleAudioToggle}
-                className={`relative w-14 h-8 rounded-full transition-colors ${
-                  localSettings.audioEnabled ? 'bg-[#CCFF00]' : 'bg-gray-600'
-                }`}
-              >
-                <div
-                  className={`absolute top-1 left-1 w-6 h-6 bg-black rounded-full transition-transform ${
-                    localSettings.audioEnabled ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* Music Toggle */}
-            <div className="flex justify-between items-center p-4 bg-white/5 rounded-lg">
-              <div>
-                <div className="text-white font-bold">Background Music</div>
-                <div className="text-white/50 text-sm">Ambient music during gameplay</div>
+              <div className="brutal-toggle shrink-0">
+                <button
+                  onClick={() => handleMusicToggle(true)}
+                  className={`brutal-toggle-option ${localSettings.musicEnabled ? 'active' : ''}`}
+                  aria-pressed={localSettings.musicEnabled}
+                >
+                  ON
+                </button>
+                <button
+                  onClick={() => handleMusicToggle(false)}
+                  className={`brutal-toggle-option ${!localSettings.musicEnabled ? 'active' : ''}`}
+                  aria-pressed={!localSettings.musicEnabled}
+                >
+                  OFF
+                </button>
               </div>
-              <button
-                onClick={handleMusicToggle}
-                className={`relative w-14 h-8 rounded-full transition-colors ${
-                  localSettings.musicEnabled ? 'bg-[#CCFF00]' : 'bg-gray-600'
-                }`}
-              >
-                <div
-                  className={`absolute top-1 left-1 w-6 h-6 bg-black rounded-full transition-transform ${
-                    localSettings.musicEnabled ? 'translate-x-6' : 'translate-x-0'
-                  }`}
-                />
-              </button>
             </div>
           </div>
-        </div>
+        </section>
+
       </main>
     </div>
   );
