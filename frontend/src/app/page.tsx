@@ -441,7 +441,7 @@ export default function HomePage() {
 
       {/* Footer with roll button */}
       {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
-        <footer className="w-full max-w-md mt-6 sm:mt-8 mb-20 sm:mb-0 space-y-4 sm:space-y-5 relative z-10">
+        <footer className="w-full max-w-md mt-6 sm:mt-8 mb-20 sm:mb-0 relative z-10">
           <button
             onClick={() => {
               if (stage === 'idle') {
@@ -453,7 +453,7 @@ export default function HomePage() {
             aria-label={stage === 'idle' ? 'Spin the wheel to select trade parameters' : 'Wheel is spinning, please wait'}
             aria-busy={stage !== 'idle'}
             className={`
-              w-full py-5 sm:py-6 text-2xl sm:text-3xl font-bold brutal-button min-h-[56px] touch-manipulation
+              w-full py-5 sm:py-6 text-2xl sm:text-3xl font-bold brutal-button min-h-[56px] touch-manipulation mb-3 sm:mb-4
               focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black
               ${stage === 'idle'
                 ? 'bg-[#CCFF00] text-black hover:opacity-90 active:opacity-80'
@@ -464,22 +464,23 @@ export default function HomePage() {
             {stage === 'idle' ? 'ROLL' : 'SPINNING...'}
           </button>
 
-          <div className="flex justify-center gap-8 sm:gap-12 text-white/60 text-xs sm:text-sm" role="group" aria-label="Account information">
-            <div className="text-center space-y-1">
-              <div className="font-bold text-white/80" aria-label="Collateral amount">COLLATERAL</div>
-              <div className="text-[#CCFF00] font-mono" aria-live="polite">
+          <div className="flex justify-center items-center gap-4 sm:gap-6 text-white/60 text-xs sm:text-sm mb-20 sm:mb-0" role="group" aria-label="Account information">
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold text-white/80">COLLATERAL:</span>
+              <span className="text-[#CCFF00] font-mono" aria-live="polite">
                 <span className="sr-only">Collateral: </span>${collateral} USDC
-              </div>
+              </span>
             </div>
-            <div className="text-center space-y-1">
-              <div className="font-bold text-white/80" aria-label="Account balance">BALANCE</div>
-              <div className="text-[#CCFF00] font-mono" aria-live="polite">
+            <div className="text-white/40">•</div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold text-white/80">BALANCE:</span>
+              <span className="text-[#CCFF00] font-mono" aria-live="polite">
                 <span className="sr-only">Balance: </span>
                 {usdcBalance !== null 
                   ? `$${usdcBalance.toFixed(2)} USDC`
                   : '--'
                 }
-              </div>
+              </span>
             </div>
           </div>
         </footer>

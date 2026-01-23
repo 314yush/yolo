@@ -25,6 +25,12 @@ export default function ActivityPage() {
   const [showClosedTrades, setShowClosedTrades] = useState(false);
   const [flippingTradeIndex, setFlippingTradeIndex] = useState<number | null>(null);
   const [closingTradeIndex, setClosingTradeIndex] = useState<number | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // Prevent hydration mismatch by only rendering stats after mount
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Load closed trades from localStorage
   useEffect(() => {
@@ -330,15 +336,21 @@ export default function ActivityPage() {
           <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm">
             <div className="text-center">
               <div className="text-white/50 text-[10px] sm:text-xs">TOTAL</div>
-              <div className="text-[#CCFF00] font-bold text-base sm:text-lg">{tradeStats.totalTrades}</div>
+              <div className="text-[#CCFF00] font-bold text-base sm:text-lg" suppressHydrationWarning>
+                {mounted ? tradeStats.totalTrades : 0}
+              </div>
             </div>
             <div className="text-center">
               <div className="text-white/50 text-[10px] sm:text-xs">OPEN</div>
-              <div className="text-[#CCFF00] font-bold text-base sm:text-lg">{tradesWithPnL.length}</div>
+              <div className="text-[#CCFF00] font-bold text-base sm:text-lg" suppressHydrationWarning>
+                {mounted ? tradesWithPnL.length : 0}
+              </div>
             </div>
             <div className="text-center">
               <div className="text-white/50 text-[10px] sm:text-xs">CLOSED</div>
-              <div className="text-[#CCFF00] font-bold text-base sm:text-lg">{closedTrades.length}</div>
+              <div className="text-[#CCFF00] font-bold text-base sm:text-lg" suppressHydrationWarning>
+                {mounted ? closedTrades.length : 0}
+              </div>
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from './useDelegateWallet';
 import { useAvantisAPI } from './useAvantisAPI';
 import { useTxSigner } from './useTxSigner';
+import { useSound } from './useSound';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect } from '@/lib/avantisEncoder';
 import type { Trade } from '@/types';
@@ -26,6 +27,7 @@ export function useFlipTrade() {
   const { delegateAddress } = useDelegateWallet();
   const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
   const { signAndWait, signAndBroadcast } = useTxSigner();
+  const { playFlip } = useSound();
   const [isFlipping, setIsFlipping] = useState(false);
 
   const flipTrade = useCallback(async (trade: Trade) => {
@@ -183,6 +185,7 @@ export function useFlipTrade() {
               'success',
               5000
             );
+            playFlip();
             notificationShown = true;
           }
           
@@ -225,6 +228,7 @@ export function useFlipTrade() {
               'success',
               5000
             );
+            playFlip();
             notificationShown = true;
           }
           
@@ -272,6 +276,7 @@ export function useFlipTrade() {
     removePendingTradeHash,
     showToast,
     prices,
+    playFlip,
   ]);
 
   return { flipTrade, isFlipping };
