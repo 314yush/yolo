@@ -32,6 +32,8 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [delegateBalance, setDelegateBalance] = useState<string>('0');
+  const [hasCheckedStatus, setHasCheckedStatus] = useState(false);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
 
   const userAddress = user?.wallet?.address as `0x${string}` | undefined;
 
@@ -119,34 +121,46 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   // Check current setup status
   useEffect(() => {
     async function checkStatus() {
-      if (!userAddress || !privyReady || !walletsReady) return;
+      // Prevent multiple simultaneous checks
+      if (!userAddress || !privyReady || !walletsReady || isCheckingStatus) return;
+      
+      // If we've already checked and are in an error state, don't re-check automatically
+      // Only re-check if the user address changes (new login)
+      if (hasCheckedStatus && error && step === 'delegate') {
+        return;
+      }
 
+      setIsCheckingStatus(true);
       setStep('checking');
       setError(null);
       
-      // Step 1: Ensure we have a delegate wallet locally (instant - localStorage check)
-      // This is fast and doesn't require any network calls
-      const wallet = ensureDelegateWallet();
-      console.log('Local delegate wallet:', wallet.address);
-      
-      // Step 2: Check if delegation is set up on-chain (API call - can be slow)
-      // Use Promise.race to add a timeout fallback
-      const statusPromise = checkDelegateStatus(userAddress);
-      const timeoutPromise = new Promise<{ isSetup: false; delegateAddress: null; error: string }>((resolve) => {
-        setTimeout(() => resolve({ isSetup: false, delegateAddress: null, error: 'Request timed out' }), 10000); // 10s timeout
-      });
-      
-      const status = await Promise.race([statusPromise, timeoutPromise]);
-      console.log('Delegation status:', status);
-      
-      // Handle API errors gracefully
-      if (status.error) {
-        console.error('Failed to check delegate status:', status.error);
-        setError(`API Error: ${status.error}. Make sure the backend is running.`);
-        // Don't block - show delegate setup but with error message
-        setStep('delegate');
-        return;
-      }
+      try {
+        // Step 1: Ensure we have a delegate wallet locally (instant - localStorage check)
+        // This is fast and doesn't require any network calls
+        const wallet = ensureDelegateWallet();
+        console.log('Local delegate wallet:', wallet.address);
+        
+        // Step 2: Check if delegation is set up on-chain (API call - can be slow)
+        // Use Promise.race to add a timeout fallback - match API timeout of 35s
+        const statusPromise = checkDelegateStatus(userAddress);
+        const timeoutPromise = new Promise<{ isSetup: false; delegateAddress: null; error: string }>((resolve) => {
+          setTimeout(() => resolve({ isSetup: false, delegateAddress: null, error: 'Request timed out' }), 35000); // 35s timeout to match API
+        });
+        
+        const status = await Promise.race([statusPromise, timeoutPromise]);
+        console.log('Delegation status:', status);
+        
+        setHasCheckedStatus(true);
+        
+        // Handle API errors gracefully - but don't keep retrying
+        if (status.error) {
+          console.error('Failed to check delegate status:', status.error);
+          setError(`API Error: ${status.error}. Make sure the backend is running.`);
+          // Don't block - show delegate setup but with error message
+          setStep('delegate');
+          setIsCheckingStatus(false);
+          return;
+        }
       
       if (status.isSetup) {
         // Delegation is already set up on-chain
@@ -160,7 +174,9 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           // User needs to re-register with our local delegate
           console.log('Delegate mismatch! On-chain:', onChainDelegate, 'Local:', localDelegate);
           console.log('User needs to re-register delegation with local delegate');
+          setHasCheckedStatus(true); // Mark as checked
           setStep('delegate');
+          setIsCheckingStatus(false);
           return;
         }
         
@@ -185,14 +201,18 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         if (!allowanceCheck.hasSufficient) {
           // Need to approve USDC for the Trading contract
           console.log('USDC allowance insufficient, need to approve');
+          setHasCheckedStatus(true); // Mark as checked
           setStep('approve');
+          setIsCheckingStatus(false);
           return;
         }
         
         if (balance < MIN_DELEGATE_ETH) {
           // Need to fund the delegate wallet
           console.log('Delegate needs ETH for gas');
+          setHasCheckedStatus(true); // Mark as checked
           setStep('fund-delegate');
+          setIsCheckingStatus(false);
           return;
         }
         
@@ -201,16 +221,29 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           delegateAddress: wallet.address,
           usdcApproved: true,
         });
+        setHasCheckedStatus(true); // Mark as checked so we don't re-check
         setStep('complete');
+        setIsCheckingStatus(false);
         onSetupComplete();
       } else {
         // Need to set up delegation
+        setHasCheckedStatus(true); // Mark as checked
         setStep('delegate');
+      }
+      } catch (err) {
+        console.error('Error checking status:', err);
+        setHasCheckedStatus(true);
+        setError('Failed to check setup status. Please refresh the page.');
+        setStep('delegate');
+      } finally {
+        setIsCheckingStatus(false);
       }
     }
 
     checkStatus();
-  }, [userAddress, privyReady, walletsReady, ensureDelegateWallet, checkDelegateStatus, checkUsdcAllowance, checkDelegateBalance, setDelegateStatus, onSetupComplete]);
+    // Only re-run when user address or ready states change, not when callback functions change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userAddress, privyReady, walletsReady]);
 
   // Set up delegation
   const handleSetupDelegate = useCallback(async () => {
