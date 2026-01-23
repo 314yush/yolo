@@ -118,6 +118,32 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     }
   }, []);
 
+  // Auto-check balance when entering fund-delegate step and skip if sufficient
+  useEffect(() => {
+    async function autoCheckBalance() {
+      if (step !== 'fund-delegate' || !delegateAddress || isProcessing) return;
+      
+      try {
+        const balance = await checkDelegateBalance();
+        if (balance >= MIN_DELEGATE_ETH) {
+          // Sufficient balance, skip funding step
+          setDelegateStatus({
+            isSetup: true,
+            delegateAddress: delegateAddress,
+            usdcApproved: true,
+          });
+          setStep('complete');
+          onSetupComplete();
+        }
+      } catch (err) {
+        console.warn('Auto balance check failed:', err);
+        // Don't show error, just let user manually check
+      }
+    }
+    
+    autoCheckBalance();
+  }, [step, delegateAddress, isProcessing, checkDelegateBalance, setDelegateStatus, onSetupComplete]);
+
   // Check current setup status
   useEffect(() => {
     async function checkStatus() {
@@ -609,20 +635,31 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           
           <button
             onClick={async () => {
-              const balance = await checkDelegateBalance();
-              if (balance >= MIN_DELEGATE_ETH) {
-                setDelegateStatus({
-                  isSetup: true,
-                  delegateAddress: delegateAddress,
-                  usdcApproved: true,
-                });
-                setStep('complete');
-                onSetupComplete();
+              setIsProcessing(true);
+              setError(null);
+              try {
+                const balance = await checkDelegateBalance();
+                if (balance >= MIN_DELEGATE_ETH) {
+                  setDelegateStatus({
+                    isSetup: true,
+                    delegateAddress: delegateAddress,
+                    usdcApproved: true,
+                  });
+                  setStep('complete');
+                  onSetupComplete();
+                } else {
+                  setError(`Balance (${balance.toFixed(6)} ETH) is below minimum (${MIN_DELEGATE_ETH} ETH). Please fund your delegate wallet.`);
+                }
+              } catch (err) {
+                setError('Failed to check balance. Please try again.');
+              } finally {
+                setIsProcessing(false);
               }
             }}
-            className="w-full mt-4 py-2.5 text-sm text-white/60 hover:text-white transition-colors touch-manipulation min-h-[44px]"
+            disabled={isProcessing}
+            className="w-full mt-4 py-2.5 text-sm text-white/60 hover:text-white transition-colors touch-manipulation min-h-[44px] disabled:opacity-50"
           >
-            Already funded? Click to check balance
+            {isProcessing ? 'CHECKING...' : 'Already funded? Click to check balance'}
           </button>
         </>
       )}

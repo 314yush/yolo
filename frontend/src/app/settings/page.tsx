@@ -65,22 +65,6 @@ export default function SettingsPage() {
       {/* Settings content */}
       <main className="flex-1 flex flex-col gap-8 sm:gap-10 max-w-md mx-auto w-full overflow-y-auto min-h-0 pb-4">
         
-        {/* STATISTICS - Brutalist card */}
-        <section className="space-y-4">
-          <h2 className="text-white text-lg sm:text-xl font-bold">STATISTICS</h2>
-          <div className="brutal-card p-4 sm:p-5 space-y-4">
-            <div className="flex justify-between items-center">
-              <span className="text-white/70 text-sm sm:text-base">Total Trades</span>
-              <span className="text-[#CCFF00] font-bold text-xl sm:text-2xl">{tradeStats.totalTrades}</span>
-            </div>
-            <div className="border-t-2 border-black/50" />
-            <div className="flex justify-between items-center">
-              <span className="text-white/70 text-sm sm:text-base">Active Positions</span>
-              <span className="text-[#CCFF00] font-bold text-xl sm:text-2xl">{tradeStats.activePositions}</span>
-            </div>
-          </div>
-        </section>
-
         {/* COLLATERAL SIZE - Grid of brutalist buttons (NO slider) */}
         <section className="space-y-4">
           <h2 className="text-white text-lg sm:text-xl font-bold">COLLATERAL SIZE</h2>

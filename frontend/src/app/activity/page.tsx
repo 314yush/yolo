@@ -14,7 +14,7 @@ import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 export default function ActivityPage() {
   const router = useRouter();
-  const { userAddress, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast } = useTradeStore();
+  const { userAddress, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast, tradeStats } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
   const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
   const { signAndWait, signAndBroadcast } = useTxSigner();
@@ -292,19 +292,23 @@ export default function ActivityPage() {
 
   return (
     <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 md:px-8 py-4 sm:py-6 md:py-8 font-mono safe-area-top safe-area-bottom">
-      {/* Header */}
-      <header className="w-full flex justify-between items-center mb-6 sm:mb-8">
-        <button
-          onClick={() => router.back()}
-          className="text-[#CCFF00] text-lg sm:text-xl font-bold touch-manipulation min-h-[44px] flex items-center px-4 py-2 border-4 border-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors"
-          style={{ boxShadow: '4px 4px 0px 0px rgba(204, 255, 0, 0.5)' }}
-          aria-label="Go back"
-        >
-          ← BACK
-        </button>
-        <div className="flex flex-col items-center gap-2 sm:gap-3">
-          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">ACTIVITY</h1>
-          {/* Brutalist Toggle */}
+      {/* Header - Compact */}
+      <header className="w-full mb-4 sm:mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <button
+            onClick={() => router.back()}
+            className="text-[#CCFF00] text-base sm:text-lg font-bold touch-manipulation min-h-[40px] flex items-center px-3 py-1.5 border-4 border-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors"
+            style={{ boxShadow: '4px 4px 0px 0px rgba(204, 255, 0, 0.5)' }}
+            aria-label="Go back"
+          >
+            ← BACK
+          </button>
+          <h1 className="text-[#CCFF00] text-lg sm:text-xl font-bold">ACTIVITY</h1>
+          <div className="w-20 sm:w-24" />
+        </div>
+        
+        {/* Toggle and Stats - Inline */}
+        <div className="flex items-center justify-between gap-4">
           <div className="brutal-toggle">
             <button
               onClick={() => setShowClosedTrades(false)}
@@ -321,26 +325,41 @@ export default function ActivityPage() {
               CLOSED
             </button>
           </div>
+          
+          {/* Compact Stats */}
+          <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm">
+            <div className="text-center">
+              <div className="text-white/50 text-[10px] sm:text-xs">TOTAL</div>
+              <div className="text-[#CCFF00] font-bold text-base sm:text-lg">{tradeStats.totalTrades}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-white/50 text-[10px] sm:text-xs">OPEN</div>
+              <div className="text-[#CCFF00] font-bold text-base sm:text-lg">{tradesWithPnL.length}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-white/50 text-[10px] sm:text-xs">CLOSED</div>
+              <div className="text-[#CCFF00] font-bold text-base sm:text-lg">{closedTrades.length}</div>
+            </div>
+          </div>
         </div>
-        <div className="w-24 sm:w-28" />
       </header>
 
       {/* Trades List */}
-      <main className="flex-1 overflow-y-auto min-h-0">
+      <main className="flex-1 overflow-y-auto min-h-0 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8">
         {showClosedTrades ? (
           // Show closed trades
           closedTrades.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center px-4 py-12">
-              <div className="text-white/60 text-lg sm:text-xl mb-6">No closed trades</div>
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+              <div className="text-white/40 text-base sm:text-lg mb-4">No closed trades</div>
               <button
                 onClick={() => setShowClosedTrades(false)}
-                className="px-6 sm:px-8 py-3 sm:py-4 text-lg sm:text-xl font-bold brutal-button bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
+                className="px-5 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation"
               >
                 VIEW OPEN TRADES
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 max-w-4xl mx-auto pb-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-4xl mx-auto pb-4">
               {closedTrades.map((closedTrade) => {
                 // Convert ClosedTrade to Trade + PnLData for TradeCard
                 const trade: Trade = {
@@ -366,10 +385,11 @@ export default function ActivityPage() {
                     key={`closed-${closedTrade.pairIndex}-${closedTrade.tradeIndex}`}
                     trade={trade}
                     pnlData={pnlData}
-                    onFlip={() => {}} // Disabled for closed trades
-                    onClose={() => {}} // Disabled for closed trades
+                    onFlip={() => {}}
+                    onClose={() => {}}
                     isFlipping={false}
                     isClosing={false}
+                    isClosed={true}
                   />
                 );
               })}
@@ -378,17 +398,17 @@ export default function ActivityPage() {
         ) : (
           // Show open trades
           tradesWithPnL.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center px-4 py-12">
-              <div className="text-white/60 text-lg sm:text-xl mb-6">No open trades</div>
+            <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+              <div className="text-white/40 text-base sm:text-lg mb-4">No open trades</div>
               <button
                 onClick={() => router.push('/')}
-                className="px-6 sm:px-8 py-3 sm:py-4 text-lg sm:text-xl font-bold brutal-button bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
+                className="px-5 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation"
               >
                 ROLL NOW
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 max-w-4xl mx-auto pb-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-4xl mx-auto pb-4">
               {tradesWithPnL.map((item, index) => (
                 <TradeCard
                   key={`${item.trade.pairIndex}-${item.trade.tradeIndex}`}
@@ -404,18 +424,6 @@ export default function ActivityPage() {
           )
         )}
       </main>
-
-      {/* Footer */}
-      {!showClosedTrades && tradesWithPnL.length > 0 && (
-        <footer className="mt-6 sm:mt-8 text-center text-white/60 text-sm sm:text-base">
-          {tradesWithPnL.length} position{tradesWithPnL.length !== 1 ? 's' : ''} open
-        </footer>
-      )}
-      {showClosedTrades && closedTrades.length > 0 && (
-        <footer className="mt-6 sm:mt-8 text-center text-white/60 text-sm sm:text-base">
-          {closedTrades.length} closed trade{closedTrades.length !== 1 ? 's' : ''}
-        </footer>
-      )}
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
