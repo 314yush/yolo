@@ -55,7 +55,7 @@ export function useTxSigner() {
         // Use ETH price from Pyth store, fallback to $3000
         let gasCostBuffer = BigInt(0);
         const prices = useTradeStore.getState().prices;
-        const ethPrice = prices['ETH/USD'] || 3000;
+        const ethPrice = prices['ETH/USD']?.price || 3000;
         const bufferUsd = 0.01;
         const bufferEth = bufferUsd / ethPrice;
         gasCostBuffer = BigInt(Math.ceil(bufferEth * 1e18));

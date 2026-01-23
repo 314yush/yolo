@@ -144,7 +144,12 @@ export default function HomePage() {
       }
 
       // Sign and broadcast with delegate key
-      const hash = await signAndBroadcast(unsignedTx);
+      const hash = await signAndBroadcast({
+        to: unsignedTx.to as `0x${string}`,
+        data: unsignedTx.data as `0x${string}`,
+        value: unsignedTx.value,
+        chainId: unsignedTx.chainId,
+      });
       setTxHash(hash);
       
       // Clear the pre-built tx (it's been used)
