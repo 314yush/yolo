@@ -27,7 +27,9 @@ export const DIRECTIONS: Direction[] = [
 ];
 
 // Default collateral amount
-export const DEFAULT_COLLATERAL = 10; // $10 USDC
+// Minimum position size is $100, so with max leverage (500x), minimum collateral is $0.20
+// We use $10 to provide a comfortable buffer and ensure trades succeed
+export const DEFAULT_COLLATERAL = 10; // $10 USDC (ensures $5,000 position at 500x, well above $100 minimum)
 
 // Animation timings (in ms)
 export const WHEEL_TIMINGS = {
@@ -72,7 +74,12 @@ export const CONTRACTS = {
 };
 
 // API URL
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Debug: Log API URL (only in browser, not during build)
+if (typeof window !== 'undefined') {
+  console.log('🔗 API URL:', apiUrl);
+}
+export const API_URL = apiUrl;
 
 // Local storage keys
 export const STORAGE_KEYS = {
