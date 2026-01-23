@@ -5,8 +5,11 @@ Uses the SDK's built-in FeedClient instead of calling Pyth directly.
 
 from typing import Optional
 import time
+import logging
 
 from app.services.avantis import avantis_service
+
+logger = logging.getLogger(__name__)
 
 
 class PriceFeedService:
@@ -29,46 +32,45 @@ class PriceFeedService:
         Get current price for a pair using Avantis SDK.
         Returns (price, timestamp) or None if not available.
         """
-        print(f"🔍 Getting price for: {pair}")
-        
         # Check cache first
         if pair in self._cache:
             cached_price, cached_time = self._cache[pair]
             if time.time() - cached_time < self._cache_ttl:
-                print(f"   Cache hit: ${cached_price:.2f}")
                 return cached_price, int(cached_time)
 
         try:
             # Ensure pair feeds are loaded
             self._ensure_feeds_loaded()
-            print(f"   Feeds loaded: {self._feeds_loaded}")
             
             # Use the Avantis SDK's feed client
             feed_client = avantis_service.client.feed_client
-            print(f"   Feed client has {len(feed_client.pair_feeds)} pairs")
             
-            # Get price updates for this pair
-            response = await feed_client.get_latest_price_updates([pair])
-            print(f"   Response: {response.parsed is not None}, len={len(response.parsed) if response.parsed else 0}")
+            # Get price updates for this pair with timeout
+            import asyncio
+            try:
+                response = await asyncio.wait_for(
+                    feed_client.get_latest_price_updates([pair]),
+                    timeout=10.0  # 10 second timeout for price feed
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Price feed timeout for {pair}, using cached price if available")
+                if pair in self._cache:
+                    cached_price, cached_time = self._cache[pair]
+                    return cached_price, int(cached_time)
+                raise Exception(f"Price feed timeout for {pair} and no cached price available")
             
             if response.parsed and len(response.parsed) > 0:
                 price_data = response.parsed[0]
                 price = price_data.converted_price
                 timestamp = int(time.time())
                 
-                print(f"   ✅ Price: ${price:.2f}")
-                
                 # Cache the result
                 self._cache[pair] = (price, timestamp)
                 
                 return price, timestamp
-            else:
-                print(f"   ❌ No parsed data in response")
 
         except Exception as e:
-            print(f"❌ Error fetching price from Avantis SDK: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error fetching price from Avantis SDK: {e}", exc_info=True)
 
         return None
 
@@ -86,8 +88,21 @@ class PriceFeedService:
             # Use the Avantis SDK's feed client
             feed_client = avantis_service.client.feed_client
             
-            # Get price updates for all pairs at once
-            response = await feed_client.get_latest_price_updates(pairs)
+            # Get price updates for all pairs at once with timeout
+            import asyncio
+            try:
+                response = await asyncio.wait_for(
+                    feed_client.get_latest_price_updates(pairs),
+                    timeout=10.0  # 10 second timeout for price feed
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Price feed timeout for multiple pairs, using cached prices where available")
+                # Return cached prices for pairs that have them
+                for pair in pairs:
+                    if pair in self._cache:
+                        cached_price, cached_time = self._cache[pair]
+                        results[pair] = (cached_price, int(cached_time))
+                return results
             
             if response.parsed:
                 timestamp = int(time.time())
@@ -100,9 +115,7 @@ class PriceFeedService:
                         self._cache[pair] = (price, timestamp)
 
         except Exception as e:
-            print(f"Error fetching prices from Avantis SDK: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error fetching prices from Avantis SDK: {e}", exc_info=True)
 
         return results
 

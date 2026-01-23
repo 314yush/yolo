@@ -2,6 +2,7 @@
 Trade transaction building endpoints.
 """
 
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
@@ -17,6 +18,8 @@ from app.models.schemas import (
 from app.services.avantis import avantis_service
 from app.services.price_feed import price_feed_service
 
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter(prefix="/trade", tags=["trades"])
 
@@ -27,15 +30,24 @@ async def build_open_trade_tx(request: OpenTradeRequest):
     Build unsigned transaction for opening a trade.
     The delegate wallet signs this.
     """
-    print(f"📈 Build open trade request: {request}")
+    logger.info(f"Build open trade request: pair={request.pair}, trader={request.trader[:10]}...")
     try:
-        # Get current price for the pair
-        price_result = await price_feed_service.get_price(request.pair)
+        # Get current price for the pair with timeout handling
+        import asyncio
+        try:
+            price_result = await asyncio.wait_for(
+                price_feed_service.get_price(request.pair),
+                timeout=12.0  # 12 second timeout for price fetch
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Price fetch timeout for {request.pair}")
+            raise HTTPException(status_code=408, detail=f"Price feed timeout for {request.pair}. Please try again.")
+        
         if not price_result:
             raise HTTPException(status_code=400, detail=f"Could not fetch price for {request.pair}")
         
         current_price, _ = price_result
-        print(f"   Current price for {request.pair}: ${current_price}")
+        logger.debug(f"Current price for {request.pair}: ${current_price}")
 
         tx = await avantis_service.build_open_trade_tx_delegate(
             trader=request.trader,
@@ -47,17 +59,12 @@ async def build_open_trade_tx(request: OpenTradeRequest):
             open_price=current_price,
         )
         
-        print(f"   ✅ Built tx: to={tx.to}, data_len={len(tx.data)}, value={tx.value}")
-        print(f"   📋 Transaction details:")
-        print(f"      - To: {tx.to}")
-        print(f"      - Data length: {len(tx.data)} bytes")
-        print(f"      - Value: {tx.value}")
-        print(f"      - Chain ID: {tx.chain_id}")
+        logger.debug(f"Built tx: to={tx.to}, data_len={len(tx.data)} bytes, value={tx.value}, chain_id={tx.chain_id}")
         return BuildTxResponse(tx=tx)
     except HTTPException:
         raise
     except Exception as e:
-        print(f"   ❌ Error building trade tx: {e}")
+        logger.error(f"Error building trade tx: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -67,7 +74,7 @@ async def build_close_trade_tx(request: CloseTradeRequest):
     Build unsigned transaction for closing a trade.
     The delegate wallet signs this.
     """
-    print(f"📉 Build close trade request: {request}")
+    logger.info(f"Build close trade request: trader={request.trader[:10]}..., pair_index={request.pair_index}, trade_index={request.trade_index}")
     try:
         tx = await avantis_service.build_close_trade_tx_delegate(
             trader=request.trader,
@@ -76,21 +83,18 @@ async def build_close_trade_tx(request: CloseTradeRequest):
             collateral_to_close=request.collateral_to_close,
         )
         
-        print(f"   Built close tx: to={tx.to}, data_len={len(tx.data)}")
-        print(f"   Response validation: tx.to={tx.to}, tx.data={tx.data[:50]}..., tx.value={tx.value}, tx.chain_id={tx.chain_id}")
-        
+        logger.debug(f"Built close tx: to={tx.to}, data_len={len(tx.data)} bytes")
         response = BuildTxResponse(tx=tx)
-        print(f"   Response created successfully")
         return response
     except ValidationError as e:
-        print(f"   ❌ Validation error building close tx: {e}")
+        logger.error(f"Validation error building close tx: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
     except HTTPException:
         raise
     except Exception as e:
-        print(f"   ❌ Error building close tx: {e}")
+        logger.error(f"Error building close tx: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -167,7 +171,7 @@ async def get_pnl(address: str):
         
         return PnLResponse(positions=positions)
     except Exception as e:
-        print(f"Error getting PnL: {e}")
+        logger.error(f"Error getting PnL: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

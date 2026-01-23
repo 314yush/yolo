@@ -5,6 +5,7 @@ Builds unsigned transactions for frontend signing.
 
 import ssl
 import certifi
+import logging
 
 # Fix SSL certificate issue on macOS
 # Create a proper SSL context with certifi's CA bundle
@@ -22,6 +23,8 @@ from eth_utils import to_checksum_address
 
 from app.core.config import get_settings
 from app.models.schemas import UnsignedTx, Trade
+
+logger = logging.getLogger(__name__)
 
 # USDC contract address on Base
 USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
@@ -109,7 +112,7 @@ class AvantisService:
                 return None
             return delegate
         except Exception as e:
-            print(f"Error getting delegate: {e}")
+            logger.error(f"Error getting delegate: {e}", exc_info=True)
             return None
 
     def calculate_take_profit(
@@ -155,9 +158,23 @@ class AvantisService:
         """
         trader = to_checksum_address(trader)
         
+        # Validate minimum position size
+        # Avantis requires minimum position size of $100 (positionSizeUSDC = collateral * leverage)
+        MIN_POSITION_SIZE_USD = 100.0
+        position_size_usd = collateral * leverage
+        if position_size_usd < MIN_POSITION_SIZE_USD:
+            min_collateral = MIN_POSITION_SIZE_USD / leverage
+            raise ValueError(
+                f"Position size ${position_size_usd:.2f} is below minimum ${MIN_POSITION_SIZE_USD:.2f}. "
+                f"With {leverage}x leverage, minimum collateral is ${min_collateral:.2f} USDC. "
+                f"Current collateral: ${collateral:.2f} USDC"
+            )
+        
         # Calculate TP - for high leverage, use a conservative target
         tp = self.calculate_take_profit(open_price, is_long, leverage)
-        print(f"   TP calculation: price={open_price}, is_long={is_long}, leverage={leverage}, tp={tp}")
+        # Log only in debug mode
+        logger.debug(f"TP calculation: price={open_price}, is_long={is_long}, leverage={leverage}, tp={tp}")
+        logger.debug(f"Position size: ${position_size_usd:.2f} (collateral: ${collateral:.2f} × leverage: {leverage}x)")
 
         trade_input = TradeInput(
             trader=trader,
@@ -182,7 +199,7 @@ class AvantisService:
                     TradeInputOrderType.MARKET_ZERO_FEE,
                     slippage_percentage=1,
                 ),
-                timeout=10.0  # 10 second timeout
+                timeout=15.0  # 15 second timeout (SDK can take 8-10s for trade building)
             )
             
             inner_calldata = inner_tx.get("data")
@@ -192,19 +209,25 @@ class AvantisService:
                 execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
             execution_fee = int(execution_fee)
         except asyncio.TimeoutError:
-            print(f"   ⚠️ build_trade_open_tx timed out, manually encoding...")
+            logger.warning("build_trade_open_tx timed out, manually encoding...")
             
             # Manual encoding fallback - use TradeInput object directly
             # Get execution fee separately
             try:
-                execution_fee = await self.client.trade.get_trade_execution_fee()
+                execution_fee = await asyncio.wait_for(
+                    self.client.trade.get_trade_execution_fee(),
+                    timeout=12.0  # 12 second timeout (SDK calls can be slow)
+                )
                 # Ensure execution_fee is an integer
                 if isinstance(execution_fee, str):
                     execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
                 execution_fee = int(execution_fee)
+            except asyncio.TimeoutError:
+                logger.warning("Execution fee call timed out, using default")
+                execution_fee = 2350330625000  # Default execution fee (~0.000002 ETH)
             except Exception as fee_error:
-                print(f"   ⚠️ Failed to get execution fee: {fee_error}, using default")
-                execution_fee = 1000000000000000  # 0.001 ETH default
+                logger.warning(f"Failed to get execution fee: {fee_error}, using default")
+                execution_fee = 2350330625000  # Default execution fee (~0.000002 ETH)
             
             # Get Trading contract
             Trading = self.client.contracts.get("Trading")
@@ -226,17 +249,22 @@ class AvantisService:
             collateral_scaled = int(collateral * COLLATERAL_DECIMALS)
             
             # Convert TradeInput to tuple matching contract struct
-            # Contract struct order: trader, openPrice, pairIndex, collateralInTrade, isLong, leverage, index, tp, sl
+            # Contract struct order from ABI: trader, pairIndex, index, initialPosToken, positionSizeUSDC, openPrice, buy, leverage, tp, sl, timestamp
+            import time
+            position_size_usdc = int(collateral * leverage * COLLATERAL_DECIMALS)  # positionSizeUSDC = collateral * leverage (scaled by 10^6)
+            
             trade_input_tuple = (
-                trader,  # address
-                open_price_scaled,  # uint256 - openPrice (scaled by 10^8)
+                trader,  # address - trader
                 pair_index,  # uint256 - pairIndex
-                collateral_scaled,  # uint256 - collateralInTrade (scaled by 10^6 for USDC)
-                is_long,  # bool - isLong
-                leverage,  # uint256 - leverage
                 0,  # uint256 - index
+                0,  # uint256 - initialPosToken (0 for USDC)
+                position_size_usdc,  # uint256 - positionSizeUSDC (collateral * leverage, scaled by 10^6)
+                open_price_scaled,  # uint256 - openPrice (scaled by 10^8)
+                is_long,  # bool - buy (isLong)
+                leverage,  # uint256 - leverage
                 tp_scaled,  # uint256 - tp (scaled by 10^8)
                 0,  # uint256 - sl (stop loss, 0 for market orders)
+                int(time.time()),  # uint256 - timestamp
             )
             
             inner_calldata = Trading.functions.openTrade(
@@ -245,11 +273,11 @@ class AvantisService:
                 1,  # uint256 - slippage_percentage (1 = 1%)
             )._encode_transaction_data()
             
-            print(f"   ✅ Manually encoded inner calldata length: {len(inner_calldata)} bytes")
-            print(f"   📋 TradeInput tuple: trader={trader[:10]}..., price={open_price_scaled}, pair={pair_index}, collateral={collateral_scaled}, long={is_long}, lev={leverage}, tp={tp_scaled}")
+            logger.debug(f"Manually encoded inner calldata length: {len(inner_calldata)} bytes")
+            logger.debug(f"TradeInput tuple: trader={trader[:10]}..., price={open_price_scaled}, pair={pair_index}, collateral={collateral_scaled}, long={is_long}, lev={leverage}, tp={tp_scaled}")
         
-        print(f"   Inner calldata length: {len(inner_calldata)}")
-        print(f"   Execution fee: {execution_fee} wei")
+        logger.debug(f"Inner calldata length: {len(inner_calldata)}")
+        logger.debug(f"Execution fee: {execution_fee} wei")
 
         # Step 2: Wrap in delegatedAction(trader, innerCalldata)
         # We manually encode the call instead of using build_transaction
@@ -263,9 +291,7 @@ class AvantisService:
         )._encode_transaction_data()
         
         trading_address = Trading.address
-        print(f"   ✅ Delegate tx built: to={trading_address}")
-        print(f"   📊 delegatedAction calldata length: {len(delegate_calldata)} bytes")
-        print(f"   💰 Execution fee: {execution_fee} wei ({execution_fee / 1e18:.6f} ETH)")
+        logger.debug(f"Delegate tx built: to={trading_address}, calldata length: {len(delegate_calldata)} bytes, fee: {execution_fee / 1e18:.6f} ETH")
 
         return UnsignedTx(
             to=trading_address,
@@ -292,7 +318,7 @@ class AvantisService:
         """
         try:
             trader = to_checksum_address(trader)
-            print(f"   Building close tx: trader={trader}, pair_index={pair_index}, trade_index={trade_index}, collateral={collateral_to_close}")
+            logger.debug(f"Building close tx: trader={trader}, pair_index={pair_index}, trade_index={trade_index}, collateral={collateral_to_close}")
             
             # Validate inputs
             if pair_index < 0:
@@ -304,11 +330,19 @@ class AvantisService:
             
             # Convert collateral to USDC units (6 decimals)
             collateral_usdc = int(collateral_to_close * 10**6)
-            print(f"   Collateral in USDC units: {collateral_usdc}")
+            logger.debug(f"Collateral in USDC units: {collateral_usdc}")
             
             # Get execution fee (this doesn't require gas estimation)
-            execution_fee = await self.client.trade.get_trade_execution_fee()
-            print(f"   Execution fee: {execution_fee} wei")
+            import asyncio
+            try:
+                execution_fee = await asyncio.wait_for(
+                    self.client.trade.get_trade_execution_fee(),
+                    timeout=12.0  # 12 second timeout (SDK calls can be slow)
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Execution fee call timed out, using default")
+                execution_fee = 2350330625000  # Default execution fee (~0.000002 ETH)
+            logger.debug(f"Execution fee: {execution_fee} wei")
             
             # Get Trading contract
             Trading = self.client.contracts.get("Trading")
@@ -322,8 +356,7 @@ class AvantisService:
                 int(trade_index),
                 int(collateral_usdc),
             )._encode_transaction_data()
-            
-            print(f"   Inner close calldata length: {len(inner_calldata)}")
+            logger.debug(f"Inner close calldata length: {len(inner_calldata)}")
             
             # Step 2: Wrap in delegatedAction(trader, innerCalldata)
             # Use _encode_transaction_data() to avoid gas estimation
@@ -331,10 +364,8 @@ class AvantisService:
                 trader,
                 inner_calldata
             )._encode_transaction_data()
-            
             trading_address = Trading.address
-            print(f"   Delegate close tx built: to={trading_address}")
-            print(f"   delegatedAction calldata length: {len(delegate_calldata)}")
+            logger.debug(f"Delegate close tx built: to={trading_address}, calldata length: {len(delegate_calldata)} bytes")
             
             tx = UnsignedTx(
                 to=trading_address,
@@ -343,10 +374,10 @@ class AvantisService:
                 chain_id=self.settings.chain_id,
             )
             
-            print(f"   UnsignedTx created successfully")
+            logger.debug("UnsignedTx created successfully")
             return tx
         except Exception as e:
-            print(f"   ❌ Error in build_close_trade_tx_delegate: {type(e).__name__}: {e}")
+            logger.error(f"Error in build_close_trade_tx_delegate: {type(e).__name__}: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             raise
@@ -397,7 +428,7 @@ class AvantisService:
             
             return result
         except Exception as e:
-            print(f"Error fetching trades: {e}")
+            logger.error(f"Error fetching trades: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             return []
@@ -432,7 +463,7 @@ class AvantisService:
             
             return confirmed, pending_trades
         except Exception as e:
-            print(f"Error fetching all trades: {e}")
+            logger.error(f"Error fetching all trades: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             return [], []
@@ -524,7 +555,7 @@ class AvantisService:
             
             return result
         except Exception as e:
-            print(f"Error fetching trades with PnL: {e}")
+            logger.error(f"Error fetching trades with PnL: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             return []
@@ -567,7 +598,7 @@ class AvantisService:
             if trading_storage:
                 return trading_storage.address
         except Exception as e:
-            print(f"Error getting trading storage address: {e}")
+            logger.error(f"Error getting trading storage address: {e}", exc_info=True)
         return "0x8a311D7048c35985aa31C131B9A13e03a5f7422d"
 
     async def get_trading_contract_address(self) -> str:
@@ -581,7 +612,7 @@ class AvantisService:
             if trading:
                 return trading.address
         except Exception as e:
-            print(f"Error getting trading contract address: {e}")
+            logger.error(f"Error getting trading contract address: {e}", exc_info=True)
         # Fallback to known Avantis Trading contract address on Base
         return "0x44914408af82bC9983bbb330e3578E1105e11d4e"
 
