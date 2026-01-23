@@ -60,7 +60,7 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout (reduced from 30s for better UX)
+      const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout (accounts for Avantis SDK latency ~8-10s + network overhead)
 
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         ...options,
