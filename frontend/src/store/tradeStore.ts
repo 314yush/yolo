@@ -91,8 +91,8 @@ interface TradeState {
   setPrices: (prices: Record<string, { price: number; timestamp: number }>) => void;
   
   // Pre-built transaction for instant execution
-  prebuiltTx: { to: string; data: string; value: string; chainId: number } | null;
-  setPrebuiltTx: (tx: { to: string; data: string; value: string; chainId: number } | null) => void;
+  prebuiltTx: EncodedTransaction | null;
+  setPrebuiltTx: (tx: EncodedTransaction | null) => void;
   isPrebuilding: boolean;
   setIsPrebuilding: (building: boolean) => void;
   prebuildError: string | null;
