@@ -108,7 +108,9 @@ export function useAvantisAPI() {
   const getTrades = useCallback(async (address: string) => {
     try {
       return await fetchTrades(address);
-    } catch {
+    } catch (error) {
+      console.error('[useAvantisAPI] Failed to fetch trades:', error);
+      // Return empty array on error to prevent hanging
       return [];
     }
   }, []);
@@ -118,7 +120,9 @@ export function useAvantisAPI() {
     try {
       const currentPrices = useTradeStore.getState().prices;
       return await fetchPnL(address, currentPrices);
-    } catch {
+    } catch (error) {
+      console.error('[useAvantisAPI] Failed to fetch PnL:', error);
+      // Return empty array on error to prevent hanging
       return [];
     }
   }, []);

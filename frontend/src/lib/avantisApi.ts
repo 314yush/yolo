@@ -106,12 +106,32 @@ function calculatePnL(
 }
 
 /**
+ * Fetch with timeout wrapper
+ */
+async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Request timeout - please check your connection');
+    }
+    throw error;
+  }
+}
+
+/**
  * Fetch user's open trades from Avantis API
  */
 export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
   const url = `${AVANTIS_API_BASE}/user-data?trader=${traderAddress}`;
   
-  const response = await fetch(url);
+  const response = await fetchWithTimeout(url, 10000); // 10 second timeout
   if (!response.ok) {
     throw new Error(`Avantis API error: ${response.status}`);
   }
@@ -133,7 +153,7 @@ export async function fetchPnL(
 ): Promise<PnLData[]> {
   const url = `${AVANTIS_API_BASE}/user-data?trader=${traderAddress}`;
   
-  const response = await fetch(url);
+  const response = await fetchWithTimeout(url, 10000); // 10 second timeout
   if (!response.ok) {
     throw new Error(`Avantis API error: ${response.status}`);
   }

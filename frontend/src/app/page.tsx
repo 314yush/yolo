@@ -37,6 +37,7 @@ export default function HomePage() {
     setUserAddress,
     delegateStatus,
     collateral,
+    currentTrade,
     setCurrentTrade,
     setPnLData,
     setTxHash,
@@ -72,6 +73,62 @@ export default function HomePage() {
   
   // Stream real-time prices from Pyth (syncs to store)
   usePythPricesSync();
+
+  // Auto-detect and set currentTrade if we're in PnL stage but don't have a trade yet
+  useEffect(() => {
+    if (stage === 'pnl' && !currentTrade && userAddress) {
+      // Try to find the latest trade
+      const checkForTrade = async () => {
+        try {
+          const trades = await getTrades(userAddress);
+          if (trades.length > 0) {
+            const latestTrade = trades[trades.length - 1];
+            setCurrentTrade(latestTrade);
+            
+            // Also try to get PnL data
+            try {
+              const positions = await getPnL(userAddress);
+              const matchingPnL = positions.find(
+                p => p.trade.pairIndex === latestTrade.pairIndex && 
+                     p.trade.tradeIndex === latestTrade.tradeIndex
+              );
+              if (matchingPnL) {
+                setPnLData(matchingPnL);
+              } else {
+                // Initialize with zero PnL
+                setPnLData({
+                  trade: latestTrade,
+                  currentPrice: latestTrade.openPrice,
+                  pnl: 0,
+                  pnlPercentage: 0,
+                });
+              }
+            } catch {
+              // Initialize with zero PnL if PnL fetch fails
+              setPnLData({
+                trade: latestTrade,
+                currentPrice: latestTrade.openPrice,
+                pnl: 0,
+                pnlPercentage: 0,
+              });
+            }
+          }
+        } catch (err) {
+          console.error('Failed to auto-detect trade:', err);
+        }
+      };
+      
+      // Check immediately and then retry a few times
+      checkForTrade();
+      const intervalId = setInterval(checkForTrade, 2000);
+      const timeoutId = setTimeout(() => clearInterval(intervalId), 10000); // Stop after 10s
+      
+      return () => {
+        clearInterval(intervalId);
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [stage, currentTrade, userAddress, getTrades, getPnL, setCurrentTrade, setPnLData]);
   
   // Pre-build transactions when selection changes
   const { prebuiltTx, isPrebuilding, rebuildNow } = usePrebuiltTx();
@@ -184,9 +241,15 @@ export default function HomePage() {
 
   // Handle spin complete - check trade status and show PnL
   const handleSpinComplete = useCallback(async () => {
-    if (!userAddress) return;
+    if (!userAddress) {
+      setError('User address not available');
+      setStage('error');
+      return;
+    }
     
     const wasConfirmedViaPusher = tradeConfirmedRef.current;
+    const startTime = Date.now();
+    const MAX_POLLING_TIME = 15000; // Maximum 15 seconds total polling time
 
     try {
       // Faster polling if already confirmed via Pusher
@@ -195,51 +258,68 @@ export default function HomePage() {
       let attempts = 0;
       
       const pollForTrade = async (): Promise<boolean> => {
+        // Check if we've exceeded maximum polling time
+        if (Date.now() - startTime > MAX_POLLING_TIME) {
+          console.warn('Polling timeout exceeded');
+          return false;
+        }
+
         attempts++;
-        const trades = await getTrades(userAddress);
         
-        if (trades.length > 0) {
-          const latestTrade = trades[trades.length - 1];
-          setCurrentTrade(latestTrade);
+        try {
+          const trades = await getTrades(userAddress);
           
-          // Initialize PnL data
-          setPnLData({
-            trade: latestTrade,
-            currentPrice: latestTrade.openPrice,
-            pnl: 0,
-            pnlPercentage: 0,
-          });
-          
-          setStage('pnl');
-          playWin();
-          incrementTotalTrades();
-          
-          // Remove pending hash - trade is confirmed
-          const { txHash } = useTradeStore.getState();
-          if (txHash) {
-            removePendingTradeHash(txHash);
+          if (trades.length > 0) {
+            const latestTrade = trades[trades.length - 1];
+            setCurrentTrade(latestTrade);
+            
+            // Initialize PnL data
+            setPnLData({
+              trade: latestTrade,
+              currentPrice: latestTrade.openPrice,
+              pnl: 0,
+              pnlPercentage: 0,
+            });
+            
+            setStage('pnl');
+            playWin();
+            incrementTotalTrades();
+            
+            // Remove pending hash - trade is confirmed
+            const { txHash } = useTradeStore.getState();
+            if (txHash) {
+              removePendingTradeHash(txHash);
+            }
+            
+            return true;
           }
-          
-          return true;
+        } catch (err) {
+          console.error('Error fetching trades:', err);
+          // Continue to try PnL endpoint
         }
         
-        // Also try PnL endpoint
-        const positions = await getPnL(userAddress);
-        if (positions.length > 0) {
-          const latestPosition = positions[positions.length - 1];
-          setCurrentTrade(latestPosition.trade);
-          setPnLData(latestPosition);
-          setStage('pnl');
-          playWin();
-          incrementTotalTrades();
-          
-          // Remove pending hash - trade is confirmed
-          const { txHash } = useTradeStore.getState();
-          if (txHash) {
-            removePendingTradeHash(txHash);
+        try {
+          // Also try PnL endpoint
+          const positions = await getPnL(userAddress);
+          if (positions.length > 0) {
+            const latestPosition = positions[positions.length - 1];
+            setCurrentTrade(latestPosition.trade);
+            setPnLData(latestPosition);
+            setStage('pnl');
+            playWin();
+            incrementTotalTrades();
+            
+            // Remove pending hash - trade is confirmed
+            const { txHash } = useTradeStore.getState();
+            if (txHash) {
+              removePendingTradeHash(txHash);
+            }
+            
+            return true;
           }
-          
-          return true;
+        } catch (err) {
+          console.error('Error fetching PnL:', err);
+          // Continue polling
         }
         
         return false;
@@ -250,20 +330,66 @@ export default function HomePage() {
         return;
       }
       
-      // Poll at determined interval
+      // Poll at determined interval with timeout protection
       while (attempts < maxAttempts) {
+        // Check timeout before each poll
+        if (Date.now() - startTime > MAX_POLLING_TIME) {
+          break;
+        }
+
         await new Promise(resolve => setTimeout(resolve, pollingInterval));
+        
         if (await pollForTrade()) {
           return;
         }
       }
       
-      // Still no trade after polling - show PnL screen, it will continue polling
-      setStage('pnl');
-    } catch {
-      setStage('pnl'); // Show PnL screen, it will poll for updates
+      // Still no trade after polling - check if we have a pending txHash
+      const { txHash } = useTradeStore.getState();
+      if (txHash) {
+        // We have a transaction hash, show PnL screen - it will continue polling via useOpenTrades
+        // Initialize with current selection as fallback
+        const storeState = useTradeStore.getState();
+        if (storeState.selection && !storeState.currentTrade) {
+          // Create a temporary trade object from selection for display
+          const tempTrade: Trade = {
+            tradeIndex: 0,
+            pairIndex: storeState.selection.asset.pairIndex,
+            pair: `${storeState.selection.asset.name}/USD`,
+            collateral: collateral,
+            leverage: storeState.selection.leverage.value,
+            isLong: storeState.selection.direction.isLong,
+            openPrice: prices[`${storeState.selection.asset.name}/USD`]?.price || 0,
+            tp: 0,
+            sl: 0,
+            openedAt: Date.now(),
+          };
+          setCurrentTrade(tempTrade);
+          setPnLData({
+            trade: tempTrade,
+            currentPrice: tempTrade.openPrice,
+            pnl: 0,
+            pnlPercentage: 0,
+          });
+        }
+        setStage('pnl');
+      } else {
+        // No transaction hash - something went wrong
+        setError('Trade execution may have failed. Please check your wallet and try again.');
+        setStage('error');
+      }
+    } catch (err) {
+      console.error('Spin complete error:', err);
+      // Show PnL screen if we have a selection, otherwise show error
+      const storeState = useTradeStore.getState();
+      if (storeState.selection) {
+        setStage('pnl'); // PnL screen will continue polling
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to confirm trade');
+        setStage('error');
+      }
     }
-  }, [userAddress, getTrades, getPnL, setCurrentTrade, setPnLData, setStage, playWin, incrementTotalTrades, removePendingTradeHash]);
+  }, [userAddress, getTrades, getPnL, setCurrentTrade, setPnLData, setStage, setError, playWin, incrementTotalTrades, removePendingTradeHash, collateral, prices]);
 
   // Handle close trade - uses pre-built tx or direct encoding (no SDK)
   const handleCloseTrade = useCallback(async () => {
