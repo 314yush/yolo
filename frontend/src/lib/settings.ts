@@ -6,7 +6,7 @@ const STORAGE_KEY = 'yolo_settings';
 const DEFAULT_SETTINGS: Settings = {
   collateral: DEFAULT_COLLATERAL,
   audioEnabled: true,
-  musicEnabled: false,
+  musicEnabled: true, // Music plays by default on landing page
 };
 
 export function loadSettings(): Settings {
@@ -27,7 +27,7 @@ export function loadSettings(): Settings {
         ? Math.max(5, Math.min(1000, parsed.collateral)) 
         : DEFAULT_COLLATERAL,
       audioEnabled: typeof parsed.audioEnabled === 'boolean' ? parsed.audioEnabled : true,
-      musicEnabled: typeof parsed.musicEnabled === 'boolean' ? parsed.musicEnabled : false,
+      musicEnabled: typeof parsed.musicEnabled === 'boolean' ? parsed.musicEnabled : true, // Default to true for new users
     };
   } catch (error) {
     console.error('Failed to load settings:', error);

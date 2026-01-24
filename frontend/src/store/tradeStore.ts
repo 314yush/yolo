@@ -160,7 +160,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     return {
       collateral: DEFAULT_COLLATERAL,
       audioEnabled: true,
-      musicEnabled: false,
+      musicEnabled: true, // Music plays by default
     };
   })(),
   tradeStats: (() => {

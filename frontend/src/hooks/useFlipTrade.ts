@@ -7,9 +7,10 @@ import { useAvantisAPI } from './useAvantisAPI';
 import { useTxSigner } from './useTxSigner';
 import { useSound } from './useSound';
 import { saveClosedTrade } from '@/lib/closedTrades';
-import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect } from '@/lib/avantisEncoder';
+import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, AVANTIS_CONTRACTS } from '@/lib/avantisEncoder';
 import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
+import { publicClient } from '@/lib/viemClient';
 
 export function useFlipTrade() {
   const { 
@@ -109,7 +110,29 @@ export function useFlipTrade() {
       saveClosedTrade(userAddress, trade, finalPnL);
 
       // Wait a moment for the close to settle
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Check actual USDC balance after closing
+      let actualUsdcBalance = 0;
+      try {
+        const balanceBigInt = await publicClient.readContract({
+          address: AVANTIS_CONTRACTS.USDC,
+          abi: [
+            {
+              constant: true,
+              inputs: [{ name: '_owner', type: 'address' }],
+              name: 'balanceOf',
+              outputs: [{ name: 'balance', type: 'uint256' }],
+              type: 'function',
+            },
+          ],
+          functionName: 'balanceOf',
+          args: [userAddress],
+        });
+        actualUsdcBalance = Number(balanceBigInt) / 1e6; // USDC has 6 decimals
+      } catch (err) {
+        console.warn('Failed to check USDC balance:', err);
+      }
 
       // Rebuild open transaction with fresh price data after closing
       // This ensures we use the latest price and that the close has completed
@@ -118,11 +141,25 @@ export function useFlipTrade() {
         throw new Error(`No price available for ${pairToUse}. Wait for Pyth connection.`);
       }
 
-      // Build open transaction with fresh price
+      // Use actual available balance, but cap at original collateral
+      // If user had a loss, they might not have enough for the same collateral
+      const availableCollateral = Math.min(actualUsdcBalance, trade.collateral);
+      
+      // Validate minimum position size with available collateral
+      const positionSizeWithAvailable = availableCollateral * trade.leverage;
+      if (positionSizeWithAvailable < 100) {
+        throw new Error(
+          `Cannot flip trade: After closing, available balance (${actualUsdcBalance.toFixed(2)} USDC) ` +
+          `is insufficient for minimum position size. With ${trade.leverage}x leverage, ` +
+          `you need at least ${(100 / trade.leverage).toFixed(2)} USDC.`
+        );
+      }
+
+      // Build open transaction with fresh price and available collateral
       const openTx = buildOpenTradeTxDirect({
         trader: userAddress,
         pairIndex: trade.pairIndex,
-        collateral: trade.collateral, // Use same collateral amount
+        collateral: availableCollateral, // Use available balance, capped at original
         leverage: trade.leverage,
         isLong: !trade.isLong, // Flip direction
         openPrice: currentPrice, // Use current price
