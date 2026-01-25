@@ -7,5 +7,6 @@ export { usePrebuiltCloseTx } from './usePrebuiltCloseTx';
 export { usePrebuiltFlipTx } from './usePrebuiltFlipTx';
 export { usePusherEvents, useAutoPusherEvents } from './usePusherEvents';
 export { usePythPrices, usePythPricesSync } from './usePythPrices';
+export { useChartDataCollector, useChartData, getChartData, clearChartData, clearAllChartData } from './useChartDataCollector';
 export { useSound } from './useSound';
 export { useTxSigner } from './useTxSigner';

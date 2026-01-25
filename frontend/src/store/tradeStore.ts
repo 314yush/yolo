@@ -36,6 +36,11 @@ interface TradeState {
   currentTrade: Trade | null;
   setCurrentTrade: (trade: Trade | null) => void;
 
+  // Remembered trade indices for PnL matching (when multiple positions exist)
+  rememberedPairIndex: number | null;
+  rememberedTradeIndex: number | null;
+  setRememberedIndices: (pairIndex: number | null, tradeIndex: number | null) => void;
+
   // PnL data for display
   pnlData: PnLData | null;
   setPnLData: (data: PnLData | null) => void;
@@ -119,6 +124,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   stage: 'idle',
   selection: null,
   currentTrade: null,
+  rememberedPairIndex: null,
+  rememberedTradeIndex: null,
   pnlData: null,
   txHash: null,
   isExecuting: false,
@@ -179,7 +186,19 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   setSelection: (selection) => set({ selection }),
   setConfirmationStage: (confirmationStage) => set({ confirmationStage }),
   setConfirmationTimestamp: (confirmationTimestamp) => set({ confirmationTimestamp }),
-  setCurrentTrade: (currentTrade) => set({ currentTrade }),
+  setCurrentTrade: (currentTrade) => {
+    // When setting currentTrade, also remember the indices for PnL matching
+    if (currentTrade && currentTrade.pairIndex !== undefined && currentTrade.tradeIndex !== undefined) {
+      set({ 
+        currentTrade,
+        rememberedPairIndex: currentTrade.pairIndex,
+        rememberedTradeIndex: currentTrade.tradeIndex,
+      });
+    } else {
+      set({ currentTrade });
+    }
+  },
+  setRememberedIndices: (pairIndex, tradeIndex) => set({ rememberedPairIndex: pairIndex, rememberedTradeIndex: tradeIndex }),
   setPnLData: (pnlData) => set({ pnlData }),
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
@@ -293,6 +312,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     stage: 'idle',
     selection: null,
     currentTrade: null,
+    rememberedPairIndex: null,
+    rememberedTradeIndex: null,
     pnlData: null,
     txHash: null,
     isExecuting: false,

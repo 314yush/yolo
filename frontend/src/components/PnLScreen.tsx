@@ -6,6 +6,9 @@ import { usePnL } from '@/hooks/usePnL';
 import { useFlipTrade } from '@/hooks/useFlipTrade';
 import { usePrebuiltCloseTx } from '@/hooks/usePrebuiltCloseTx';
 import { usePrebuiltFlipTx } from '@/hooks/usePrebuiltFlipTx';
+import { PriceChart } from './PriceChart';
+import { LoginButton } from './LoginButton';
+import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
 
 interface PnLScreenProps {
   onClose: () => void;
@@ -14,7 +17,7 @@ interface PnLScreenProps {
 }
 
 export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
-  const { selection, pnlData, currentTrade } = useTradeStore();
+  const { selection, pnlData, currentTrade, prices } = useTradeStore();
   const { flipTrade, isFlipping } = useFlipTrade();
   const [prevPnl, setPrevPnl] = useState<number | null>(null);
   const [isFlashing, setIsFlashing] = useState(false);
@@ -25,6 +28,12 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   
   // Start PnL polling
   usePnL({ enabled: true, interval: 1000 });
+  
+  // Get real-time Pyth price for the current asset
+  // FIX: Use pnlData.trade or currentTrade to determine assetPair, not selection
+  // This ensures we show the correct pair when multiple positions exist
+  const assetPair = pnlData?.trade?.pair ?? currentTrade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
+  const pythCurrentPrice = assetPair ? prices[assetPair]?.price ?? null : null;
 
   // Flash animation on PnL change
   useEffect(() => {
@@ -62,155 +71,195 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const isNearLiq = liqDistance < 20;
   const isNearTP = pnlPercentage > 80;
 
-  return (
-    <div className="flex flex-col items-center justify-center h-full w-full max-w-2xl mx-auto px-4 sm:px-6 md:px-8 py-6 sm:py-8 md:py-12 pb-24 sm:pb-8 space-y-5 sm:space-y-6 md:space-y-8">
-      
-      {/* 1. CHIPS AT TOP - Compact */}
-      <div 
-        className="flex gap-1.5 sm:gap-2 flex-wrap justify-center"
-        role="group"
-        aria-label="Trade parameters"
-      >
-        {selection?.asset && (
-          <div
-            className="selection-chip px-2.5 sm:px-3 py-1 text-xs sm:text-sm font-bold text-black flex items-center gap-1"
-            style={{ backgroundColor: selection.asset.color }}
-          >
-            <img 
-              src={selection.asset.icon} 
-              alt="" 
-              className="w-3.5 h-3.5 sm:w-4 sm:h-4"
-              aria-hidden="true"
-            />
-            <span>{selection.asset.name}</span>
-          </div>
-        )}
-        {selection?.leverage && (
-          <div
-            className="selection-chip px-2.5 sm:px-3 py-1 text-xs sm:text-sm font-bold text-black"
-            style={{ backgroundColor: selection.leverage.color }}
-          >
-            {selection.leverage.name}
-          </div>
-        )}
-        {selection?.direction && (
-          <div
-            className="selection-chip px-2.5 sm:px-3 py-1 text-xs sm:text-sm font-bold text-black"
-            style={{ backgroundColor: selection.direction.color }}
-          >
-            {selection.direction.name}
-          </div>
-        )}
-      </div>
+  // Get the correct entry price from pnlData (matches the displayed PnL)
+  // This ensures we show the entry price for the trade that matches the PnL being displayed
+  const entryPrice = pnlData?.trade?.openPrice ?? currentTrade?.openPrice ?? null;
+  
+  // Get current price for display
+  const currentPrice = pythCurrentPrice ?? pnlData?.currentPrice ?? null;
+  
+  // Derive display values from pnlData.trade or currentTrade (not selection, which may be stale)
+  // This ensures chips and assetPair match the actual trade being displayed
+  const displayTrade = pnlData?.trade ?? currentTrade;
+  const displayAsset = displayTrade ? ASSETS.find(a => a.pairIndex === displayTrade.pairIndex) : selection?.asset;
+  const displayLeverage = displayTrade ? LEVERAGES.find(l => l.value === displayTrade.leverage) : selection?.leverage;
+  const displayDirection = displayTrade ? DIRECTIONS.find(d => d.isLong === displayTrade.isLong) : selection?.direction;
 
-      {/* 2. GIANT PnL DISPLAY - Dominant, centered */}
-      <div 
-        className={`text-center py-2 sm:py-4 md:py-6 ${isFlashing ? 'animate-pnl-flash' : ''}`}
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        <div
-          className={`text-5xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-9xl font-black animate-pnl-pulse ${glowClass} leading-none`}
-          style={{ color, letterSpacing: '-0.03em' }}
-        >
-          {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
+  return (
+    <div className="min-h-screen bg-black flex flex-col w-full max-w-md mx-auto safe-area-top safe-area-bottom">
+      {/* 1. Header (60px) */}
+      <header className="h-[60px] flex justify-between items-center px-4 relative z-10">
+        <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+        <LoginButton />
+      </header>
+
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {/* 2. Chart Header (40px) */}
+        <div className="h-[40px] flex justify-between items-center px-4 border-b border-white/10">
+          <div className="text-white/80 text-sm sm:text-base font-bold font-mono uppercase">
+            {assetPair || 'Loading...'}
+          </div>
+          {currentPrice !== null && (
+            <div className="text-[#CCFF00] text-base sm:text-lg font-black font-mono">
+              ${currentPrice.toLocaleString(undefined, { 
+                minimumFractionDigits: 2, 
+                maximumFractionDigits: currentPrice < 10 ? 4 : 2 
+              })}
+            </div>
+          )}
         </div>
-        <div
-          className={`text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mt-1 sm:mt-2 ${glowClass}`}
-          style={{ color }}
-        >
-          {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
+
+        {/* 3. Chart (320px) - Full width, no padding */}
+        <div className="h-[320px] w-full overflow-hidden">
+          <PriceChart
+            assetPair={assetPair}
+            lineColor={isProfit ? '#CCFF00' : '#FF006E'}
+            entryPrice={entryPrice}
+            height={320}
+            pnl={pnl}
+            showLegend={false}
+          />
         </div>
+
+        {/* 4. Small Chips (32px) */}
+        <div 
+          className="flex gap-2 flex-wrap justify-center px-4 py-2 min-h-[32px]"
+          role="group"
+          aria-label="Trade parameters"
+        >
+          {displayAsset && (
+            <div
+              className="selection-chip px-3 py-1.5 text-sm font-bold text-black flex items-center gap-1.5 font-mono"
+              style={{ backgroundColor: displayAsset.color }}
+            >
+              <img 
+                src={displayAsset.icon} 
+                alt="" 
+                className="w-4 h-4"
+                aria-hidden="true"
+              />
+              <span>{displayAsset.name}</span>
+            </div>
+          )}
+          {displayLeverage && (
+            <div
+              className="selection-chip px-3 py-1.5 text-sm font-bold text-black font-mono"
+              style={{ backgroundColor: displayLeverage.color }}
+            >
+              {displayLeverage.name}
+            </div>
+          )}
+          {displayDirection && (
+            <div
+              className="selection-chip px-3 py-1.5 text-sm font-bold text-black font-mono"
+              style={{ backgroundColor: displayDirection.color }}
+            >
+              {displayDirection.name}
+            </div>
+          )}
+        </div>
+
+        {/* 5. Large PnL (120px) */}
+        <div 
+          className={`min-h-[120px] flex flex-col items-center justify-center px-4 py-6 ${isFlashing ? 'animate-pnl-flash' : ''}`}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div
+            className={`text-5xl sm:text-6xl font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
+            style={{ color, letterSpacing: '-0.03em' }}
+          >
+            {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
+          </div>
+          <div
+            className={`text-2xl sm:text-3xl font-bold mt-2 ${glowClass} font-mono`}
+            style={{ color }}
+          >
+            {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
+          </div>
+        </div>
+
+        {/* 6. Inline Info (24px each) */}
+        <div className="px-4 space-y-1 pb-4">
+          {/* Entry → Current price line */}
+          {(entryPrice != null || currentPrice != null) && (
+            <div className="h-[24px] flex items-center justify-center gap-3 text-sm font-mono text-white/60">
+              <span>Entry:</span>
+              <span className="text-white font-semibold">
+                ${entryPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
+              </span>
+              <span className="text-white/40">→</span>
+              <span>Now:</span>
+              <span className="font-semibold" style={{ color }}>
+                ${currentPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
+              </span>
+            </div>
+          )}
+          
+          {/* TP at 200% line */}
+          <div className="h-[24px] flex items-center justify-center text-sm font-mono text-white/50">
+            TP at 200%
+          </div>
+        </div>
+
+        {/* Spacer for floating buttons (160px) */}
+        <div className="h-[160px]" />
+
+        {/* Liquidation warning (if applicable) */}
+        {isNearLiq && (
+          <div className="w-full px-4 pb-4">
+            <div className="p-3 border-4 border-[#FF006E] bg-[#FF006E]/20 animate-danger-pulse">
+              <div className="flex items-center justify-center gap-2 text-[#FF006E] font-bold text-sm font-mono">
+                <span className="text-xl">⚠️</span>
+                <span>{liqDistance.toFixed(1)}% FROM LIQUIDATION</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         <span className="sr-only">
           {isProfit ? 'Profit' : 'Loss'} of {Math.abs(pnl).toFixed(2)} USDC, {Math.abs(pnlPercentage).toFixed(2)} percent
         </span>
       </div>
 
-      {/* 3. TP PROGRESS BAR */}
-      <div className="w-full max-w-md space-y-1.5 sm:space-y-2">
-        <div className="flex justify-between text-[10px] sm:text-xs font-mono text-white/50">
-          <span>-100%</span>
-          <span className={`font-bold text-xs sm:text-sm ${isNearTP ? 'text-[#CCFF00]' : 'text-white/70'}`}>
-            {isNearTP ? '🎯 ALMOST TP!' : 'Progress to 200% TP'}
-          </span>
-          <span>+200%</span>
-        </div>
-        <div className={`brutal-progress ${isNearLiq ? 'animate-danger-pulse' : isNearTP ? 'animate-success-pulse' : ''}`}>
-          <div 
-            className={`brutal-progress-bar ${isProfit ? 'brutal-progress-bar-green' : 'brutal-progress-bar-red'}`}
-            style={{ width: `${tpProgressNormalized}%` }}
-          />
-        </div>
-      </div>
-
-      {/* 4. PRICE COMPARISON - Simple inline text */}
-      {(currentTrade?.openPrice != null || pnlData?.currentPrice != null) && (
-        <div className="flex items-center justify-center gap-2 sm:gap-3 text-xs sm:text-sm md:text-base font-mono text-white/60">
-          <span>Entry:</span>
-          <span className="text-white font-semibold">
-            ${currentTrade?.openPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
-          </span>
-          <span className="text-white/40">→</span>
-          <span>Current:</span>
-          <span className="font-semibold" style={{ color }}>
-            ${pnlData?.currentPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
-          </span>
-        </div>
-      )}
-
-      {/* 5. LIQUIDATION WARNING (if applicable) */}
-      {isNearLiq && (
-        <div className="w-full max-w-md p-2.5 sm:p-3 border-4 border-[#FF006E] bg-[#FF006E]/20 animate-danger-pulse">
-          <div className="flex items-center justify-center gap-2 text-[#FF006E] font-bold text-xs sm:text-sm">
-            <span className="text-lg sm:text-xl">⚠️</span>
-            <span>{liqDistance.toFixed(1)}% FROM LIQUIDATION</span>
-          </div>
-        </div>
-      )}
-
-      {/* 6. ACTION BUTTONS - Optimized spacing */}
-      <div className="w-full max-w-md space-y-2.5 sm:space-y-3 pt-1 sm:pt-2">
-        {/* Primary row: CLOSE and ROLL AGAIN */}
-        <div className="flex gap-2.5 sm:gap-3 w-full">
+      {/* Floating Action Buttons - Above nav bar */}
+      <div className="fixed left-0 right-0 px-4 z-40" style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
+        <div className="max-w-md mx-auto flex gap-3 items-center">
+          {/* Close button - Icon only */}
           <button
             onClick={onClose}
             disabled={isClosing || isFlipping}
             aria-label={isClosing ? 'Closing trade...' : 'Close and take profit/loss'}
             aria-busy={isClosing}
-            className="flex-1 py-3.5 sm:py-4 text-sm sm:text-base font-bold brutal-button-danger disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[52px] sm:min-h-[56px]"
+            className="brutal-button brutal-button-danger w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation shadow-[0_8px_16px_rgba(0,0,0,0.4)]"
           >
-            {isClosing ? 'CLOSING...' : 'CLOSE EARLY'}
+            <span className="text-2xl sm:text-3xl font-black">✕</span>
           </button>
+
+          {/* Flip button - Icon only */}
+          <button
+            onClick={handleFlip}
+            disabled={isFlipping || isClosing}
+            aria-label={isFlipping ? 'Flipping...' : `Flip to ${currentTrade?.isLong ? 'SHORT' : 'LONG'}`}
+            aria-busy={isFlipping}
+            className="brutal-button brutal-button-secondary w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation shadow-[0_8px_16px_rgba(0,0,0,0.4)]"
+          >
+            <span className="text-2xl sm:text-3xl font-black">⟲</span>
+          </button>
+
+          {/* Roll Again button - Text */}
           <button
             onClick={onRollAgain}
             disabled={isClosing || isFlipping}
             aria-label="Start a new trade"
-            className="flex-1 py-3.5 sm:py-4 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[52px] sm:min-h-[56px]"
+            className="flex-1 brutal-button py-3 sm:py-4 text-base sm:text-lg font-black font-mono uppercase bg-[#CCFF00] text-black disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[56px] sm:min-h-[64px] flex items-center justify-center shadow-[0_8px_16px_rgba(0,0,0,0.4)]"
           >
-            ROLL AGAIN
+            ROLL
           </button>
         </div>
-        
-        {/* Secondary: FLIP button */}
-        <button
-          onClick={handleFlip}
-          disabled={isFlipping || isClosing}
-          aria-label={isFlipping ? 'Flipping...' : `Flip to ${currentTrade?.isLong ? 'SHORT' : 'LONG'}`}
-          aria-busy={isFlipping}
-          className="w-full py-2.5 sm:py-3 text-xs sm:text-sm font-bold brutal-button-secondary disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[44px] sm:min-h-[48px] flex items-center justify-center gap-2"
-        >
-          <span>↻</span>
-          <span>{isFlipping ? 'FLIPPING...' : `FLIP TO ${currentTrade?.isLong ? 'SHORT' : 'LONG'}`}</span>
-        </button>
       </div>
-
-      {/* TP info at bottom - Subtle */}
-      {currentTrade && currentTrade.tp != null && currentTrade.tp > 0 && (
-        <div className="text-white/30 text-[10px] sm:text-xs text-center font-mono pt-1 sm:pt-2">
-          Auto-close at ${currentTrade.tp.toLocaleString()} (200% profit)
-        </div>
-      )}
     </div>
   );
 }

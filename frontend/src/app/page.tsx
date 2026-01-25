@@ -11,6 +11,7 @@ import { useUsdcBalance } from '@/hooks/useUsdcBalance';
 import { useOpenTrades } from '@/hooks/useOpenTrades';
 import { useFastConfirmation } from '@/hooks/useFastConfirmation';
 import { usePythPricesSync } from '@/hooks/usePythPrices';
+import { useChartDataCollector } from '@/hooks/useChartDataCollector';
 import { usePrebuiltTx } from '@/hooks/usePrebuiltTx';
 import { PickerWheel } from '@/components/PickerWheel';
 import { PnLScreen } from '@/components/PnLScreen';
@@ -73,46 +74,40 @@ export default function HomePage() {
   
   // Stream real-time prices from Pyth (syncs to store)
   usePythPricesSync();
+  
+  // Collect chart data in background for all assets (pre-load for instant charts)
+  useChartDataCollector();
 
   // Auto-detect and set currentTrade if we're in PnL stage but don't have a trade yet
+  // Also verify that currentTrade still exists if we have one
   useEffect(() => {
-    if (stage === 'pnl' && !currentTrade && userAddress) {
+    if (stage === 'pnl' && userAddress) {
       // Try to find the latest trade
       const checkForTrade = async () => {
         try {
-          const trades = await getTrades(userAddress);
-          if (trades.length > 0) {
-            const latestTrade = trades[trades.length - 1];
-            setCurrentTrade(latestTrade);
-            
-            // Also try to get PnL data
-            try {
-              const positions = await getPnL(userAddress);
-              const matchingPnL = positions.find(
-                p => p.trade.pairIndex === latestTrade.pairIndex && 
-                     p.trade.tradeIndex === latestTrade.tradeIndex
-              );
-              if (matchingPnL) {
-                setPnLData(matchingPnL);
-              } else {
-                // Initialize with zero PnL
-                setPnLData({
-                  trade: latestTrade,
-                  currentPrice: latestTrade.openPrice,
-                  pnl: 0,
-                  pnlPercentage: 0,
-                });
-              }
-            } catch {
-              // Initialize with zero PnL if PnL fetch fails
-              setPnLData({
-                trade: latestTrade,
-                currentPrice: latestTrade.openPrice,
-                pnl: 0,
-                pnlPercentage: 0,
-              });
+          const positions = await getPnL(userAddress);
+          if (positions.length === 0) return;
+          
+          // If we have a currentTrade, verify it still exists
+          if (currentTrade) {
+            const tradeStillExists = positions.some(
+              p => p.trade.pairIndex === currentTrade.pairIndex && 
+                   p.trade.tradeIndex === currentTrade.tradeIndex
+            );
+            // If trade doesn't exist anymore, clear it so we can set a new one
+            if (!tradeStillExists) {
+              setCurrentTrade(null);
+              return; // Will retry on next interval
             }
+            // Trade exists, we're good
+            return;
           }
+          
+          // No currentTrade, set the newest one
+          const sortedPositions = [...positions].sort((a, b) => b.trade.openedAt - a.trade.openedAt);
+          const latestPosition = sortedPositions[0];
+          setCurrentTrade(latestPosition.trade);
+          setPnLData(latestPosition);
         } catch (err) {
           console.error('Failed to auto-detect trade:', err);
         }
@@ -128,7 +123,7 @@ export default function HomePage() {
         clearTimeout(timeoutId);
       };
     }
-  }, [stage, currentTrade, userAddress, getTrades, getPnL, setCurrentTrade, setPnLData]);
+  }, [stage, currentTrade, userAddress, getPnL, setCurrentTrade, setPnLData]);
   
   // Pre-build transactions when selection changes
   const { prebuiltTx, isPrebuilding, rebuildNow } = usePrebuiltTx();
@@ -270,16 +265,25 @@ export default function HomePage() {
           const trades = await getTrades(userAddress);
           
           if (trades.length > 0) {
-            const latestTrade = trades[trades.length - 1];
-            setCurrentTrade(latestTrade);
+            // Sort by openedAt timestamp to find the ACTUAL newest trade
+            // Avantis API does not guarantee chronological ordering!
+            const sortedTrades = [...trades].sort((a, b) => b.openedAt - a.openedAt);
+            const latestTrade = sortedTrades[0];
             
-            // Initialize PnL data
-            setPnLData({
-              trade: latestTrade,
-              currentPrice: latestTrade.openPrice,
-              pnl: 0,
-              pnlPercentage: 0,
-            });
+            // Only set currentTrade if we don't already have one, or if this is explicitly a new trade from spin
+            // This prevents overwriting the user's selected position when multiple positions exist
+            const { currentTrade: existingTrade } = useTradeStore.getState();
+            if (!existingTrade || latestTrade.openedAt > (existingTrade.openedAt || 0)) {
+              setCurrentTrade(latestTrade);
+              
+              // Initialize PnL data
+              setPnLData({
+                trade: latestTrade,
+                currentPrice: latestTrade.openPrice,
+                pnl: 0,
+                pnlPercentage: 0,
+              });
+            }
             
             setStage('pnl');
             playWin();
@@ -302,9 +306,18 @@ export default function HomePage() {
           // Also try PnL endpoint
           const positions = await getPnL(userAddress);
           if (positions.length > 0) {
-            const latestPosition = positions[positions.length - 1];
-            setCurrentTrade(latestPosition.trade);
-            setPnLData(latestPosition);
+            // FIX: Sort by openedAt timestamp to find the ACTUAL newest position
+            const sortedPositions = [...positions].sort((a, b) => b.trade.openedAt - a.trade.openedAt);
+            const latestPosition = sortedPositions[0];
+            
+            // Only set currentTrade if we don't already have one, or if this is explicitly a new trade from spin
+            // This prevents overwriting the user's selected position when multiple positions exist
+            const { currentTrade: existingTrade } = useTradeStore.getState();
+            if (!existingTrade || latestPosition.trade.openedAt > (existingTrade.openedAt || 0)) {
+              setCurrentTrade(latestPosition.trade);
+              setPnLData(latestPosition);
+            }
+            
             setStage('pnl');
             playWin();
             incrementTotalTrades();
@@ -435,7 +448,7 @@ export default function HomePage() {
   if (!ready) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center safe-area-top safe-area-bottom" role="status" aria-live="polite" aria-label="Loading application">
-        <div className="text-[#CCFF00] text-2xl md:text-3xl font-bold animate-pulse" aria-hidden="true">LOADING...</div>
+        <div className="text-[#CCFF00] text-2xl sm:text-3xl font-bold animate-pulse" aria-hidden="true">LOADING...</div>
         <span className="sr-only">Loading YOLO trading application</span>
       </div>
     );
@@ -446,7 +459,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center px-4 py-8 safe-area-top safe-area-bottom">
         <header className="text-center">
-          <h1 className="yolo-logo text-5xl sm:text-6xl md:text-7xl font-bold px-12 sm:px-16 py-10 sm:py-12 mb-8 sm:mb-12">
+          <h1 className="yolo-logo text-5xl sm:text-6xl font-bold px-12 sm:px-16 py-10 sm:py-12 mb-8 sm:mb-12">
             YOLO
           </h1>
           <p className="text-white/60 text-center mb-8 sm:mb-10 max-w-md text-base sm:text-lg leading-relaxed px-4">
@@ -475,7 +488,7 @@ export default function HomePage() {
 
   // Main app
   return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-between px-4 sm:px-6 md:px-8 py-4 sm:py-6 md:py-8 font-mono safe-area-top safe-area-bottom relative">
+    <div className="min-h-screen bg-black flex flex-col items-center justify-between px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom relative max-w-md mx-auto w-full">
       {/* Skip to main content link for keyboard users */}
       <a
         href="#main-content"
@@ -487,11 +500,13 @@ export default function HomePage() {
       {/* Abstract Background */}
       <AbstractBackground />
       
-      {/* Header */}
-      <header className="w-full flex justify-between items-center mb-6 sm:mb-8 relative z-10">
-        <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
-        <LoginButton />
-      </header>
+      {/* Header - Hidden when PnL screen is active */}
+      {stage !== 'pnl' && (
+        <header className="w-full flex justify-between items-center mb-6 sm:mb-8 relative z-10">
+          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+          <LoginButton />
+        </header>
+      )}
 
       {/* Main content */}
       <main 
@@ -548,9 +563,9 @@ export default function HomePage() {
           <section 
             role="alert" 
             aria-live="assertive"
-            className="flex flex-col items-center gap-6 sm:gap-8 text-center px-4 pb-24 sm:pb-6"
+            className="flex flex-col items-center gap-6 sm:gap-8 text-center px-4 pb-24"
           >
-            <h2 className="text-[#FF006E] text-3xl sm:text-4xl md:text-5xl font-bold">ERROR</h2>
+            <h2 className="text-[#FF006E] text-3xl sm:text-4xl font-bold">ERROR</h2>
             <p className="text-white/70 text-base sm:text-lg max-w-md">
               Something went wrong. Please try again.
             </p>
@@ -567,7 +582,7 @@ export default function HomePage() {
 
       {/* Footer with roll button */}
       {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
-        <footer className="w-full max-w-md mt-6 sm:mt-8 mb-20 sm:mb-0 relative z-10">
+        <footer className="w-full mt-6 sm:mt-8 mb-20 relative z-10">
           <button
             onClick={() => {
               if (stage === 'idle') {
@@ -590,7 +605,7 @@ export default function HomePage() {
             {stage === 'idle' ? 'ROLL' : 'SPINNING...'}
           </button>
 
-          <div className="flex justify-center items-center gap-4 sm:gap-6 text-white/60 text-xs sm:text-sm mb-20 sm:mb-0" role="group" aria-label="Account information">
+          <div className="flex justify-center items-center gap-4 sm:gap-6 text-white/60 text-xs sm:text-sm mb-20" role="group" aria-label="Account information">
             <div className="flex items-center gap-1.5">
               <span className="font-bold text-white/80">COLLATERAL:</span>
               <span className="text-[#CCFF00] font-mono" aria-live="polite">
@@ -612,9 +627,9 @@ export default function HomePage() {
         </footer>
       )}
 
-      {/* Bottom Navigation Bar - Mobile */}
+      {/* Bottom Navigation Bar - Mobile Only */}
       <nav 
-        className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-4 border-black backdrop-blur-sm z-50 safe-area-bottom sm:hidden"
+        className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-4 border-black backdrop-blur-sm z-50 safe-area-bottom"
         aria-label="Main navigation"
         role="navigation"
       >
@@ -670,62 +685,6 @@ export default function HomePage() {
         </div>
       </nav>
 
-      {/* Desktop Navigation - Show in header on larger screens */}
-      <nav 
-        className="hidden sm:flex items-center gap-4 fixed top-4 right-20 md:top-6 md:right-24 z-40"
-        aria-label="Main navigation"
-        role="navigation"
-      >
-        <Link
-          href="/activity"
-          className="relative p-3 text-[#CCFF00] touch-manipulation bg-black border-4 border-[#CCFF00] hover:bg-[#CCFF00] hover:text-black transition-colors focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
-          aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
-          style={{ boxShadow: '4px 4px 0px 0px #CCFF00' }}
-        >
-          <svg
-            className="w-5 h-5 md:w-6 md:h-6"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="square"
-            strokeLinejoin="miter"
-            aria-hidden="true"
-          >
-            <rect x="3" y="3" width="18" height="18" />
-            <line x1="3" y1="9" x2="21" y2="9" />
-            <line x1="9" y1="3" x2="9" y2="21" />
-          </svg>
-          {openTrades.length > 0 && (
-            <span 
-              className="absolute -top-2 -right-2 bg-[#FF006E] text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center border-2 border-black"
-              aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
-            >
-              {openTrades.length}
-            </span>
-          )}
-        </Link>
-        <Link
-          href="/settings"
-          className="p-3 text-[#CCFF00] touch-manipulation bg-black border-4 border-[#CCFF00] hover:bg-[#CCFF00] hover:text-black transition-colors focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
-          aria-label="Settings"
-          style={{ boxShadow: '4px 4px 0px 0px #CCFF00' }}
-        >
-          <svg
-            className="w-5 h-5 md:w-6 md:h-6"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="square"
-            strokeLinejoin="miter"
-            aria-hidden="true"
-          >
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </Link>
-      </nav>
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />

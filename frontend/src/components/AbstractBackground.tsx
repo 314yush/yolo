@@ -7,7 +7,7 @@ export function AbstractBackground() {
     <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
       {/* Large rotated squares */}
       <div 
-        className="absolute w-32 h-32 sm:w-48 sm:h-48 md:w-64 md:h-64 border-4 border-[#CCFF00] opacity-5"
+        className="absolute w-32 h-32 sm:w-48 sm:h-48 border-4 border-[#CCFF00] opacity-5"
         style={{
           top: '10%',
           left: '-5%',
@@ -16,7 +16,7 @@ export function AbstractBackground() {
         }}
       />
       <div 
-        className="absolute w-24 h-24 sm:w-40 sm:h-40 md:w-56 md:h-56 border-4 border-[#FF006E] opacity-5"
+        className="absolute w-24 h-24 sm:w-40 sm:h-40 border-4 border-[#FF006E] opacity-5"
         style={{
           top: '60%',
           right: '-3%',
@@ -27,7 +27,7 @@ export function AbstractBackground() {
       
       {/* Medium circles */}
       <div 
-        className="absolute w-20 h-20 sm:w-32 sm:h-32 md:w-40 md:h-40 border-4 border-[#FFD60A] opacity-5 rounded-full"
+        className="absolute w-20 h-20 sm:w-32 sm:h-32 border-4 border-[#FFD60A] opacity-5 rounded-full"
         style={{
           top: '25%',
           right: '15%',
@@ -36,7 +36,7 @@ export function AbstractBackground() {
         }}
       />
       <div 
-        className="absolute w-16 h-16 sm:w-28 sm:h-28 md:w-36 md:h-36 border-4 border-[#627EEA] opacity-5 rounded-full"
+        className="absolute w-16 h-16 sm:w-28 sm:h-28 border-4 border-[#627EEA] opacity-5 rounded-full"
         style={{
           bottom: '20%',
           left: '10%',
@@ -67,7 +67,7 @@ export function AbstractBackground() {
       
       {/* XRP Blue accent */}
       <div 
-        className="absolute w-12 h-12 sm:w-20 sm:h-20 md:w-24 md:h-24 border-4 border-[#00AAE4] opacity-5"
+        className="absolute w-12 h-12 sm:w-20 sm:h-20 border-4 border-[#00AAE4] opacity-5"
         style={{
           top: '75%',
           left: '20%',

@@ -12,7 +12,7 @@ interface UsePnLOptions {
 export function usePnL(options: UsePnLOptions = {}) {
   const { enabled = true, interval = 2000 } = options;
   
-  const { userAddress, currentTrade, setPnLData, stage } = useTradeStore();
+  const { userAddress, currentTrade, setPnLData, stage, rememberedPairIndex, rememberedTradeIndex } = useTradeStore();
   const { getPnL } = useAvantisAPI();
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -28,6 +28,8 @@ export function usePnL(options: UsePnLOptions = {}) {
   const stageRef = useRef(stage);
   const getPnLRef = useRef(getPnL);
   const setPnLDataRef = useRef(setPnLData);
+  const rememberedPairIndexRef = useRef(rememberedPairIndex);
+  const rememberedTradeIndexRef = useRef(rememberedTradeIndex);
   
   // Helper to create a unique key for a trade
   const getTradeKey = useCallback((trade: typeof currentTrade) => {
@@ -42,16 +44,22 @@ export function usePnL(options: UsePnLOptions = {}) {
     stageRef.current = stage;
     getPnLRef.current = getPnL;
     setPnLDataRef.current = setPnLData;
-  }, [userAddress, currentTrade, stage, getPnL, setPnLData]);
+    rememberedPairIndexRef.current = rememberedPairIndex;
+    rememberedTradeIndexRef.current = rememberedTradeIndex;
+  }, [userAddress, currentTrade, stage, getPnL, setPnLData, rememberedPairIndex, rememberedTradeIndex]);
 
   const fetchPnL = useCallback(async (isRetry = false): Promise<void> => {
     const userAddr = userAddressRef.current;
     const trade = currentTradeRef.current;
+    const rememberedPairIdx = rememberedPairIndexRef.current;
+    const rememberedTradeIdx = rememberedTradeIndexRef.current;
     
-    if (!userAddr || !trade) {
-      console.log('[usePnL] Skipping fetch - missing userAddress or currentTrade', { 
+    if (!userAddr || (!trade && (rememberedPairIdx === null || rememberedTradeIdx === null))) {
+      console.log('[usePnL] Skipping fetch - missing userAddress or currentTrade/remembered indices', { 
         userAddress: userAddr, 
-        currentTrade: trade 
+        currentTrade: trade,
+        rememberedPairIndex: rememberedPairIdx,
+        rememberedTradeIndex: rememberedTradeIdx,
       });
       return;
     }
@@ -64,19 +72,25 @@ export function usePnL(options: UsePnLOptions = {}) {
     try {
       const positions = await getPnLRef.current(userAddr);
       console.log('[usePnL] Fetched positions:', positions.length, 'Current trade:', { 
-        pairIndex: trade.pairIndex, 
-        tradeIndex: trade.tradeIndex 
+        pairIndex: trade?.pairIndex, 
+        tradeIndex: trade?.tradeIndex,
+        rememberedPairIndex: rememberedPairIdx,
+        rememberedTradeIndex: rememberedTradeIdx,
       });
       
       // Reset retry count on success
       retryCountRef.current = 0;
       lastErrorRef.current = null;
       
-      // Find the current trade's PnL
+      // Use remembered indices if available (for multiple positions), otherwise fall back to currentTrade
+      const pairIndexToMatch = rememberedPairIdx !== null ? rememberedPairIdx : trade?.pairIndex;
+      const tradeIndexToMatch = rememberedTradeIdx !== null ? rememberedTradeIdx : trade?.tradeIndex;
+      
+      // Find the current trade's PnL using remembered indices or currentTrade
       const currentPnL = positions.find(
         (p) => 
-          p.trade.pairIndex === trade.pairIndex &&
-          p.trade.tradeIndex === trade.tradeIndex
+          p.trade.pairIndex === pairIndexToMatch &&
+          p.trade.tradeIndex === tradeIndexToMatch
       );
       
       if (currentPnL) {
@@ -138,7 +152,7 @@ export function usePnL(options: UsePnLOptions = {}) {
   // Start/stop polling based on stage
   useEffect(() => {
     // Use current values from props/state, not refs (refs are for the fetch function)
-    const shouldPoll = enabled && stage === 'pnl' && userAddress && currentTrade;
+    const shouldPoll = enabled && stage === 'pnl' && userAddress && (currentTrade || (rememberedPairIndex !== null && rememberedTradeIndex !== null));
     const currentTradeKey = getTradeKey(currentTrade);
     const tradeChanged = currentTradeKey !== lastTradeKeyRef.current;
     
@@ -211,7 +225,7 @@ export function usePnL(options: UsePnLOptions = {}) {
       }
       isPollingRef.current = false;
     };
-  }, [enabled, stage, userAddress, currentTrade, fetchPnL, interval, getTradeKey]);
+  }, [enabled, stage, userAddress, currentTrade, fetchPnL, interval, getTradeKey, rememberedPairIndex, rememberedTradeIndex]);
 
   return { fetchPnL, lastError: lastErrorRef.current };
 }

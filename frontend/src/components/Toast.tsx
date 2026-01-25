@@ -45,7 +45,7 @@ function ToastItem({ toast, onClose }: ToastProps) {
           {toast.type === 'success' && <span className="text-xl sm:text-2xl flex-shrink-0">✅</span>}
           {toast.type === 'error' && <span className="text-xl sm:text-2xl flex-shrink-0">❌</span>}
           {toast.type === 'info' && <span className="text-xl sm:text-2xl flex-shrink-0">ℹ️</span>}
-          <p className="font-bold text-sm sm:text-base md:text-lg break-words">{toast.message}</p>
+          <p className="font-bold text-sm sm:text-base break-words">{toast.message}</p>
         </div>
         <button
           onClick={() => onClose(toast.id)}

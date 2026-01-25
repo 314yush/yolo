@@ -57,10 +57,10 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
 
       {/* PnL Display - Dominant but compact */}
       <div className="mb-2">
-        <div className={`text-2xl sm:text-3xl md:text-4xl font-black leading-none`} style={{ color }}>
+        <div className={`text-2xl sm:text-3xl font-black leading-none`} style={{ color }}>
           {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
         </div>
-        <div className={`text-sm sm:text-base md:text-lg font-bold mt-0.5`} style={{ color }}>
+        <div className={`text-sm sm:text-base font-bold mt-0.5`} style={{ color }}>
           {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
         </div>
       </div>

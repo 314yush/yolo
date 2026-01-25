@@ -297,7 +297,7 @@ export default function ActivityPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 md:px-8 py-4 sm:py-6 md:py-8 font-mono safe-area-top safe-area-bottom">
+    <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full">
       {/* Header - Compact */}
       <header className="w-full mb-4 sm:mb-6">
         <div className="flex items-center justify-between mb-3">
@@ -357,7 +357,7 @@ export default function ActivityPage() {
       </header>
 
       {/* Trades List */}
-      <main className="flex-1 overflow-y-auto min-h-0 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8">
+      <main className="flex-1 overflow-y-auto min-h-0 -mx-4 sm:-mx-6 px-4 sm:px-6">
         {showClosedTrades ? (
           // Show closed trades
           closedTrades.length === 0 ? (
@@ -371,7 +371,7 @@ export default function ActivityPage() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-4xl mx-auto pb-4">
+            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-4">
               {closedTrades.map((closedTrade) => {
                 // Convert ClosedTrade to Trade + PnLData for TradeCard
                 const trade: Trade = {
@@ -420,7 +420,7 @@ export default function ActivityPage() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 max-w-4xl mx-auto pb-4">
+            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-4">
               {tradesWithPnL.map((item, index) => (
                 <TradeCard
                   key={`${item.trade.pairIndex}-${item.trade.tradeIndex}`}

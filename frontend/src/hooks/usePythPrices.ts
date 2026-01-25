@@ -55,6 +55,10 @@ export function usePythPrices(): UsePythPricesReturn {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
+  const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastUpdateRef = useRef<number | null>(null);
+  const isConnectingRef = useRef(false); // Guard against multiple simultaneous connections
+  const STALE_CONNECTION_THRESHOLD = 30000; // 30 seconds without updates = stale
 
   // Get price for a pair
   const getPrice = useCallback((pair: string): number | null => {
@@ -91,6 +95,7 @@ export function usePythPrices(): UsePythPricesReturn {
           }));
           
           setLastUpdate(Date.now());
+          lastUpdateRef.current = Date.now();
         }
       }
     } catch (err) {
@@ -100,10 +105,33 @@ export function usePythPrices(): UsePythPricesReturn {
 
   // Connect to Pyth WebSocket
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    // Guard: Don't connect if already connected or connecting
+    const currentWs = wsRef.current;
+    if (currentWs?.readyState === WebSocket.OPEN) {
       return;
     }
+    
+    // Guard: Don't connect if already connecting
+    if (isConnectingRef.current) {
+      return;
+    }
+    
+    // Clear any pending reconnection timeout to prevent race conditions
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    
+    // Close any existing connection that's not already closed
+    if (currentWs && currentWs.readyState !== WebSocket.CLOSED && currentWs.readyState !== WebSocket.CLOSING) {
+      try {
+        currentWs.close();
+      } catch (e) {
+        // Ignore errors when closing
+      }
+    }
 
+    isConnectingRef.current = true;
     setConnectionState('connecting');
     console.log('[PythPrices] Connecting to Pyth Hermes...');
 
@@ -111,6 +139,7 @@ export function usePythPrices(): UsePythPricesReturn {
 
     ws.onopen = () => {
       console.log('[PythPrices] Connected to Pyth Hermes');
+      isConnectingRef.current = false;
       setIsConnected(true);
       setConnectionState('connected');
       reconnectAttempts.current = 0;
@@ -123,7 +152,30 @@ export function usePythPrices(): UsePythPricesReturn {
       };
       
       console.log('[PythPrices] Subscribing to feeds:', Object.keys(PYTH_FEED_IDS));
-      ws.send(JSON.stringify(subscribeMsg));
+      try {
+        ws.send(JSON.stringify(subscribeMsg));
+      } catch (err) {
+        console.error('[PythPrices] Error sending subscribe message:', err);
+      }
+      
+      // Start health check interval to detect stale connections
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+      }
+      healthCheckIntervalRef.current = setInterval(() => {
+        const currentWs = wsRef.current;
+        if (!currentWs) return;
+        
+        const now = Date.now();
+        const lastUpdateTime = lastUpdateRef.current ?? 0;
+        const timeSinceLastUpdate = now - lastUpdateTime;
+        
+        // If we haven't received updates in a while and connection appears open, it might be stale
+        if (currentWs.readyState === WebSocket.OPEN && timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD && lastUpdateTime > 0) {
+          console.warn(`[PythPrices] Stale connection detected (${timeSinceLastUpdate}ms since last update), reconnecting...`);
+          currentWs.close(); // This will trigger onclose and reconnect
+        }
+      }, 10000); // Check every 10 seconds
     };
 
     ws.onmessage = (event) => {
@@ -137,27 +189,46 @@ export function usePythPrices(): UsePythPricesReturn {
 
     ws.onerror = (error) => {
       console.error('[PythPrices] WebSocket error:', error);
+      console.error('[PythPrices] WebSocket error details:', {
+        type: error.type,
+        readyState: ws.readyState,
+        url: ws.url,
+        protocol: ws.protocol,
+      });
+      isConnectingRef.current = false;
       setConnectionState('error');
     };
 
     ws.onclose = (event) => {
       console.log('[PythPrices] WebSocket closed:', event.code, event.reason);
+      isConnectingRef.current = false;
       setIsConnected(false);
       setConnectionState('disconnected');
-      wsRef.current = null;
-
-      // Attempt to reconnect with exponential backoff
-      if (reconnectAttempts.current < maxReconnectAttempts) {
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-        console.log(`[PythPrices] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+      
+      // Only process this close event if it's for the current WebSocket instance
+      if (wsRef.current === ws) {
+        wsRef.current = null;
         
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectAttempts.current++;
-          connect();
-        }, delay);
-      } else {
-        console.error('[PythPrices] Max reconnection attempts reached');
-        setConnectionState('error');
+        // Clear health check interval
+        if (healthCheckIntervalRef.current) {
+          clearInterval(healthCheckIntervalRef.current);
+          healthCheckIntervalRef.current = null;
+        }
+
+        // Attempt to reconnect with exponential backoff (only if no timeout already scheduled)
+        if (!reconnectTimeoutRef.current && reconnectAttempts.current < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+          console.log(`[PythPrices] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttempts.current++;
+            reconnectTimeoutRef.current = null;
+            connect();
+          }, delay);
+        } else if (reconnectAttempts.current >= maxReconnectAttempts) {
+          console.error('[PythPrices] Max reconnection attempts reached');
+          setConnectionState('error');
+        }
       }
     };
 
@@ -171,21 +242,57 @@ export function usePythPrices(): UsePythPricesReturn {
     return () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+        healthCheckIntervalRef.current = null;
       }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
+      isConnectingRef.current = false;
     };
   }, [connect]);
 
-  // Reconnect on visibility change
+  // Reconnect on visibility change - improved to handle stale connections
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (!document.hidden && !isConnected) {
-        console.log('[PythPrices] Tab visible, reconnecting...');
-        reconnectAttempts.current = 0;
-        connect();
+      if (!document.hidden) {
+        // Tab became visible - check connection health
+        const ws = wsRef.current;
+        const isActuallyConnected = ws?.readyState === WebSocket.OPEN;
+        const now = Date.now();
+        const lastUpdateTime = lastUpdateRef.current ?? 0;
+        const timeSinceLastUpdate = now - lastUpdateTime;
+        const isStale = timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD && lastUpdateTime > 0;
+        
+        // Reconnect if: not connected, stale connection, or WebSocket is not actually open
+        // But only if we're not already connecting
+        if ((!isActuallyConnected || isStale || (!isConnected && connectionState !== 'connecting')) && !isConnectingRef.current) {
+          console.log('[PythPrices] Tab visible, reconnecting...', { 
+            isActuallyConnected, 
+            isStale, 
+            connectionState,
+            timeSinceLastUpdate 
+          });
+          reconnectAttempts.current = 0; // Reset attempts when user returns
+          
+          // Close existing connection if it's stale or dead
+          if (ws && (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED || isStale)) {
+            try {
+              ws.close();
+            } catch (e) {
+              // Ignore errors when closing
+            }
+          }
+          
+          // Small delay to ensure cleanup, then reconnect
+          setTimeout(() => {
+            connect();
+          }, 100);
+        }
       }
     };
 
@@ -193,7 +300,7 @@ export function usePythPrices(): UsePythPricesReturn {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [connect, isConnected]);
+  }, [connect, isConnected, connectionState]);
 
   return {
     prices,

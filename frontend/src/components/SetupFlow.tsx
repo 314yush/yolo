@@ -63,6 +63,56 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     return wallet;
   }, [wallets, userAddress]);
 
+  // Safely get Ethereum provider with fallback handling
+  const getEthereumProviderSafe = useCallback(async (wallet: any) => {
+    try {
+      // Try to get provider from Privy wallet
+      if (wallet && typeof wallet.getEthereumProvider === 'function') {
+        try {
+          const provider = await wallet.getEthereumProvider();
+          if (provider) {
+            return provider;
+          }
+        } catch (providerError: any) {
+          console.error('getEthereumProvider failed:', {
+            error: providerError,
+            message: providerError?.message,
+            code: providerError?.code,
+            walletType: wallet.walletClientType,
+            connectorType: wallet.connectorType,
+            walletAddress: wallet.address,
+            stack: providerError?.stack,
+          });
+          // Check if it's a connector error
+          if (providerError?.message?.toLowerCase().includes('connector') || 
+              providerError?.message?.toLowerCase().includes('unknown')) {
+            throw new Error(
+              `Wallet connector error: ${providerError.message}. ` +
+              `This wallet type (${wallet.walletClientType || wallet.connectorType || 'unknown'}) may not support direct provider access. ` +
+              `Please try disconnecting and reconnecting your wallet, or use a different wallet.`
+            );
+          }
+          // Re-throw if it's not a connector error
+          throw providerError;
+        }
+      }
+      
+      // Fallback: Try to use window.ethereum if available
+      if (typeof window !== 'undefined' && (window as any).ethereum) {
+        console.log('Using window.ethereum as fallback provider');
+        return (window as any).ethereum;
+      }
+      
+      throw new Error(
+        `Unable to get Ethereum provider. Wallet type: ${wallet?.walletClientType || wallet?.connectorType || 'unknown'}. ` +
+        `Please ensure your wallet is properly connected.`
+      );
+    } catch (error) {
+      console.error('Error getting Ethereum provider:', error);
+      throw error;
+    }
+  }, []);
+
   // Check delegate wallet ETH balance
   const checkDelegateBalance = useCallback(async (): Promise<number> => {
     if (!delegateAddress) return 0;
@@ -71,7 +121,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       const userWallet = getUserWallet();
       if (!userWallet) return 0;
       
-      const provider = await userWallet.getEthereumProvider();
+      const provider = await getEthereumProviderSafe(userWallet);
       const balanceHex = await provider.request({
         method: 'eth_getBalance',
         params: [delegateAddress, 'latest'],
@@ -85,7 +135,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       console.error('Error checking delegate balance:', err);
       return 0;
     }
-  }, [delegateAddress, getUserWallet]);
+  }, [delegateAddress, getUserWallet, getEthereumProviderSafe]);
 
   // Switch to Base network
   const switchToBase = useCallback(async (provider: any) => {
@@ -290,15 +340,38 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         throw new Error(`No wallet found. Please ensure you're logged in with a wallet. (Found ${wallets?.length || 0} wallets)`);
       }
 
-      console.log('Using wallet:', userWallet.address, 'type:', userWallet.walletClientType);
+      console.log('Using wallet:', userWallet.address, 'type:', userWallet.walletClientType, 'connector:', userWallet.connectorType);
 
-      // Get provider
-      const provider = await userWallet.getEthereumProvider();
+      // Get provider with error handling
+      let provider;
+      try {
+        provider = await getEthereumProviderSafe(userWallet);
+      } catch (providerError: any) {
+        // If it's a connector error, provide helpful message
+        if (providerError?.message?.toLowerCase().includes('connector') || 
+            providerError?.message?.toLowerCase().includes('unknown')) {
+          throw new Error(
+            `Unable to connect to your wallet. ` +
+            `Wallet type: ${userWallet.walletClientType || 'unknown'}, ` +
+            `Connector: ${userWallet.connectorType || 'unknown'}. ` +
+            `Please try disconnecting and reconnecting your wallet, or use a different wallet.`
+          );
+        }
+        throw providerError;
+      }
       
       // Switch to Base network first
       console.log('Switching to Base network...');
-      await switchToBase(provider);
-      console.log('Switched to Base network');
+      try {
+        await switchToBase(provider);
+        console.log('Switched to Base network');
+      } catch (switchError: any) {
+        // If switch fails, provide helpful error
+        if (switchError?.code === 4001) {
+          throw new Error('Network switch was rejected. Please approve the network switch to continue.');
+        }
+        throw new Error(`Failed to switch to Base network: ${switchError?.message || switchError}`);
+      }
 
       // Build the delegation tx
       const unsignedTx = await buildDelegateSetupTx(userAddress, delegateAddress);
@@ -355,13 +428,16 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       // Check if user rejected
       if (err.code === 4001) {
         setError('Transaction rejected by user');
+      } else if (err?.message) {
+        // Use the error message directly (already formatted by getEthereumProviderSafe)
+        setError(err.message);
       } else {
         setError(err instanceof Error ? err.message : 'Failed to set up delegation');
       }
     } finally {
       setIsProcessing(false);
     }
-  }, [userAddress, delegateAddress, wallets, getUserWallet, buildDelegateSetupTx, switchToBase]);
+  }, [userAddress, delegateAddress, wallets, getUserWallet, getEthereumProviderSafe, buildDelegateSetupTx, switchToBase]);
 
   // Approve USDC spending
   const handleApproveUSDC = useCallback(async () => {
@@ -376,10 +452,17 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         throw new Error('No wallet found');
       }
 
-      const provider = await userWallet.getEthereumProvider();
+      const provider = await getEthereumProviderSafe(userWallet);
       
       // Switch to Base network first
-      await switchToBase(provider);
+      try {
+        await switchToBase(provider);
+      } catch (switchError: any) {
+        if (switchError?.code === 4001) {
+          throw new Error('Network switch was rejected. Please approve the network switch to continue.');
+        }
+        throw new Error(`Failed to switch to Base network: ${switchError?.message || switchError}`);
+      }
       
       // Build the USDC approval tx via backend
       // This approves the correct Trading Storage contract
@@ -446,13 +529,15 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       console.error('USDC approval error:', err);
       if (err.code === 4001) {
         setError('Transaction rejected by user');
+      } else if (err?.message) {
+        setError(err.message);
       } else {
         setError(err instanceof Error ? err.message : 'Failed to approve USDC');
       }
     } finally {
       setIsProcessing(false);
     }
-  }, [userAddress, getUserWallet, delegateAddress, setDelegateStatus, onSetupComplete, switchToBase, buildUsdcApprovalTx, checkDelegateBalance]);
+  }, [userAddress, getUserWallet, getEthereumProviderSafe, delegateAddress, setDelegateStatus, onSetupComplete, switchToBase, buildUsdcApprovalTx, checkDelegateBalance]);
 
   // Fund delegate wallet with ETH
   const handleFundDelegate = useCallback(async () => {
@@ -467,10 +552,17 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         throw new Error('No wallet found');
       }
 
-      const provider = await userWallet.getEthereumProvider();
+      const provider = await getEthereumProviderSafe(userWallet);
       
       // Switch to Base network first
-      await switchToBase(provider);
+      try {
+        await switchToBase(provider);
+      } catch (switchError: any) {
+        if (switchError?.code === 4001) {
+          throw new Error('Network switch was rejected. Please approve the network switch to continue.');
+        }
+        throw new Error(`Failed to switch to Base network: ${switchError?.message || switchError}`);
+      }
       
       // Send ETH to delegate wallet
       // Convert to wei (0.002 ETH = 2000000000000000 wei)
@@ -523,13 +615,15 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       console.error('Fund delegate error:', err);
       if (err.code === 4001) {
         setError('Transaction rejected by user');
+      } else if (err?.message) {
+        setError(err.message);
       } else {
         setError(err instanceof Error ? err.message : 'Failed to fund delegate wallet');
       }
     } finally {
       setIsProcessing(false);
     }
-  }, [userAddress, delegateAddress, getUserWallet, switchToBase, checkDelegateBalance, setDelegateStatus, onSetupComplete]);
+  }, [userAddress, delegateAddress, getUserWallet, getEthereumProviderSafe, switchToBase, checkDelegateBalance, setDelegateStatus, onSetupComplete]);
 
   // Show loading while Privy/wallets are initializing
   if (!privyReady || !walletsReady) {
@@ -556,7 +650,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 text-center max-w-md mx-auto w-full">
+    <div className="flex flex-col items-center justify-center p-4 sm:p-6 text-center max-w-md mx-auto w-full">
       <div className="text-2xl sm:text-3xl font-bold text-[#CCFF00] mb-6 sm:mb-8">SETUP REQUIRED</div>
       
       {step === 'delegate' && (
@@ -660,6 +754,24 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             className="w-full mt-4 py-2.5 text-sm text-white/60 hover:text-white transition-colors touch-manipulation min-h-[44px] disabled:opacity-50"
           >
             {isProcessing ? 'CHECKING...' : 'Already funded? Click to check balance'}
+          </button>
+
+          {/* Skip for testing */}
+          <button
+            onClick={() => {
+              if (window.confirm('⚠️ TESTING MODE: Skip gas requirement check?\n\nThis bypasses the delegate wallet gas check. Only use for testing!')) {
+                setDelegateStatus({
+                  isSetup: true,
+                  delegateAddress: delegateAddress,
+                  usdcApproved: true,
+                });
+                setStep('complete');
+                onSetupComplete();
+              }
+            }}
+            className="w-full mt-2 py-2 text-xs text-white/30 hover:text-white/60 transition-colors touch-manipulation"
+          >
+            Skip for testing (dev only)
           </button>
         </>
       )}

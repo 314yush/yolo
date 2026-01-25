@@ -184,11 +184,17 @@ export function useFlipTrade() {
         
         if (trades.length > 0) {
           // Find the trade that matches our flipped parameters (opposite direction, same pair/leverage)
-          const flippedTrade = trades.find(
+          let flippedTrade = trades.find(
             t => t.pairIndex === trade.pairIndex && 
                  t.leverage === trade.leverage && 
                  t.isLong === !trade.isLong
-          ) || trades[trades.length - 1]; // Fallback to latest if not found
+          );
+          
+          // FIX: Fallback to newest trade by timestamp, not array order
+          if (!flippedTrade) {
+            const sortedTrades = [...trades].sort((a, b) => b.openedAt - a.openedAt);
+            flippedTrade = sortedTrades[0];
+          }
           
           setCurrentTrade(flippedTrade);
           setPnLData({
@@ -232,11 +238,17 @@ export function useFlipTrade() {
         // Also try PnL endpoint
         const positions = await getPnL(userAddress);
         if (positions.length > 0) {
-          const flippedPosition = positions.find(
+          let flippedPosition = positions.find(
             p => p.trade.pairIndex === trade.pairIndex && 
                  p.trade.leverage === trade.leverage && 
                  p.trade.isLong === !trade.isLong
-          ) || positions[positions.length - 1];
+          );
+          
+          // FIX: Fallback to newest position by timestamp, not array order
+          if (!flippedPosition) {
+            const sortedPositions = [...positions].sort((a, b) => b.trade.openedAt - a.trade.openedAt);
+            flippedPosition = sortedPositions[0];
+          }
           
           setCurrentTrade(flippedPosition.trade);
           setPnLData(flippedPosition);
