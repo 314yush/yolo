@@ -84,4 +84,22 @@ export const CONTRACTS = {
 export const STORAGE_KEYS = {
   DELEGATE_KEY: 'yolo_delegate_key',
   DELEGATE_ADDRESS: 'yolo_delegate_address',
+  DELEGATE_7702_DELEGATED: 'yolo_delegate_7702_delegated', // EIP-7702 delegation status
 };
+
+// ============================================================
+// TACHYON CONFIGURATION (Gas Sponsorship)
+// ============================================================
+
+// Tachyon API key - get from https://rath.fi
+export const TACHYON_API_KEY = process.env.NEXT_PUBLIC_TACHYON_API_KEY || '';
+
+// ERC-4337 Account implementation to delegate to (Base mainnet)
+// From official Rath Finance example: https://github.com/RathFinance/tachyon-examples
+export const ERC4337_DELEGATION_CONTRACT = '0xd6CEDDe84be40893d153Be9d467CD6aD37875b28' as `0x${string}`;
+
+// EntryPoint v0.7 address on Base (same across all EVM chains)
+export const ENTRY_POINT_ADDRESS = '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as `0x${string}`;
+
+// Beneficiary for handleOps (receives leftover gas) - set to your own address
+export const TACHYON_BENEFICIARY = '0x4C16955d8A0DcB2e7826d50f4114990c787b21E7' as `0x${string}`;

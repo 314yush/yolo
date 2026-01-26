@@ -131,12 +131,33 @@ export default function HomePage() {
   // Track if trade was confirmed via Pusher before wheel finished
   const tradeConfirmedRef = useRef(false);
   const confirmationLatencyRef = useRef<number | null>(null);
+  // Track when spin started to filter out old trades
+  const spinStartTimeRef = useRef<number | null>(null);
+  // Track timing milestones for debugging
+  const timingRef = useRef<{
+    spinStart: number | null;
+    txSent: number | null;
+    txConfirmed: number | null;
+    tradeFound: number | null;
+    pnlStageSet: number | null;
+  }>({
+    spinStart: null,
+    txSent: null,
+    txConfirmed: null,
+    tradeFound: null,
+    pnlStageSet: null,
+  });
   
   // Fast confirmation via Pusher events
   const { startConfirmation } = useFastConfirmation(userAddress, {
     onPickedUp: () => {},
     onPreconfirmed: () => {},
     onConfirmed: (latency) => {
+      const txConfirmedTime = Date.now();
+      timingRef.current.txConfirmed = txConfirmedTime;
+      const elapsedFromSpinStart = timingRef.current.spinStart ? txConfirmedTime - timingRef.current.spinStart : 0;
+      const elapsedFromTxSent = timingRef.current.txSent ? txConfirmedTime - timingRef.current.txSent : null;
+      console.log(`✅ [Trade Timing] Transaction confirmed (${elapsedFromSpinStart}ms from spin start${elapsedFromTxSent ? `, ${elapsedFromTxSent}ms from tx sent` : ''})`);
       tradeConfirmedRef.current = true;
       confirmationLatencyRef.current = latency;
     },
@@ -152,9 +173,21 @@ export default function HomePage() {
 
   // Handle spin start - fire trade immediately
   const handleSpinStart = useCallback(async () => {
+    const spinStartTime = Date.now();
+    // Reset timing tracking
+    timingRef.current = {
+      spinStart: spinStartTime,
+      txSent: null,
+      txConfirmed: null,
+      tradeFound: null,
+      pnlStageSet: null,
+    };
+    console.log('🚀 [Trade Timing] Spin started');
     // Reset confirmation tracking
     tradeConfirmedRef.current = false;
     confirmationLatencyRef.current = null;
+    // Record spin start time to filter out old trades
+    spinStartTimeRef.current = spinStartTime;
     
     // Get selection directly from store to avoid stale closure
     const storeState = useTradeStore.getState();
@@ -180,6 +213,7 @@ export default function HomePage() {
     }
 
     try {
+      const txBuildStart = Date.now();
       // Use pre-built tx if available, otherwise build on-demand with direct encoding
       const unsignedTx = storedPrebuiltTx ?? buildOpenTradeTxDirect({
         trader: traderAddress,
@@ -189,6 +223,10 @@ export default function HomePage() {
         isLong: currentSelection.direction.isLong,
         openPrice: prices[`${currentSelection.asset.name}/USD`]?.price || 0,
       });
+      const txEncodeTime = Date.now() - txBuildStart;
+      if (txEncodeTime > 10) {
+        console.log(`⏱️  [Trade Timing] TX encoding took ${txEncodeTime}ms`);
+      }
 
       if (!unsignedTx) {
         setError('Failed to build trade transaction');
@@ -197,12 +235,19 @@ export default function HomePage() {
       }
 
       // Sign and broadcast with delegate key
+      const signStart = Date.now();
       const hash = await signAndBroadcast({
         to: unsignedTx.to as `0x${string}`,
         data: unsignedTx.data as `0x${string}`,
         value: unsignedTx.value,
         chainId: unsignedTx.chainId,
       });
+      const txSentTime = Date.now();
+      const signAndRelayTime = txSentTime - signStart;
+      timingRef.current.txSent = txSentTime;
+      const elapsedFromSpinStart = timingRef.current.spinStart ? txSentTime - timingRef.current.spinStart : 0;
+      console.log(`📤 [Trade Timing] Transaction sent (${elapsedFromSpinStart}ms from spin start)`);
+      console.log(`   ⏱️  Breakdown: Encoding=${txEncodeTime}ms, Sign+Relay=${signAndRelayTime}ms`);
       setTxHash(hash);
       
       // Clear the pre-built tx (it's been used)
@@ -242,6 +287,22 @@ export default function HomePage() {
       return;
     }
     
+    // Wait for transaction hash to be set (with timeout to prevent infinite wait)
+    const spinStartTime = spinStartTimeRef.current || Date.now();
+    const WAIT_FOR_TX_TIMEOUT = 5000; // Wait up to 5 seconds for tx hash
+    const waitStartTime = Date.now();
+    let waitedForTx = false;
+    
+    // Wait for transaction hash if not already set
+    while ((Date.now() - waitStartTime) < WAIT_FOR_TX_TIMEOUT) {
+      const storeState = useTradeStore.getState();
+      if (storeState.txHash) {
+        waitedForTx = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100)); // Check every 100ms
+    }
+    
     const wasConfirmedViaPusher = tradeConfirmedRef.current;
     const startTime = Date.now();
     const MAX_POLLING_TIME = 15000; // Maximum 15 seconds total polling time
@@ -267,8 +328,28 @@ export default function HomePage() {
           if (trades.length > 0) {
             // Sort by openedAt timestamp to find the ACTUAL newest trade
             // Avantis API does not guarantee chronological ordering!
-            const sortedTrades = [...trades].sort((a, b) => b.openedAt - a.openedAt);
-            const latestTrade = sortedTrades[0];
+            // FIX: API returns openedAt in SECONDS, but spinStartTime is in MILLISECONDS
+            // Convert openedAt to milliseconds for comparison (if < 1e12, it's likely seconds)
+            const sortedTrades = [...trades].sort((a, b) => {
+              const aMs = a.openedAt < 1e12 ? a.openedAt * 1000 : a.openedAt;
+              const bMs = b.openedAt < 1e12 ? b.openedAt * 1000 : b.openedAt;
+              return bMs - aMs;
+            });
+            
+            // CRITICAL FIX: Only consider trades opened AFTER the spin started
+            // This prevents matching old trades when handleSpinComplete runs before transaction completes
+            // Convert openedAt to milliseconds for comparison
+            const newTrades = sortedTrades.filter(trade => {
+              const openedAtMs = trade.openedAt < 1e12 ? trade.openedAt * 1000 : trade.openedAt;
+              return openedAtMs >= spinStartTime;
+            });
+            
+            if (newTrades.length === 0) {
+              // No new trades yet, continue polling
+              return false;
+            }
+            
+            const latestTrade = newTrades[0];
             
             // Only set currentTrade if we don't already have one, or if this is explicitly a new trade from spin
             // This prevents overwriting the user's selected position when multiple positions exist
@@ -285,14 +366,20 @@ export default function HomePage() {
               });
             }
             
+            const tradeFoundTime = Date.now();
+            timingRef.current.tradeFound = tradeFoundTime;
+            const elapsedFromSpinStart = timingRef.current.spinStart ? tradeFoundTime - timingRef.current.spinStart : 0;
+            const elapsedFromTxSent = timingRef.current.txSent ? tradeFoundTime - timingRef.current.txSent : null;
+            const elapsedFromTxConfirmed = timingRef.current.txConfirmed ? tradeFoundTime - timingRef.current.txConfirmed : null;
+            console.log(`🎯 [Trade Timing] Trade found in API (${elapsedFromSpinStart}ms from spin start${elapsedFromTxConfirmed ? `, ${elapsedFromTxConfirmed}ms from tx confirmed` : ''}, attempt ${attempts})`);
             setStage('pnl');
             playWin();
             incrementTotalTrades();
             
             // Remove pending hash - trade is confirmed
-            const { txHash } = useTradeStore.getState();
-            if (txHash) {
-              removePendingTradeHash(txHash);
+            const { txHash: currentTxHash } = useTradeStore.getState();
+            if (currentTxHash) {
+              removePendingTradeHash(currentTxHash);
             }
             
             return true;
@@ -307,8 +394,28 @@ export default function HomePage() {
           const positions = await getPnL(userAddress);
           if (positions.length > 0) {
             // FIX: Sort by openedAt timestamp to find the ACTUAL newest position
-            const sortedPositions = [...positions].sort((a, b) => b.trade.openedAt - a.trade.openedAt);
-            const latestPosition = sortedPositions[0];
+            // FIX: API returns openedAt in SECONDS, but spinStartTime is in MILLISECONDS
+            // Convert openedAt to milliseconds for comparison (if < 1e12, it's likely seconds)
+            const sortedPositions = [...positions].sort((a, b) => {
+              const aMs = a.trade.openedAt < 1e12 ? a.trade.openedAt * 1000 : a.trade.openedAt;
+              const bMs = b.trade.openedAt < 1e12 ? b.trade.openedAt * 1000 : b.trade.openedAt;
+              return bMs - aMs;
+            });
+            
+            // CRITICAL FIX: Only consider positions opened AFTER the spin started
+            // This prevents matching old positions when handleSpinComplete runs before transaction completes
+            // Convert openedAt to milliseconds for comparison
+            const newPositions = sortedPositions.filter(pos => {
+              const openedAtMs = pos.trade.openedAt < 1e12 ? pos.trade.openedAt * 1000 : pos.trade.openedAt;
+              return openedAtMs >= spinStartTime;
+            });
+            
+            if (newPositions.length === 0) {
+              // No new positions yet, continue polling
+              return false;
+            }
+            
+            const latestPosition = newPositions[0];
             
             // Only set currentTrade if we don't already have one, or if this is explicitly a new trade from spin
             // This prevents overwriting the user's selected position when multiple positions exist
@@ -318,14 +425,20 @@ export default function HomePage() {
               setPnLData(latestPosition);
             }
             
+            const tradeFoundTime = Date.now();
+            timingRef.current.tradeFound = tradeFoundTime;
+            const elapsedFromSpinStart = timingRef.current.spinStart ? tradeFoundTime - timingRef.current.spinStart : 0;
+            const elapsedFromTxSent = timingRef.current.txSent ? tradeFoundTime - timingRef.current.txSent : null;
+            const elapsedFromTxConfirmed = timingRef.current.txConfirmed ? tradeFoundTime - timingRef.current.txConfirmed : null;
+            console.log(`🎯 [Trade Timing] Position found in API (${elapsedFromSpinStart}ms from spin start${elapsedFromTxConfirmed ? `, ${elapsedFromTxConfirmed}ms from tx confirmed` : ''}, attempt ${attempts})`);
             setStage('pnl');
             playWin();
             incrementTotalTrades();
             
             // Remove pending hash - trade is confirmed
-            const { txHash } = useTradeStore.getState();
-            if (txHash) {
-              removePendingTradeHash(txHash);
+            const { txHash: currentTxHash } = useTradeStore.getState();
+            if (currentTxHash) {
+              removePendingTradeHash(currentTxHash);
             }
             
             return true;
@@ -403,6 +516,31 @@ export default function HomePage() {
       }
     }
   }, [userAddress, getTrades, getPnL, setCurrentTrade, setPnLData, setStage, setError, playWin, incrementTotalTrades, removePendingTradeHash, collateral, prices]);
+
+  useEffect(() => {
+    if (stage === 'pnl') {
+      const pnlRenderTime = Date.now();
+      const timing = timingRef.current;
+      const elapsedFromSpinStart = timing.spinStart ? pnlRenderTime - timing.spinStart : null;
+      const elapsedFromTxSent = timing.txSent ? pnlRenderTime - timing.txSent : null;
+      const elapsedFromTxConfirmed = timing.txConfirmed ? pnlRenderTime - timing.txConfirmed : null;
+      const elapsedFromTradeFound = timing.tradeFound ? pnlRenderTime - timing.tradeFound : null;
+      
+      // Calculate phase durations
+      const txBuildTime = timing.txSent && timing.spinStart ? timing.txSent - timing.spinStart : null;
+      const txConfirmTime = timing.txConfirmed && timing.txSent ? timing.txConfirmed - timing.txSent : null;
+      const tradeDiscoveryTime = timing.tradeFound && timing.txConfirmed ? timing.tradeFound - timing.txConfirmed : null;
+      const pnlRenderDelay = timing.tradeFound ? pnlRenderTime - timing.tradeFound : null;
+      
+      // Console log summary
+      console.log('📊 [Trade Timing] PnL Screen Rendered - Summary:');
+      console.log(`   Total time: ${elapsedFromSpinStart ? (elapsedFromSpinStart / 1000).toFixed(2) : 'N/A'}s`);
+      if (txBuildTime) console.log(`   ⏱️  TX Build: ${txBuildTime}ms`);
+      if (txConfirmTime) console.log(`   ⏱️  TX Confirm: ${txConfirmTime}ms`);
+      if (tradeDiscoveryTime) console.log(`   ⏱️  Trade Discovery: ${tradeDiscoveryTime}ms`);
+      if (pnlRenderDelay) console.log(`   ⏱️  PnL Render Delay: ${pnlRenderDelay}ms`);
+    }
+  }, [stage]);
 
   // Handle close trade - uses pre-built tx or direct encoding (no SDK)
   const handleCloseTrade = useCallback(async () => {

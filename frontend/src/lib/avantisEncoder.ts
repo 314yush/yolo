@@ -12,7 +12,7 @@
  * - Execution fee: ~0.00035 ETH
  */
 
-import { encodeFunctionData, parseEther } from 'viem';
+import { encodeFunctionData } from 'viem';
 
 // Contract addresses (Base Mainnet)
 export const AVANTIS_CONTRACTS = {
@@ -35,11 +35,10 @@ const LEVERAGE_DECIMALS = 10n ** 10n; // 10 decimals for leverage (250x = 250 * 
 const SLIPPAGE_DECIMALS = 10n ** 10n; // 10 decimals for slippage (1% = 1 * 10^10)
 const USDC_DECIMALS = 10n ** 6n;      // 6 decimals for USDC
 
-// Execution fee - based on actual successful transaction analysis
-// Real tx (0xf799bfa138...) used ~0.00007 ETH
-// We use 0.0001 ETH (0.1 mETH) with safety buffer
-// The fee is technically dynamic from contract, but this works for MARKET_ZERO_FEE orders
-export const DEFAULT_EXECUTION_FEE = parseEther('0.0001'); // 0.0001 ETH (~$0.30 at $3k ETH)
+// Execution fee - REMOVED (no longer required by Avantis)
+// With Tachyon gas sponsorship, delegate wallet doesn't need ETH
+// Setting to 0 ensures fully gasless transactions
+export const DEFAULT_EXECUTION_FEE = BigInt(0); // 0 ETH - no execution fee required
 
 // For fetching dynamic fee from contract (optional, for more precision)
 export const EXECUTION_FEE_ABI = [

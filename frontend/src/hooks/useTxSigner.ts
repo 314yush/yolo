@@ -1,241 +1,168 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { createDelegateWalletClient, publicClient, waitForTransaction } from '@/lib/viemClient';
-import { getOrCreateDelegateWallet, getDelegateAccount } from '@/lib/delegateWallet';
-import { useTradeStore } from '@/store/tradeStore';
+import { getOrCreateDelegateWallet } from '@/lib/delegateWallet';
+import { isDelegateDelegated } from '@/lib/tachyonRelay';
+import { AVANTIS_CONTRACTS } from '@/lib/avantisEncoder';
+import { relayService } from '@/lib/relayService';
 import type { UnsignedTx } from '@/types';
 
-// Minimum ETH required for delegate to execute a trade
-const MIN_DELEGATE_ETH_FOR_TRADE = 0.0001; // ~$0.30, enough for 1-2 trades
+const LOG_PREFIX = '[useTxSigner]';
 
+/**
+ * Transaction signer hook - uses Tachyon for gas sponsorship
+ * 
+ * With Tachyon EIP-7702 integration:
+ * - Delegate wallet no longer needs ETH for gas
+ * - First trade includes EIP-7702 authorization (~150ms)
+ * - Future trades use flash-blocks (sub-50ms!)
+ */
 export function useTxSigner() {
   const [isPending, setIsPending] = useState(false);
 
   /**
    * Check if delegate has enough ETH for gas
+   * NOTE: With Tachyon gas sponsorship, delegate doesn't need ETH anymore!
+   * This function is kept for backward compatibility but always returns true.
    */
   const checkDelegateBalance = useCallback(async (): Promise<{ hasEnough: boolean; balance: bigint }> => {
-    try {
-      const wallet = getOrCreateDelegateWallet();
-      const balance = await publicClient.getBalance({ address: wallet.address });
-      const minRequired = BigInt(Math.floor(MIN_DELEGATE_ETH_FOR_TRADE * 1e18));
-      return { hasEnough: balance >= minRequired, balance };
-    } catch (err) {
-      console.error('Error checking delegate balance:', err);
-      return { hasEnough: false, balance: BigInt(0) };
-    }
+    console.log(LOG_PREFIX, '✅ Gas check: Tachyon sponsors gas, delegate needs no ETH');
+    // With Tachyon gas sponsorship, delegate doesn't need ETH
+    // Always return true - gas is paid by Tachyon
+    return { hasEnough: true, balance: BigInt(0) };
   }, []);
 
   /**
-   * Sign and broadcast a transaction using the delegate wallet
+   * Sign and broadcast a transaction using Tachyon UserOperation relay
    */
   const signAndBroadcast = useCallback(
     async (unsignedTx: UnsignedTx): Promise<`0x${string}`> => {
+      console.log(LOG_PREFIX, '═══════════════════════════════════════');
+      console.log(LOG_PREFIX, '🎯 Sign and broadcast requested');
+      console.log(LOG_PREFIX, '═══════════════════════════════════════');
+      
       setIsPending(true);
       
       try {
-        const walletClient = createDelegateWalletClient();
+        // Get delegate wallet
+        console.log(LOG_PREFIX, '🔑 Getting delegate wallet...');
         const wallet = getOrCreateDelegateWallet();
-        const account = getDelegateAccount();
+        console.log(LOG_PREFIX, '  Delegate address:', wallet.address);
+        console.log(LOG_PREFIX, '  Already delegated (EIP-7702):', isDelegateDelegated());
         
-        const txParams = {
-          to: unsignedTx.to as `0x${string}`,
-          data: unsignedTx.data as `0x${string}`,
-          value: BigInt(unsignedTx.value || '0'),
-        };
+        // Log transaction details
+        console.log(LOG_PREFIX, '📋 Transaction:');
+        console.log(LOG_PREFIX, '  To:', unsignedTx.to);
+        console.log(LOG_PREFIX, '  Data length:', unsignedTx.data?.length || 0, 'chars');
+        console.log(LOG_PREFIX, '  Value:', unsignedTx.value || '0');
         
-        // Check balance FIRST before attempting gas estimation
-        const balance = await publicClient.getBalance({ address: wallet.address });
+        // Validate this is a trade transaction (to Avantis Trading contract)
+        const isTradeTx = unsignedTx.to.toLowerCase() === AVANTIS_CONTRACTS.Trading.toLowerCase();
+        console.log(LOG_PREFIX, '  Is Avantis trade:', isTradeTx);
+        console.log(LOG_PREFIX, '  Expected:', AVANTIS_CONTRACTS.Trading);
         
-        // Get current gas price
-        const gasPrice = await publicClient.getGasPrice();
-        
-        // Add $0.01 USD buffer to gas cost for safety margin
-        // Use ETH price from Pyth store, fallback to $3000
-        let gasCostBuffer = BigInt(0);
-        const prices = useTradeStore.getState().prices;
-        const ethPrice = prices['ETH/USD']?.price || 3000;
-        const bufferUsd = 0.01;
-        const bufferEth = bufferUsd / ethPrice;
-        gasCostBuffer = BigInt(Math.ceil(bufferEth * 1e18));
-        
-        // Estimate gas
-        let estimatedGas: bigint;
-        let gasEstimationFailed = false;
-        try {
-          estimatedGas = await publicClient.estimateGas({
-            account,
-            to: txParams.to,
-            data: txParams.data,
-            value: txParams.value,
-          });
-        } catch (error: unknown) {
-          gasEstimationFailed = true;
-          const err = error as { message?: string; name?: string; cause?: { message?: string; name?: string } };
-          const errorMessage = err?.message || '';
-          const errorName = err?.name || '';
-          const causeMessage = err?.cause?.message || '';
-          const causeName = err?.cause?.name || '';
-          
-          const isInsufficientFunds = 
-            errorMessage.toLowerCase().includes('insufficient funds') || 
-            errorMessage.toLowerCase().includes('exceeds the balance') ||
-            errorName === 'EstimateGasExecutionError' ||
-            errorName === 'InsufficientFundsError' ||
-            causeMessage.toLowerCase().includes('insufficient funds') ||
-            causeName === 'InsufficientFundsError';
-          
-          if (isInsufficientFunds) {
-            estimatedGas = BigInt(300000);
-            const gasCost = estimatedGas * gasPrice;
-            const totalGasCost = gasCost + gasCostBuffer;
-            const totalCost = totalGasCost + txParams.value;
-            
-            if (balance < totalCost) {
-              const balanceEth = Number(balance) / 1e18;
-              const totalCostEth = Number(totalCost) / 1e18;
-              throw new Error(
-                `Insufficient funds. Balance: ${balanceEth.toFixed(6)} ETH, Required: ${totalCostEth.toFixed(6)} ETH. ` +
-                `Please fund your delegate wallet.`
-              );
-            }
-          } else {
-            estimatedGas = BigInt(300000);
-          }
-        }
-        
-        // Calculate total cost
-        const gasCost = estimatedGas * gasPrice;
-        const totalGasCost = gasCost + gasCostBuffer;
-        const totalCost = totalGasCost + txParams.value;
-        
-        if (balance < totalCost) {
-          const balanceEth = Number(balance) / 1e18;
-          const totalCostEth = Number(totalCost) / 1e18;
-          throw new Error(
-            `Insufficient funds. Balance: ${balanceEth.toFixed(6)} ETH, Required: ${totalCostEth.toFixed(6)} ETH. ` +
-            `Please fund your delegate wallet.`
+        if (!isTradeTx) {
+          const error = new Error(
+            `Tachyon relay only supports Avantis Trading transactions. ` +
+            `Target: ${unsignedTx.to}, Expected: ${AVANTIS_CONTRACTS.Trading}`
           );
+          console.error(LOG_PREFIX, '❌', error.message);
+          throw error;
         }
+
+        const currentProvider = relayService.getCurrentProviderType();
+        console.log(LOG_PREFIX, `🚀 Relaying trade via ${currentProvider}...`);
+        const startTime = Date.now();
         
-        // Prepare and send transaction
-        let preparedTx;
+        // Parse value from unsignedTx (if present)
+        const txValue = unsignedTx.value ? BigInt(unsignedTx.value) : BigInt(0);
+        console.log(LOG_PREFIX, '  Parsed value:', txValue.toString(), 'wei (', Number(txValue) / 1e18, 'ETH)');
+        
+        // Check Avantis delegate status before trading
+        // This is critical - if delegate is not registered in Avantis, delegatedAction will revert
         try {
-          preparedTx = await publicClient.prepareTransactionRequest({
-            account,
-            to: txParams.to,
-            data: txParams.data,
-            value: txParams.value,
-            gas: estimatedGas,
-            gasPrice: gasPrice,
-          });
-        } catch (prepareError) {
-          if (gasEstimationFailed) {
-            const higherGas = BigInt(500000);
-            preparedTx = await publicClient.prepareTransactionRequest({
-              account,
-              to: txParams.to,
-              data: txParams.data,
-              value: txParams.value,
-              gas: higherGas,
-              gasPrice: gasPrice,
-            });
-            estimatedGas = higherGas;
-          } else {
-            throw prepareError;
-          }
-        }
-        
-        // Re-check balance with updated gas estimate
-        const updatedGasCost = estimatedGas * gasPrice;
-        const updatedTotalCost = updatedGasCost + gasCostBuffer + txParams.value;
-        
-        if (balance < updatedTotalCost) {
-          const balanceEth = Number(balance) / 1e18;
-          const totalCostEth = Number(updatedTotalCost) / 1e18;
-          throw new Error(
-            `Insufficient funds: Balance ${balanceEth.toFixed(6)} ETH < Required ${totalCostEth.toFixed(6)} ETH.`
-          );
-        }
-        
-        // Send transaction
-        const hash = await walletClient.sendTransaction(preparedTx);
-        
-        // Wait for receipt
-        try {
-          const receipt = await publicClient.waitForTransactionReceipt({
-            hash,
-            confirmations: 1,
-            timeout: 60000,
-          });
+          const delegateCheckStart = Date.now();
+          const { publicClient } = await import('@/lib/viemClient');
+          const { AVANTIS_CONTRACTS, DELEGATIONS_ABI } = await import('@/lib/avantisEncoder');
+          // Extract user address from calldata (first 20 bytes after function selector in delegatedAction)
+          // delegatedAction(address trader, bytes calldata) - trader is padded to 32 bytes after 4-byte selector
+          const calldataHex = unsignedTx.data as `0x${string}`;
+          // Skip 4 bytes selector (8 hex chars) + 12 bytes padding (24 hex chars) = 32 hex chars, then read 20 bytes (40 hex chars)
+          const userAddressFromCalldata = ('0x' + calldataHex.slice(10 + 24, 10 + 24 + 40)) as `0x${string}`;
           
-          if (receipt.status === 'reverted') {
-            let revertReason = 'Unknown reason';
-            try {
-              const tx = await publicClient.getTransaction({ hash });
-              try {
-                await publicClient.call({
-                  account,
-                  to: tx.to!,
-                  data: tx.input,
-                  value: tx.value,
-                });
-              } catch (callError: unknown) {
-                const err = callError as { message?: string; cause?: { message?: string } };
-                const errorMsg = err?.message || '';
-                const causeMsg = err?.cause?.message || '';
-                
-                if (errorMsg.includes('DELEGATE_NOT_APPROVED') || causeMsg.includes('DELEGATE_NOT_APPROVED')) {
-                  revertReason = 'DELEGATE_NOT_APPROVED - Please complete the setup flow.';
-                } else if (errorMsg.includes('execution reverted') || causeMsg.includes('execution reverted')) {
-                  const revertMatch = errorMsg.match(/execution reverted:?\s*(.+)/i) || 
-                                    causeMsg.match(/execution reverted:?\s*(.+)/i);
-                  if (revertMatch) {
-                    revertReason = revertMatch[1].substring(0, 100);
-                  }
-                }
-              }
-            } catch {
-              // Ignore
-            }
-            
-            if (revertReason.includes('DELEGATE_NOT_APPROVED')) {
-              throw new Error(
-                `Delegate wallet not approved. Please complete the setup flow. ` +
-                `Check https://basescan.org/tx/${hash}`
-              );
-            }
-            
-            throw new Error(
-              `Transaction reverted: ${revertReason}. ` +
-              `Check https://basescan.org/tx/${hash}`
+          const registeredDelegate = await publicClient.readContract({
+            address: AVANTIS_CONTRACTS.Trading,
+            abi: DELEGATIONS_ABI,
+            functionName: 'delegations',
+            args: [userAddressFromCalldata],
+          });
+          const delegateCheckTime = Date.now() - delegateCheckStart;
+          if (delegateCheckTime > 100) {
+            console.log(LOG_PREFIX, `⏱️  Avantis delegate check took ${delegateCheckTime}ms`);
+          }
+          const isDelegateRegistered = registeredDelegate?.toString().toLowerCase() === wallet.address.toLowerCase();
+          
+          if (!isDelegateRegistered) {
+            const error = new Error(
+              `Avantis delegate not set up! The Trading contract doesn't recognize this delegate. ` +
+              `User: ${userAddressFromCalldata}, Expected delegate: ${wallet.address}, ` +
+              `Registered delegate: ${registeredDelegate}. ` +
+              `Please complete the Setup Flow first (setDelegate + approveUSDC).`
             );
+            console.error(LOG_PREFIX, '❌', error.message);
+            throw error;
           }
-        } catch (waitError: unknown) {
-          const err = waitError as { name?: string; message?: string };
-          if (err?.name === 'TimeoutError' || err?.message?.includes('timeout')) {
-            return hash;
+          
+          console.log(LOG_PREFIX, '✅ Avantis delegate verified:', wallet.address);
+        } catch (e: any) {
+          // If it's our own error about delegate not registered, re-throw it
+          if (e.message?.includes('Avantis delegate not set up')) {
+            throw e;
           }
-          throw waitError;
+          // Otherwise log and continue (might be RPC issue)
+          console.warn(LOG_PREFIX, '⚠️ Could not verify Avantis delegate (continuing anyway):', e);
         }
         
-        return hash;
+        // Use relay service (supports multiple providers)
+        const result = await relayService.relayTrade({
+          delegatePrivateKey: wallet.privateKey,
+          targetContract: unsignedTx.to as `0x${string}`,
+          calldata: unsignedTx.data as `0x${string}`,
+          value: txValue,
+        });
+        
+        const txHash = result.txHash;
+
+        const elapsed = Date.now() - startTime;
+        console.log(LOG_PREFIX, '🎉 Transaction confirmed!');
+        console.log(LOG_PREFIX, '  TX Hash:', txHash);
+        console.log(LOG_PREFIX, '  Time:', elapsed, 'ms');
+        console.log(LOG_PREFIX, '═══════════════════════════════════════');
+        
+        return txHash;
+      } catch (error) {
+        console.error(LOG_PREFIX, '❌ Transaction failed:', error);
+        console.error(LOG_PREFIX, '  Stack:', (error as Error).stack);
+        throw error;
       } finally {
         setIsPending(false);
       }
     },
-    [checkDelegateBalance]
+    []
   );
 
   /**
    * Sign, broadcast, and wait for confirmation
+   * Note: Tachyon.waitForExecutionHash already waits for confirmation
    */
   const signAndWait = useCallback(
     async (unsignedTx: UnsignedTx) => {
+      console.log(LOG_PREFIX, '📨 signAndWait called');
       const hash = await signAndBroadcast(unsignedTx);
-      const receipt = await waitForTransaction(hash);
-      return { hash, receipt };
+      // Tachyon already waits for execution, so hash is the confirmed tx hash
+      // Receipt is not available from Tachyon, return null
+      console.log(LOG_PREFIX, '✅ signAndWait complete, hash:', hash);
+      return { hash, receipt: null };
     },
     [signAndBroadcast]
   );

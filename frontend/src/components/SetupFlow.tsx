@@ -12,11 +12,10 @@ interface SetupFlowProps {
   onSetupComplete: () => void;
 }
 
-type SetupStep = 'checking' | 'delegate' | 'approve' | 'fund-delegate' | 'complete';
+type SetupStep = 'checking' | 'delegate' | 'approve' | 'complete';
 
-// Minimum ETH required for delegate wallet (covers ~20 trades worth of gas)
-const MIN_DELEGATE_ETH = 0.001; // About $3-4 worth, enough for many trades
-const RECOMMENDED_DELEGATE_ETH = 0.002; // Recommended amount
+// NOTE: With Tachyon gas sponsorship, delegate wallet no longer needs ETH!
+// ETH funding step has been removed from the setup flow.
 
 // Base chain ID in hex
 const BASE_CHAIN_ID_HEX = '0x2105'; // 8453 in hex
@@ -31,7 +30,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   const [step, setStep] = useState<SetupStep>('checking');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [delegateBalance, setDelegateBalance] = useState<string>('0');
+  // NOTE: delegateBalance state removed - with Tachyon gas sponsorship, delegate doesn't need ETH
   const [hasCheckedStatus, setHasCheckedStatus] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
 
@@ -113,29 +112,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     }
   }, []);
 
-  // Check delegate wallet ETH balance
-  const checkDelegateBalance = useCallback(async (): Promise<number> => {
-    if (!delegateAddress) return 0;
-    
-    try {
-      const userWallet = getUserWallet();
-      if (!userWallet) return 0;
-      
-      const provider = await getEthereumProviderSafe(userWallet);
-      const balanceHex = await provider.request({
-        method: 'eth_getBalance',
-        params: [delegateAddress, 'latest'],
-      });
-      
-      const balanceWei = BigInt(balanceHex);
-      const balanceEth = Number(balanceWei) / 1e18;
-      setDelegateBalance(balanceEth.toFixed(6));
-      return balanceEth;
-    } catch (err) {
-      console.error('Error checking delegate balance:', err);
-      return 0;
-    }
-  }, [delegateAddress, getUserWallet, getEthereumProviderSafe]);
+  // NOTE: checkDelegateBalance removed - with Tachyon gas sponsorship, delegate doesn't need ETH
 
   // Switch to Base network
   const switchToBase = useCallback(async (provider: any) => {
@@ -168,31 +145,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     }
   }, []);
 
-  // Auto-check balance when entering fund-delegate step and skip if sufficient
-  useEffect(() => {
-    async function autoCheckBalance() {
-      if (step !== 'fund-delegate' || !delegateAddress || isProcessing) return;
-      
-      try {
-        const balance = await checkDelegateBalance();
-        if (balance >= MIN_DELEGATE_ETH) {
-          // Sufficient balance, skip funding step
-          setDelegateStatus({
-            isSetup: true,
-            delegateAddress: delegateAddress,
-            usdcApproved: true,
-          });
-          setStep('complete');
-          onSetupComplete();
-        }
-      } catch (err) {
-        console.warn('Auto balance check failed:', err);
-        // Don't show error, just let user manually check
-      }
-    }
-    
-    autoCheckBalance();
-  }, [step, delegateAddress, isProcessing, checkDelegateBalance, setDelegateStatus, onSetupComplete]);
+  // NOTE: Auto-check balance useEffect removed - with Tachyon gas sponsorship, delegate doesn't need ETH
 
   // Check current setup status
   useEffect(() => {
@@ -258,21 +211,14 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         
         console.log('Delegation already set up with:', wallet.address);
         
-        // Step 3: Run USDC allowance check and balance check in parallel
-        // Both are independent checks that can run simultaneously
-        const [allowanceCheck, balance] = await Promise.all([
-          checkUsdcAllowance(userAddress).catch((err) => {
-            console.warn('USDC allowance check failed:', err);
-            return { hasSufficient: false, allowance: 0 };
-          }),
-          checkDelegateBalance().catch((err) => {
-            console.warn('Balance check failed:', err);
-            return 0;
-          }),
-        ]);
+        // Step 3: Check USDC allowance
+        // NOTE: With Tachyon, delegate doesn't need ETH, so we skip balance check
+        const allowanceCheck = await checkUsdcAllowance(userAddress).catch((err) => {
+          console.warn('USDC allowance check failed:', err);
+          return { hasSufficient: false, allowance: 0 };
+        });
         
         console.log('USDC allowance check:', allowanceCheck);
-        console.log('Delegate ETH balance:', balance);
         
         if (!allowanceCheck.hasSufficient) {
           // Need to approve USDC for the Trading contract
@@ -283,14 +229,8 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           return;
         }
         
-        if (balance < MIN_DELEGATE_ETH) {
-          // Need to fund the delegate wallet
-          console.log('Delegate needs ETH for gas');
-          setHasCheckedStatus(true); // Mark as checked
-          setStep('fund-delegate');
-          setIsCheckingStatus(false);
-          return;
-        }
+        // With Tachyon gas sponsorship, delegate doesn't need ETH
+        // Go directly to complete after USDC is approved
         
         setDelegateStatus({
           isSetup: true,
@@ -511,20 +451,15 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
 
       console.log('Approval tx sent:', txHash);
       
-      // Now check if delegate needs ETH
-      const balance = await checkDelegateBalance();
-      if (balance < MIN_DELEGATE_ETH) {
-        setStep('fund-delegate');
-      } else {
-        // Update status and complete
-        setDelegateStatus({
-          isSetup: true,
-          delegateAddress: delegateAddress,
-          usdcApproved: true,
-        });
-        setStep('complete');
-        onSetupComplete();
-      }
+      // With Tachyon gas sponsorship, delegate doesn't need ETH
+      // Go directly to complete
+      setDelegateStatus({
+        isSetup: true,
+        delegateAddress: delegateAddress,
+        usdcApproved: true,
+      });
+      setStep('complete');
+      onSetupComplete();
     } catch (err: any) {
       console.error('USDC approval error:', err);
       if (err.code === 4001) {
@@ -537,93 +472,9 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     } finally {
       setIsProcessing(false);
     }
-  }, [userAddress, getUserWallet, getEthereumProviderSafe, delegateAddress, setDelegateStatus, onSetupComplete, switchToBase, buildUsdcApprovalTx, checkDelegateBalance]);
+  }, [userAddress, getUserWallet, getEthereumProviderSafe, delegateAddress, setDelegateStatus, onSetupComplete, switchToBase, buildUsdcApprovalTx]);
 
-  // Fund delegate wallet with ETH
-  const handleFundDelegate = useCallback(async () => {
-    if (!userAddress || !delegateAddress) return;
-    
-    setIsProcessing(true);
-    setError(null);
-
-    try {
-      const userWallet = getUserWallet();
-      if (!userWallet) {
-        throw new Error('No wallet found');
-      }
-
-      const provider = await getEthereumProviderSafe(userWallet);
-      
-      // Switch to Base network first
-      try {
-        await switchToBase(provider);
-      } catch (switchError: any) {
-        if (switchError?.code === 4001) {
-          throw new Error('Network switch was rejected. Please approve the network switch to continue.');
-        }
-        throw new Error(`Failed to switch to Base network: ${switchError?.message || switchError}`);
-      }
-      
-      // Send ETH to delegate wallet
-      // Convert to wei (0.002 ETH = 2000000000000000 wei)
-      const amountWei = BigInt(Math.floor(RECOMMENDED_DELEGATE_ETH * 1e18));
-      const amountHex = '0x' + amountWei.toString(16);
-      
-      console.log(`Funding delegate with ${RECOMMENDED_DELEGATE_ETH} ETH (${amountHex} wei)`);
-      
-      // Estimate gas for simple ETH transfer (21000 gas standard)
-      const estimatedGas = '0x5208'; // 21000 gas for simple transfer
-      
-      // Get gas price
-      const gasPrice = await provider.request({
-        method: 'eth_gasPrice',
-        params: [],
-      });
-      
-      const txHash = await provider.request({
-        method: 'eth_sendTransaction',
-        params: [{
-          from: userAddress,
-          to: delegateAddress,
-          value: amountHex,
-          gas: estimatedGas,
-          gasPrice: gasPrice,
-        }],
-      });
-
-      console.log('Funding tx sent:', txHash);
-      
-      // Wait a bit for tx to be mined, then check balance
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      const newBalance = await checkDelegateBalance();
-      console.log('New delegate balance:', newBalance);
-      
-      if (newBalance >= MIN_DELEGATE_ETH) {
-        // Update status and complete
-        setDelegateStatus({
-          isSetup: true,
-          delegateAddress: delegateAddress,
-          usdcApproved: true,
-        });
-        setStep('complete');
-        onSetupComplete();
-      } else {
-        // Balance still low, might need to wait for tx confirmation
-        setError('Transaction sent. Please wait for confirmation and refresh if needed.');
-      }
-    } catch (err: any) {
-      console.error('Fund delegate error:', err);
-      if (err.code === 4001) {
-        setError('Transaction rejected by user');
-      } else if (err?.message) {
-        setError(err.message);
-      } else {
-        setError(err instanceof Error ? err.message : 'Failed to fund delegate wallet');
-      }
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [userAddress, delegateAddress, getUserWallet, getEthereumProviderSafe, switchToBase, checkDelegateBalance, setDelegateStatus, onSetupComplete]);
+  // NOTE: handleFundDelegate removed - with Tachyon gas sponsorship, delegate doesn't need ETH
 
   // Show loading while Privy/wallets are initializing
   if (!privyReady || !walletsReady) {
@@ -698,83 +549,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         </>
       )}
 
-      {step === 'fund-delegate' && (
-        <>
-          <div className="text-white text-base sm:text-lg mb-4 leading-relaxed">
-            Final Step: Fund your delegate wallet with ETH for gas.
-          </div>
-          <div className="text-white/60 text-sm sm:text-base mb-4 leading-relaxed">
-            Your delegate wallet needs a small amount of ETH to pay for transaction fees when executing trades.
-          </div>
-          
-          {/* Delegate wallet info */}
-          <div className="w-full p-4 sm:p-5 bg-black/40 border-2 border-white/20 mb-4 sm:mb-6 rounded-lg">
-            <div className="text-white/60 text-xs mb-2 font-bold uppercase tracking-wide">DELEGATE WALLET</div>
-            <div className="text-white text-xs sm:text-sm font-mono break-all mb-3">{delegateAddress}</div>
-            <div className="text-white/60 text-xs mb-1 font-bold uppercase tracking-wide">CURRENT BALANCE</div>
-            <div className="text-[#CCFF00] text-lg sm:text-xl font-bold">{delegateBalance} ETH</div>
-          </div>
-          
-          <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
-            Recommended: {RECOMMENDED_DELEGATE_ETH} ETH (~$6-7, enough for ~50+ trades)
-          </div>
-          
-          <button
-            onClick={handleFundDelegate}
-            disabled={isProcessing}
-            className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button disabled:opacity-50 bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
-          >
-            {isProcessing ? 'SENDING ETH...' : `SEND ${RECOMMENDED_DELEGATE_ETH} ETH`}
-          </button>
-          
-          <button
-            onClick={async () => {
-              setIsProcessing(true);
-              setError(null);
-              try {
-                const balance = await checkDelegateBalance();
-                if (balance >= MIN_DELEGATE_ETH) {
-                  setDelegateStatus({
-                    isSetup: true,
-                    delegateAddress: delegateAddress,
-                    usdcApproved: true,
-                  });
-                  setStep('complete');
-                  onSetupComplete();
-                } else {
-                  setError(`Balance (${balance.toFixed(6)} ETH) is below minimum (${MIN_DELEGATE_ETH} ETH). Please fund your delegate wallet.`);
-                }
-              } catch (err) {
-                setError('Failed to check balance. Please try again.');
-              } finally {
-                setIsProcessing(false);
-              }
-            }}
-            disabled={isProcessing}
-            className="w-full mt-4 py-2.5 text-sm text-white/60 hover:text-white transition-colors touch-manipulation min-h-[44px] disabled:opacity-50"
-          >
-            {isProcessing ? 'CHECKING...' : 'Already funded? Click to check balance'}
-          </button>
-
-          {/* Skip for testing */}
-          <button
-            onClick={() => {
-              if (window.confirm('⚠️ TESTING MODE: Skip gas requirement check?\n\nThis bypasses the delegate wallet gas check. Only use for testing!')) {
-                setDelegateStatus({
-                  isSetup: true,
-                  delegateAddress: delegateAddress,
-                  usdcApproved: true,
-                });
-                setStep('complete');
-                onSetupComplete();
-              }
-            }}
-            className="w-full mt-2 py-2 text-xs text-white/30 hover:text-white/60 transition-colors touch-manipulation"
-          >
-            Skip for testing (dev only)
-          </button>
-        </>
-      )}
+      {/* NOTE: fund-delegate step removed - with Tachyon gas sponsorship, delegate doesn't need ETH */}
 
       {error && (
         <div className="mt-6 p-4 bg-red-500/20 border-2 border-red-500 text-red-400 text-sm sm:text-base rounded-lg">
