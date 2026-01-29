@@ -53,6 +53,7 @@ export interface Trade {
   openPrice: number;
   tp: number;
   sl: number;
+  liquidationPrice: number;
   openedAt: number;
 }
 

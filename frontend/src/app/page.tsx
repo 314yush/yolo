@@ -488,6 +488,7 @@ export default function HomePage() {
             openPrice: prices[`${storeState.selection.asset.name}/USD`]?.price || 0,
             tp: 0,
             sl: 0,
+            liquidationPrice: 0,
             openedAt: Date.now(),
           };
           setCurrentTrade(tempTrade);
@@ -626,7 +627,7 @@ export default function HomePage() {
 
   // Main app
   return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-between px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom relative max-w-md mx-auto w-full">
+    <div className={`min-h-screen bg-black flex flex-col items-center justify-between px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom relative w-full ${stage === 'pnl' ? '' : 'max-w-md mx-auto'}`}>
       {/* Skip to main content link for keyboard users */}
       <a
         href="#main-content"

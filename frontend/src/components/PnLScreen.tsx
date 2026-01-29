@@ -6,6 +6,7 @@ import { usePnL } from '@/hooks/usePnL';
 import { useFlipTrade } from '@/hooks/useFlipTrade';
 import { usePrebuiltCloseTx } from '@/hooks/usePrebuiltCloseTx';
 import { usePrebuiltFlipTx } from '@/hooks/usePrebuiltFlipTx';
+import { useViewportDimensions } from '@/hooks/useViewportDimensions';
 import { PriceChart } from './PriceChart';
 import { LoginButton } from './LoginButton';
 import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
@@ -21,6 +22,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const { flipTrade, isFlipping } = useFlipTrade();
   const [prevPnl, setPrevPnl] = useState<number | null>(null);
   const [isFlashing, setIsFlashing] = useState(false);
+  
+  // Get viewport dimensions for responsive chart sizing
+  const viewport = useViewportDimensions();
   
   // Activate pre-building when trade exists
   usePrebuiltCloseTx();
@@ -75,6 +79,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   // This ensures we show the entry price for the trade that matches the PnL being displayed
   const entryPrice = pnlData?.trade?.openPrice ?? currentTrade?.openPrice ?? null;
   
+  // Get liquidation price from trade data
+  const liquidationPrice = pnlData?.trade?.liquidationPrice ?? currentTrade?.liquidationPrice ?? null;
+  
   // Get current price for display
   const currentPrice = pythCurrentPrice ?? pnlData?.currentPrice ?? null;
   
@@ -85,17 +92,20 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const displayLeverage = displayTrade ? LEVERAGES.find(l => l.value === displayTrade.leverage) : selection?.leverage;
   const displayDirection = displayTrade ? DIRECTIONS.find(d => d.isLong === displayTrade.isLong) : selection?.direction;
 
+  // Calculate dynamic chart height - use viewport dimensions or fallback to 320px
+  const chartHeight = viewport.chartDimensions.height > 0 ? viewport.chartDimensions.height : 320;
+
   return (
-    <div className="min-h-screen bg-black flex flex-col w-full max-w-md mx-auto safe-area-top safe-area-bottom">
-      {/* 1. Header (60px) */}
-      <header className="h-[60px] flex justify-between items-center px-4 relative z-10">
+    <div className="min-h-screen bg-black flex flex-col w-full safe-area-top safe-area-bottom">
+      {/* 1. Header (60px) - full width */}
+      <header className="h-[60px] flex justify-between items-center px-4 relative z-10 w-full">
         <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
         <LoginButton />
       </header>
 
       {/* Scrollable content area */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* 2. Chart Header (40px) */}
+        {/* 2. Chart Header (40px) - Full width with padding */}
         <div className="h-[40px] flex justify-between items-center px-4 border-b border-white/10">
           <div className="text-white/80 text-sm sm:text-base font-bold font-mono uppercase">
             {assetPair || 'Loading...'}
@@ -110,132 +120,170 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
           )}
         </div>
 
-        {/* 3. Chart (320px) - Full width, no padding */}
-        <div className="h-[320px] w-full overflow-hidden">
+        {/* 3. Chart - Full viewport width, dynamic height, no padding */}
+        <div 
+          className="w-full overflow-hidden chart-container-full-width"
+          style={{ 
+            height: chartHeight,
+            // Use CSS calc for full width with safe-area support
+            width: 'calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))',
+            marginLeft: 'calc(-1 * env(safe-area-inset-left, 0px))',
+          }}
+        >
           <PriceChart
             assetPair={assetPair}
             lineColor={isProfit ? '#CCFF00' : '#FF006E'}
             entryPrice={entryPrice}
-            height={320}
+            liquidationPrice={liquidationPrice}
+            height={chartHeight}
             pnl={pnl}
             showLegend={false}
           />
         </div>
 
-        {/* 4. Small Chips (32px) */}
-        <div 
-          className="flex gap-2 flex-wrap justify-center px-4 py-2 min-h-[32px]"
-          role="group"
-          aria-label="Trade parameters"
-        >
-          {displayAsset && (
-            <div
-              className="selection-chip px-3 py-1.5 text-sm font-bold text-black flex items-center gap-1.5 font-mono"
-              style={{ backgroundColor: displayAsset.color }}
-            >
-              <img 
-                src={displayAsset.icon} 
-                alt="" 
-                className="w-4 h-4"
-                aria-hidden="true"
-              />
-              <span>{displayAsset.name}</span>
-            </div>
-          )}
-          {displayLeverage && (
-            <div
-              className="selection-chip px-3 py-1.5 text-sm font-bold text-black font-mono"
-              style={{ backgroundColor: displayLeverage.color }}
-            >
-              {displayLeverage.name}
-            </div>
-          )}
-          {displayDirection && (
-            <div
-              className="selection-chip px-3 py-1.5 text-sm font-bold text-black font-mono"
-              style={{ backgroundColor: displayDirection.color }}
-            >
-              {displayDirection.name}
-            </div>
-          )}
-        </div>
-
-        {/* 5. Large PnL (120px) */}
-        <div 
-          className={`min-h-[120px] flex flex-col items-center justify-center px-4 py-6 ${isFlashing ? 'animate-pnl-flash' : ''}`}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          <div
-            className={`text-5xl sm:text-6xl font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
-            style={{ color, letterSpacing: '-0.03em' }}
+        {/* Content area - full width */}
+        <div className="w-full">
+          {/* 4. Small Chips (32px) */}
+          <div 
+            className="flex gap-2 flex-wrap justify-center px-4 py-2 min-h-[32px]"
+            role="group"
+            aria-label="Trade parameters"
           >
-            {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
+            {displayAsset && (
+              <div
+                className="selection-chip px-3 py-1.5 text-sm font-bold text-black flex items-center gap-1.5 font-mono"
+                style={{ backgroundColor: displayAsset.color }}
+              >
+                <img 
+                  src={displayAsset.icon} 
+                  alt="" 
+                  className="w-4 h-4"
+                  aria-hidden="true"
+                />
+                <span>{displayAsset.name}</span>
+              </div>
+            )}
+            {displayLeverage && (
+              <div
+                className="selection-chip px-3 py-1.5 text-sm font-bold text-black font-mono"
+                style={{ backgroundColor: displayLeverage.color }}
+              >
+                {displayLeverage.name}
+              </div>
+            )}
+            {displayDirection && (
+              <div
+                className="selection-chip px-3 py-1.5 text-sm font-bold text-black font-mono"
+                style={{ backgroundColor: displayDirection.color }}
+              >
+                {displayDirection.name}
+              </div>
+            )}
           </div>
-          <div
-            className={`text-2xl sm:text-3xl font-bold mt-2 ${glowClass} font-mono`}
-            style={{ color }}
+
+          {/* 5. Large PnL (120px) */}
+          <div 
+            className={`min-h-[120px] flex flex-col items-center justify-center px-4 py-6 ${isFlashing ? 'animate-pnl-flash' : ''}`}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
           >
-            {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
-          </div>
-        </div>
-
-        {/* 6. Inline Info (24px each) */}
-        <div className="px-4 space-y-1 pb-4">
-          {/* Entry → Current price line */}
-          {(entryPrice != null || currentPrice != null) && (
-            <div className="h-[24px] flex items-center justify-center gap-3 text-sm font-mono text-white/60">
-              <span>Entry:</span>
-              <span className="text-white font-semibold">
-                ${entryPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
-              </span>
-              <span className="text-white/40">→</span>
-              <span>Now:</span>
-              <span className="font-semibold" style={{ color }}>
-                ${currentPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
-              </span>
+            <div
+              className={`text-5xl sm:text-6xl font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
+              style={{ color, letterSpacing: '-0.03em' }}
+            >
+              {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
             </div>
-          )}
-          
-          {/* TP at 200% line */}
-          <div className="h-[24px] flex items-center justify-center text-sm font-mono text-white/50">
-            TP at 200%
+            <div
+              className={`text-2xl sm:text-3xl font-bold mt-2 ${glowClass} font-mono`}
+              style={{ color }}
+            >
+              {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
+            </div>
           </div>
-        </div>
 
-        {/* Spacer for floating buttons (160px) */}
-        <div className="h-[160px]" />
+          {/* 6. Inline Info (24px each) */}
+          <div className="px-4 space-y-1 pb-4">
+            {/* Entry → Current price line */}
+            {(entryPrice != null || currentPrice != null) && (
+              <div className="h-[24px] flex items-center justify-center gap-3 text-sm font-mono text-white/60">
+                <span>Entry:</span>
+                <span className="text-white font-semibold">
+                  ${entryPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
+                </span>
+                <span className="text-white/40">→</span>
+                <span>Now:</span>
+                <span className="font-semibold" style={{ color }}>
+                  ${currentPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
+                </span>
+              </div>
+            )}
+            
+            {/* TP at 200% line */}
+            <div className="h-[24px] flex items-center justify-center text-sm font-mono text-white/50">
+              TP at 200%
+            </div>
+          </div>
 
-        {/* Liquidation warning (if applicable) */}
-        {isNearLiq && (
-          <div className="w-full px-4 pb-4">
-            <div className="p-3 border-4 border-[#FF006E] bg-[#FF006E]/20 animate-danger-pulse">
-              <div className="flex items-center justify-center gap-2 text-[#FF006E] font-bold text-sm font-mono">
-                <span className="text-xl">⚠️</span>
-                <span>{liqDistance.toFixed(1)}% FROM LIQUIDATION</span>
+          {/* Spacer for floating buttons (160px) */}
+          <div className="h-[160px]" />
+
+          {/* Liquidation warning (if applicable) */}
+          {isNearLiq && (
+            <div className="w-full px-4 pb-4">
+              <div className="p-3 border-4 border-[#FF006E] bg-[#FF006E]/20 animate-danger-pulse">
+                <div className="flex items-center justify-center gap-2 text-[#FF006E] font-bold text-sm font-mono">
+                  <span className="text-xl">⚠️</span>
+                  <span>{liqDistance.toFixed(1)}% FROM LIQUIDATION</span>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <span className="sr-only">
-          {isProfit ? 'Profit' : 'Loss'} of {Math.abs(pnl).toFixed(2)} USDC, {Math.abs(pnlPercentage).toFixed(2)} percent
-        </span>
+          <span className="sr-only">
+            {isProfit ? 'Profit' : 'Loss'} of {Math.abs(pnl).toFixed(2)} USDC, {Math.abs(pnlPercentage).toFixed(2)} percent
+          </span>
+        </div>
       </div>
 
       {/* Floating Action Buttons - Above nav bar */}
       <div className="fixed left-0 right-0 px-4 z-40" style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
-        <div className="max-w-md mx-auto flex gap-3 items-center">
+        <div className="w-full flex gap-3 items-center">
           {/* Close button - Icon only */}
           <button
             onClick={onClose}
             disabled={isClosing || isFlipping}
             aria-label={isClosing ? 'Closing trade...' : 'Close and take profit/loss'}
             aria-busy={isClosing}
-            className="brutal-button brutal-button-danger w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation shadow-[0_8px_16px_rgba(0,0,0,0.4)]"
+            className="brutal-button brutal-button-danger w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation shadow-[0_8px_16px_rgba(0,0,0,0.4)] relative focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
           >
-            <span className="text-2xl sm:text-3xl font-black">✕</span>
+            {isClosing ? (
+              <svg
+                className="w-6 h-6 sm:w-7 sm:h-7 animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            ) : (
+              <svg
+                className="w-6 h-6 sm:w-7 sm:h-7"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            )}
           </button>
 
           {/* Flip button - Icon only */}
@@ -244,19 +292,59 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
             disabled={isFlipping || isClosing}
             aria-label={isFlipping ? 'Flipping...' : `Flip to ${currentTrade?.isLong ? 'SHORT' : 'LONG'}`}
             aria-busy={isFlipping}
-            className="brutal-button brutal-button-secondary w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation shadow-[0_8px_16px_rgba(0,0,0,0.4)]"
+            className="brutal-button brutal-button-secondary flex-1 min-w-[120px] sm:min-w-[140px] py-3 sm:py-4 min-h-[56px] sm:min-h-[64px] flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation shadow-[0_8px_16px_rgba(0,0,0,0.4)] relative focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
           >
-            <span className="text-2xl sm:text-3xl font-black">⟲</span>
+            {isFlipping ? (
+              <svg
+                className="w-6 h-6 sm:w-7 sm:h-7 animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            ) : (
+              <svg
+                className="w-6 h-6 sm:w-7 sm:h-7"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4" />
+              </svg>
+            )}
+            <span className="text-sm sm:text-base font-black font-mono uppercase hidden sm:inline">FLIP</span>
           </button>
 
-          {/* Roll Again button - Text */}
+          {/* Roll Again button - Icon + Text */}
           <button
             onClick={onRollAgain}
             disabled={isClosing || isFlipping}
             aria-label="Start a new trade"
-            className="flex-1 brutal-button py-3 sm:py-4 text-base sm:text-lg font-black font-mono uppercase bg-[#CCFF00] text-black disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[56px] sm:min-h-[64px] flex items-center justify-center shadow-[0_8px_16px_rgba(0,0,0,0.4)]"
+            className="flex-1 min-w-[120px] sm:min-w-[140px] brutal-button py-3 sm:py-4 text-base sm:text-lg font-black font-mono uppercase bg-[#CCFF00] text-black disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation min-h-[56px] sm:min-h-[64px] flex items-center justify-center gap-2 shadow-[0_8px_16px_rgba(0,0,0,0.4)] focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
           >
-            ROLL
+            <svg
+              className="w-6 h-6 sm:w-7 sm:h-7"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M9 9h.01M15 9h.01M9 15h.01M15 15h.01" />
+            </svg>
+            <span>ROLL</span>
           </button>
         </div>
       </div>

@@ -298,28 +298,41 @@ export default function ActivityPage() {
 
   return (
     <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full">
-      {/* Header - Compact */}
+      {/* Header - Improved layout */}
       <header className="w-full mb-4 sm:mb-6">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-4">
           <button
             onClick={() => router.back()}
-            className="text-[#CCFF00] text-base sm:text-lg font-bold touch-manipulation min-h-[40px] flex items-center px-3 py-1.5 border-4 border-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors"
+            className="text-[#CCFF00] text-sm sm:text-base font-bold touch-manipulation min-h-[44px] flex items-center px-3 sm:px-4 py-2 border-4 border-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
             style={{ boxShadow: '4px 4px 0px 0px rgba(204, 255, 0, 0.5)' }}
             aria-label="Go back"
           >
-            ← BACK
+            <svg
+              className="w-4 h-4 mr-1.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+            <span className="whitespace-nowrap">BACK</span>
           </button>
-          <h1 className="text-[#CCFF00] text-lg sm:text-xl font-bold">ACTIVITY</h1>
-          <div className="w-20 sm:w-24" />
+          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-black uppercase tracking-tight">Activity</h1>
+          <div className="w-16 sm:w-20" />
         </div>
         
-        {/* Toggle and Stats - Inline */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="brutal-toggle">
+        {/* Toggle and Stats - Improved layout */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+          <div className="brutal-toggle flex-shrink-0">
             <button
               onClick={() => setShowClosedTrades(false)}
               className={`brutal-toggle-option ${!showClosedTrades ? 'active' : ''}`}
               aria-pressed={!showClosedTrades}
+              aria-label="Show open trades"
             >
               OPEN
             </button>
@@ -327,28 +340,29 @@ export default function ActivityPage() {
               onClick={() => setShowClosedTrades(true)}
               className={`brutal-toggle-option ${showClosedTrades ? 'active' : ''}`}
               aria-pressed={showClosedTrades}
+              aria-label="Show closed trades"
             >
               CLOSED
             </button>
           </div>
           
-          {/* Compact Stats */}
-          <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm">
-            <div className="text-center">
-              <div className="text-white/50 text-[10px] sm:text-xs">TOTAL</div>
-              <div className="text-[#CCFF00] font-bold text-base sm:text-lg" suppressHydrationWarning>
+          {/* Enhanced Stats */}
+          <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 text-xs sm:text-sm min-w-0">
+            <div className="text-center shrink-0">
+              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Total</div>
+              <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
                 {mounted ? tradeStats.totalTrades : 0}
               </div>
             </div>
-            <div className="text-center">
-              <div className="text-white/50 text-[10px] sm:text-xs">OPEN</div>
-              <div className="text-[#CCFF00] font-bold text-base sm:text-lg" suppressHydrationWarning>
+            <div className="text-center shrink-0">
+              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Open</div>
+              <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
                 {mounted ? tradesWithPnL.length : 0}
               </div>
             </div>
-            <div className="text-center">
-              <div className="text-white/50 text-[10px] sm:text-xs">CLOSED</div>
-              <div className="text-[#CCFF00] font-bold text-base sm:text-lg" suppressHydrationWarning>
+            <div className="text-center shrink-0">
+              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Closed</div>
+              <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
                 {mounted ? closedTrades.length : 0}
               </div>
             </div>
@@ -362,16 +376,35 @@ export default function ActivityPage() {
           // Show closed trades
           closedTrades.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-              <div className="text-white/40 text-base sm:text-lg mb-4">No closed trades</div>
+              <div className="mb-6">
+                <svg
+                  className="w-16 h-16 mx-auto text-white/20 mb-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <path d="M9 9h6M9 15h6" />
+                </svg>
+              </div>
+              <div className="text-white/50 text-lg sm:text-xl font-bold mb-2">No Closed Trades</div>
+              <div className="text-white/30 text-sm sm:text-base mb-6 max-w-xs">
+                Your closed trades will appear here
+              </div>
               <button
                 onClick={() => setShowClosedTrades(false)}
-                className="px-5 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation"
+                className="px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
+                aria-label="View open trades"
               >
                 VIEW OPEN TRADES
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-4">
+            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-6">
               {closedTrades.map((closedTrade) => {
                 // Convert ClosedTrade to Trade + PnLData for TradeCard
                 const trade: Trade = {
@@ -384,6 +417,7 @@ export default function ActivityPage() {
                   openPrice: closedTrade.openPrice,
                   tp: closedTrade.tp,
                   sl: closedTrade.sl,
+                  liquidationPrice: closedTrade.liquidationPrice,
                   openedAt: closedTrade.openedAt,
                 };
                 const pnlData: PnLData = {
@@ -411,16 +445,35 @@ export default function ActivityPage() {
           // Show open trades
           tradesWithPnL.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-              <div className="text-white/40 text-base sm:text-lg mb-4">No open trades</div>
+              <div className="mb-6">
+                <svg
+                  className="w-16 h-16 mx-auto text-[#CCFF00]/30 mb-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v6l4 2" />
+                </svg>
+              </div>
+              <div className="text-white/50 text-lg sm:text-xl font-bold mb-2">No Open Trades</div>
+              <div className="text-white/30 text-sm sm:text-base mb-6 max-w-xs">
+                Spin the wheel to start your first trade
+              </div>
               <button
                 onClick={() => router.push('/')}
-                className="px-5 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation"
+                className="px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
+                aria-label="Go to main page to roll"
               >
                 ROLL NOW
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-4">
+            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-6">
               {tradesWithPnL.map((item, index) => (
                 <TradeCard
                   key={`${item.trade.pairIndex}-${item.trade.tradeIndex}`}

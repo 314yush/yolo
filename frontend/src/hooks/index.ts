@@ -10,3 +10,4 @@ export { usePythPrices, usePythPricesSync } from './usePythPrices';
 export { useChartDataCollector, useChartData, getChartData, clearChartData, clearAllChartData } from './useChartDataCollector';
 export { useSound } from './useSound';
 export { useTxSigner } from './useTxSigner';
+export { useViewportDimensions, getChartHeightCSS, getChartWidthCSS } from './useViewportDimensions';

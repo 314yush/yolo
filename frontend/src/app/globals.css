@@ -313,17 +313,47 @@ body {
                0 0 60px rgba(255, 0, 110, 0.1);
 }
 
-/* Price Chart Styles */
+/* Price Chart Styles - Professional Polish */
 .price-chart-container {
   position: relative;
   border-radius: 0;
   overflow: hidden;
+  /* Refined border for professional appearance */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* Enhanced shadow for depth and sophistication */
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.4);
 }
 
 /* Enhanced glow effect for area chart */
 .price-chart-container canvas {
   filter: drop-shadow(0 0 8px var(--chart-line-color, #00AAE4)) 
           drop-shadow(0 0 4px var(--chart-line-color, #00AAE4));
+}
+
+/* Chart indicator overlays - enhanced styling */
+.price-chart-container [class*="absolute"] {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.price-chart-container [class*="absolute"]:hover {
+  opacity: 1;
+}
+
+/* Chart touch container - improved mobile feedback */
+.chart-touch-container {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: pan-x;
+  cursor: crosshair;
+}
+
+.chart-touch-container:active {
+  cursor: grabbing;
+}
+
+/* Enhanced chart indicator styling */
+.price-chart-container .absolute {
+  user-select: none;
+  pointer-events: auto;
 }
 
 /* Chart container with neo-brutal styling */
@@ -483,5 +513,227 @@ body {
   /* Disable chart glow for reduced motion */
   .price-chart-container canvas {
     filter: none !important;
+  }
+}
+
+/* ============================================
+   CHART MOBILE OPTIMIZATION STYLES
+   ============================================ */
+
+/* Full viewport width chart container */
+.chart-container-full-width {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  margin-left: calc(-50vw + 50%) !important;
+  margin-right: calc(-50vw + 50%) !important;
+  padding: 0 !important;
+  /* Handle safe areas on notched devices */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Touch actions for chart scrolling */
+.touch-pan-x {
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Prevent pull-to-refresh on chart */
+.touch-pan-x {
+  overscroll-behavior: none;
+}
+
+/* Enhanced safe area utilities */
+.safe-area-left {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.safe-area-right {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+.safe-area-all {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Dynamic viewport height utilities */
+.h-dvh {
+  height: 100dvh;
+}
+
+.min-h-dvh {
+  min-height: 100dvh;
+}
+
+/* Fallback for browsers that don't support dvh */
+@supports not (height: 100dvh) {
+  .h-dvh {
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+  
+  .min-h-dvh {
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+}
+
+/* Chart-specific mobile styles */
+.price-chart-container {
+  /* Prevent text selection on chart */
+  user-select: none;
+  -webkit-user-select: none;
+  /* Prevent context menu on long press */
+  -webkit-touch-callout: none;
+}
+
+/* Ensure chart canvas is touch-friendly */
+.price-chart-container canvas {
+  touch-action: pan-x;
+  cursor: crosshair;
+}
+
+/* Chart overlay indicators */
+.price-chart-container .chart-indicator {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Courier New', monospace;
+  font-size: 10px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* ============================================
+   BROWSER-SPECIFIC FIXES
+   ============================================ */
+
+/* Safari-specific fixes */
+@supports (-webkit-touch-callout: none) {
+  /* Fix for Safari 100vh issue */
+  .min-h-screen {
+    min-height: -webkit-fill-available;
+  }
+  
+  /* Fix for Safari scroll bounce */
+  .safe-area-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 20px);
+  }
+  
+  /* Safari chart container fix */
+  .price-chart-container {
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+  }
+}
+
+/* Chrome mobile fixes */
+@media screen and (-webkit-min-device-pixel-ratio: 0) {
+  /* Ensure smooth rendering */
+  .price-chart-container {
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+}
+
+/* Firefox mobile fixes */
+@-moz-document url-prefix() {
+  /* Firefox doesn't support env() in all contexts */
+  .safe-area-bottom {
+    padding-bottom: 20px;
+  }
+  
+  .safe-area-top {
+    padding-top: 20px;
+  }
+}
+
+/* ============================================
+   ASPECT RATIO RESPONSIVE STYLES
+   ============================================ */
+
+/* Tall screens (modern phones like iPhone X+, Galaxy S series) */
+@media (min-aspect-ratio: 9/19) {
+  .chart-container-full-width {
+    /* Use more vertical space on tall screens */
+    min-height: 280px;
+  }
+}
+
+/* Standard screens (16:9 ratio) */
+@media (min-aspect-ratio: 9/16) and (max-aspect-ratio: 9/19) {
+  .chart-container-full-width {
+    min-height: 240px;
+  }
+}
+
+/* Wide/landscape screens */
+@media (max-aspect-ratio: 3/4) {
+  .chart-container-full-width {
+    /* Limit height on landscape to prevent chart from being too tall */
+    max-height: 50vh;
+  }
+}
+
+/* Small screens (iPhone SE, older devices) */
+@media (max-height: 700px) {
+  .chart-container-full-width {
+    min-height: 200px;
+    max-height: 250px;
+  }
+  
+  /* Reduce PnL text size on small screens */
+  .pnl-glow-green,
+  .pnl-glow-red {
+    font-size: 90% !important;
+  }
+}
+
+/* Very tall screens (foldables, etc) */
+@media (min-height: 1000px) {
+  .chart-container-full-width {
+    max-height: 400px;
+  }
+}
+
+/* ============================================
+   CRYPTO WALLET BROWSER COMPATIBILITY
+   ============================================ */
+
+/* MetaMask, Trust Wallet, Coinbase Wallet typically run in WebViews */
+/* These styles ensure compatibility with in-app browsers */
+
+/* Force hardware acceleration for smoother charts */
+.price-chart-container,
+.price-chart-container canvas {
+  -webkit-transform: translate3d(0, 0, 0);
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+}
+
+/* Ensure touch events work properly in WebViews */
+.price-chart-container {
+  touch-action: pan-x pinch-zoom;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Fix for potential z-index issues in wallet browsers */
+.price-chart-container {
+  isolation: isolate;
+  contain: layout paint;
+}
+
+/* Prevent rubber-banding on iOS when chart is at scroll limits */
+.price-chart-container {
+  overscroll-behavior: contain;
+}
+
+/* ============================================
+   PRINT STYLES (hide chart when printing)
+   ============================================ */
+@media print {
+  .price-chart-container {
+    display: none;
   }
 }

@@ -62,6 +62,7 @@ function parsePosition(pos: AvantisPosition): Trade {
     openPrice: Number(pos.openPrice) / PRICE_DECIMALS,
     tp: Number(pos.tp) / PRICE_DECIMALS,
     sl: Number(pos.sl) / PRICE_DECIMALS,
+    liquidationPrice: Number(pos.liquidationPrice) / PRICE_DECIMALS,
     openedAt: pos.openedAt,
   };
 }

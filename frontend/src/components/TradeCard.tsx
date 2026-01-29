@@ -30,83 +30,145 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
   const cardClass = isProfit ? 'brutal-card-winning' : 'brutal-card-losing';
 
   return (
-    <div className={`brutal-card ${cardClass} p-2.5 sm:p-3`}>
-      {/* Header: Chips - Very compact */}
-      <div className="flex items-center gap-1 flex-wrap mb-2">
+    <div className={`brutal-card ${cardClass} p-3 sm:p-4 min-w-0`}>
+      {/* Header: Chips - Improved spacing and wrapping */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-3 min-w-0">
         {asset && (
           <div
-            className="selection-chip px-1.5 py-0.5 text-[10px] font-bold text-black flex items-center gap-0.5"
+            className="selection-chip px-2 py-1 text-[11px] sm:text-xs font-bold text-black flex items-center gap-1 shrink-0"
             style={{ backgroundColor: asset.color }}
           >
-            <img src={asset.icon} alt="" className="w-2.5 h-2.5" aria-hidden="true" />
-            <span>{asset.name}</span>
+            <img src={asset.icon} alt="" className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" aria-hidden="true" />
+            <span className="whitespace-nowrap">{asset.name}</span>
           </div>
         )}
         {direction && (
           <div
-            className="selection-chip px-1.5 py-0.5 text-[10px] font-bold text-black"
+            className="selection-chip px-2 py-1 text-[11px] sm:text-xs font-bold text-black shrink-0 whitespace-nowrap"
             style={{ backgroundColor: direction.color }}
           >
             {direction.name}
           </div>
         )}
-        <div className="selection-chip px-1.5 py-0.5 text-[10px] font-bold bg-white/20 text-white">
+        <div className="selection-chip px-2 py-1 text-[11px] sm:text-xs font-bold bg-white/20 text-white shrink-0 whitespace-nowrap">
           {trade.leverage}x
         </div>
       </div>
 
-      {/* PnL Display - Dominant but compact */}
-      <div className="mb-2">
-        <div className={`text-2xl sm:text-3xl font-black leading-none`} style={{ color }}>
+      {/* PnL Display - Enhanced visual hierarchy */}
+      <div className="mb-3">
+        <div className={`text-3xl sm:text-4xl font-black leading-none font-mono`} style={{ color }}>
           {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
         </div>
-        <div className={`text-sm sm:text-base font-bold mt-0.5`} style={{ color }}>
+        <div className={`text-base sm:text-lg font-bold mt-1 font-mono`} style={{ color }}>
           {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
         </div>
       </div>
 
-      {/* Price comparison - Compact inline */}
-      <div className="flex items-baseline justify-between gap-2 mb-2 text-[10px] sm:text-xs font-mono">
-        <div className="flex-1">
-          <div className="text-white/30 text-[9px] mb-0.5">ENTRY</div>
-          <div className="text-white font-bold text-xs sm:text-sm">
-            ${trade.openPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+      {/* Price comparison - Improved layout and readability */}
+      <div className="flex items-start justify-between gap-3 mb-3 text-xs sm:text-sm font-mono min-w-0">
+        <div className="flex-1 min-w-0">
+          <div className="text-white/40 text-[10px] sm:text-xs mb-1 uppercase tracking-wide">Entry</div>
+          <div className="text-white font-bold text-sm sm:text-base wrap-break-word">
+            ${trade.openPrice.toLocaleString(undefined, { 
+              minimumFractionDigits: 2, 
+              maximumFractionDigits: trade.openPrice < 10 ? 4 : 2 
+            })}
           </div>
         </div>
-        <div className="text-white/30 text-xs">→</div>
-        <div className="flex-1 text-right">
-          <div className="text-white/30 text-[9px] mb-0.5">CURRENT</div>
-          <div className="font-bold text-xs sm:text-sm" style={{ color }}>
-            ${currentPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+        <div className="text-white/30 text-base sm:text-lg shrink-0 pt-3">→</div>
+        <div className="flex-1 text-right min-w-0">
+          <div className="text-white/40 text-[10px] sm:text-xs mb-1 uppercase tracking-wide">Current</div>
+          <div className="font-bold text-sm sm:text-base wrap-break-word" style={{ color }}>
+            ${currentPrice.toLocaleString(undefined, { 
+              minimumFractionDigits: 2, 
+              maximumFractionDigits: currentPrice < 10 ? 4 : 2 
+            })}
           </div>
         </div>
       </div>
 
-      {/* Position Info - Very subtle, only if not closed */}
+      {/* Position Info - Improved visibility */}
       {!isClosed && (
-        <div className="text-white/30 text-[9px] mb-2 font-mono">
-          ${trade.collateral} × {trade.leverage}x = ${positionSize.toLocaleString()}
+        <div className="text-white/40 text-[10px] sm:text-xs mb-3 font-mono">
+          ${trade.collateral.toLocaleString()} × {trade.leverage}x = ${positionSize.toLocaleString()}
         </div>
       )}
 
-      {/* Actions - Only show for open trades */}
+      {/* Actions - Enhanced with icons and better states */}
       {!isClosed && (
-        <div className="flex gap-1.5">
+        <div className="flex gap-2">
           <button
             onClick={() => onFlip(trade)}
             disabled={isFlipping || isClosing}
-            className="flex-1 py-2 px-2 text-[10px] sm:text-xs font-bold brutal-button bg-[#CCFF00] text-black disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[40px]"
-            aria-label={`Flip to ${trade.isLong ? 'SHORT' : 'LONG'}`}
+            aria-label={isFlipping ? 'Flipping trade...' : `Flip to ${trade.isLong ? 'SHORT' : 'LONG'}`}
+            aria-busy={isFlipping}
+            className="flex-1 py-2.5 px-3 text-xs sm:text-sm font-bold brutal-button bg-[#CCFF00] text-black disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation min-h-[44px] flex items-center justify-center gap-1.5 focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black relative"
           >
-            {isFlipping ? 'FLIPPING...' : `FLIP: ${trade.isLong ? 'SHORT' : 'LONG'}`}
+            {isFlipping ? (
+              <svg
+                className="w-4 h-4 animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            ) : (
+              <svg
+                className="w-4 h-4 shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4" />
+              </svg>
+            )}
+            <span className="whitespace-nowrap">{isFlipping ? 'FLIPPING...' : `FLIP`}</span>
           </button>
           <button
             onClick={() => onClose(trade)}
             disabled={isFlipping || isClosing}
-            className="px-2.5 sm:px-3 py-2 text-[10px] sm:text-xs font-bold brutal-button-danger disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation min-h-[40px]"
-            aria-label="Close trade"
+            aria-label={isClosing ? 'Closing trade...' : 'Close trade'}
+            aria-busy={isClosing}
+            className="px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-bold brutal-button-danger disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation min-h-[44px] flex items-center justify-center gap-1.5 focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black relative"
           >
-            {isClosing ? '...' : 'CLOSE'}
+            {isClosing ? (
+              <svg
+                className="w-4 h-4 animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            ) : (
+              <svg
+                className="w-4 h-4 shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            )}
+            <span className="whitespace-nowrap">{isClosing ? '...' : 'CLOSE'}</span>
           </button>
         </div>
       )}

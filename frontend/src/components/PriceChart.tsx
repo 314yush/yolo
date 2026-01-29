@@ -1,356 +1,458 @@
 'use client';
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo, useCallback } from 'react';
-import { createChart, IChartApi, ISeriesApi, LineData, UTCTimestamp, AreaSeries } from 'lightweight-charts';
+import { createChart, IChartApi, ISeriesApi, LineData, AreaData, UTCTimestamp, LineStyle, CrosshairMode, LineSeries, AreaSeries } from 'lightweight-charts';
 import { useTradeStore } from '@/store/tradeStore';
-import { getChartData, type ChartDataPoint } from '@/hooks/useChartDataCollector';
+import { getChartData, type CandlestickDataPoint, type Resolution } from '@/hooks/useChartDataCollector';
 
 interface PriceChartProps {
   assetPair: string | null;
   lineColor?: string;
   entryPrice?: number | null;
+  liquidationPrice?: number | null;
   height?: number;
   showLegend?: boolean;
-  pnl?: number; // PnL value to determine chart colors
+  pnl?: number;
+  resolution?: Resolution; // 60 (1m), 180 (3m), 300 (5m), or 900 (15m)
 }
 
-// Configuration
-const MAX_DATA_POINTS = 5; // 5 minutes of data at 1-minute intervals
-const MAX_AGE_SECONDS = 300; // 5 minutes
-const UPDATE_INTERVAL_MS = 60000; // Update chart every minute (1m granularity)
-const SYNC_PRELOADED_DATA_INTERVAL = 60000; // Sync with pre-loaded data every minute
+// 5-minute resolution (300 seconds)
+const CHART_RESOLUTION: Resolution = 300;
+// 6-hour rolling window = 72 data points at 5-minute resolution
+const VISIBLE_CANDLES = 72;
 
-/**
- * Real-time price chart component using TradingView Lightweight Charts.
- * 
- * Displays a 1-minute rolling window of price data with:
- * - Asset-colored line with neon glow effect
- * - Entry price marker (horizontal dashed line)
- * - Dark theme matching YOLO design
- * 
- * Uses Pyth Hermes WebSocket data from the store (already streaming).
- */
+// Color palette for line + stacked area chart
+const CHART_COLORS = {
+  background: '#000000',
+  text: '#787b86',
+  textBright: '#d1d4dc',
+  crosshair: 'rgba(120, 123, 134, 0.5)',
+  entry: '#2962ff',
+  liquidation: '#f23645',
+  line: '#00AAE4', // Primary line color
+  // Area colors (25% opacity, no borders)
+  areaPositive: 'rgba(8, 153, 129, 0.25)', // Positive delta (green, 25% opacity)
+  areaNegative: 'rgba(242, 54, 69, 0.25)', // Negative delta (red, 25% opacity)
+  // Price change indicator colors
+  priceUp: '#089981', // Green for up price
+  priceDown: '#f23645', // Red for down price
+};
+
+const SYNC_INTERVAL_MS = 1000; // Sync every second for real-time updates
+
+function formatPrice(price: number): string {
+  if (price >= 10000) return price.toFixed(2);
+  if (price >= 100) return price.toFixed(2);
+  if (price >= 1) return price.toFixed(4);
+  return price.toFixed(6);
+}
+
+function getPricePrecision(price: number): number {
+  if (price >= 10000) return 2;
+  if (price >= 100) return 2;
+  if (price >= 1) return 4;
+  return 6;
+}
+
 function PriceChartComponent({ 
   assetPair, 
-  lineColor = '#00AAE4', 
+  lineColor = CHART_COLORS.line, 
   entryPrice = null,
+  liquidationPrice = null,
   height = 150,
   showLegend = true,
-  pnl = 0
+  pnl = 0,
+  resolution = CHART_RESOLUTION, // Default: 5 minutes
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const lineSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
-  const priceLineRef = useRef<ReturnType<ISeriesApi<'Area'>['createPriceLine']> | null>(null);
+  const lineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const positiveAreaSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const negativeAreaSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const entryPriceLineRef = useRef<any>(null);
+  const liquidationPriceLineRef = useRef<any>(null);
   
   const [isChartReady, setIsChartReady] = useState(false);
   const [hasData, setHasData] = useState(false);
-  const dataBufferRef = useRef<ChartDataPoint[]>([]);
-  const lastUpdateRef = useRef<number>(0);
+  const [timeRange, setTimeRange] = useState<string>('');
+  const dataBufferRef = useRef<CandlestickDataPoint[]>([]);
   const isInitializedRef = useRef(false);
+  const visibleRangeSetRef = useRef(false);
   
-  // Get price from store (Pyth Hermes WebSocket)
   const prices = useTradeStore(state => state.prices);
   const pythPrice = assetPair ? prices[assetPair]?.price ?? null : null;
   const isConnected = pythPrice !== null;
   
-  
-  // Initialize chart with current price immediately (create at least 2 points for a line)
-  const initializeWithCurrentPrice = useCallback((price: number) => {
-    if (!lineSeriesRef.current || !isChartReady || isInitializedRef.current) return;
+  const updateTimeRangeDisplay = useCallback(() => {
+    if (!chartRef.current) return;
     
-    const now = Date.now();
-    // Round to nearest minute for 1-minute granularity
-    const timeInSeconds = Math.floor(now / 60000) * 60;
+    const timeScale = chartRef.current.timeScale();
+    const visibleRange = timeScale.getVisibleLogicalRange();
     
-    // Create initial 2 points (required for a visible line)
-    const initialBuffer: ChartDataPoint[] = [
-      { time: timeInSeconds - 60, value: price }, // 1 minute ago
-      { time: timeInSeconds, value: price },     // now
-    ];
-    
-    dataBufferRef.current = initialBuffer;
-    
-    const chartData: LineData[] = initialBuffer.map(point => ({
-      time: point.time as UTCTimestamp,
-      value: point.value,
-    }));
-    
-    try {
-      lineSeriesRef.current.setData(chartData);
-      // Use requestAnimationFrame to ensure chart is ready before fitting
-      requestAnimationFrame(() => {
-        if (chartRef.current) {
-          chartRef.current.timeScale().fitContent();
-        }
-      });
-      setHasData(true);
-      isInitializedRef.current = true;
-    } catch (err) {
-      console.error('[PriceChart] Error initializing chart:', err);
+    if (visibleRange && dataBufferRef.current.length > 0) {
+      const startIdx = Math.max(0, Math.floor(visibleRange.from));
+      const endIdx = Math.min(dataBufferRef.current.length - 1, Math.ceil(visibleRange.to));
+      
+      if (startIdx < dataBufferRef.current.length && endIdx >= 0) {
+        const startTime = new Date(dataBufferRef.current[startIdx].time * 1000);
+        const endTime = new Date(dataBufferRef.current[Math.min(endIdx, dataBufferRef.current.length - 1)].time * 1000);
+        
+        const formatTime = (d: Date) => 
+          `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        
+        setTimeRange(`${formatTime(startTime)} - ${formatTime(endTime)}`);
+      }
     }
-  }, [isChartReady]);
+  }, []);
   
-  // Update chart with new data point
-  const updateChart = useCallback((price: number) => {
+  // Calculate positive/negative delta areas (stacked areas showing cumulative price changes per candle)
+  const calculateDeltaAreas = useCallback((candles: CandlestickDataPoint[]): { positive: AreaData[], negative: AreaData[] } => {
+    const positive: AreaData[] = [];
+    const negative: AreaData[] = [];
+    
+    if (candles.length === 0) return { positive, negative };
+    
+    // Use first close price as baseline for stacking
+    const baseline = candles[0].close;
+    let cumulativePositive = 0;
+    let cumulativeNegative = 0;
+    
+    candles.forEach((candle) => {
+      const time = candle.time as UTCTimestamp;
+      const priceDelta = candle.close - candle.open;
+      
+      if (priceDelta > 0) {
+        // Positive delta: add to positive cumulative stack
+        cumulativePositive += priceDelta;
+        // Negative area stays at its current cumulative level (doesn't reset)
+      } else if (priceDelta < 0) {
+        // Negative delta: add magnitude to negative cumulative stack
+        cumulativeNegative += Math.abs(priceDelta);
+        // Positive area stays at its current cumulative level (doesn't reset)
+      }
+      // If priceDelta === 0, both cumulative values remain unchanged
+      
+      // Both areas always rendered, showing cumulative deltas stacked from baseline
+      positive.push({
+        time,
+        value: baseline + cumulativePositive,
+      });
+      negative.push({
+        time,
+        value: baseline + cumulativeNegative,
+      });
+    });
+    
+    return { positive, negative };
+  }, []);
+  
+  const loadChartData = useCallback((candles: CandlestickDataPoint[]) => {
     if (!lineSeriesRef.current || !isChartReady) return;
     
-    const now = Date.now();
-    // Round to nearest minute for 1-minute granularity
-    const timeInSeconds = Math.floor(now / 60000) * 60;
+    // Filter and validate data, keep only last 72 candles (6-hour window)
+    const validCandles = candles
+      .filter(candle => 
+        candle && 
+        !isNaN(candle.close) &&
+        candle.close > 0
+      )
+      .slice(-VISIBLE_CANDLES); // Keep only last 72 data points
     
-    // Get current buffer
-    let buffer = dataBufferRef.current;
+    if (validCandles.length === 0) return;
     
-    // Create new point (at minute boundary)
-    const newPoint: ChartDataPoint = { time: timeInSeconds, value: price };
-    
-    // Check if we already have a point for this minute
-    const lastPoint = buffer[buffer.length - 1];
-    if (lastPoint && lastPoint.time === timeInSeconds) {
-      // Update existing point (same minute) - only if price changed significantly
-      const priceDiff = Math.abs(lastPoint.value - price);
-      const priceChangePercent = (priceDiff / lastPoint.value) * 100;
-      if (priceChangePercent > 0.01) { // Only update if price changed by more than 0.01%
-        buffer[buffer.length - 1] = newPoint;
-      } else {
-        return; // Skip update if price hasn't changed meaningfully
-      }
-    } else {
-      // Add new point (new minute)
-      buffer = [...buffer, newPoint];
-    }
-    
-    // Trim old points (keep only last 5 minutes)
-    const cutoffTime = timeInSeconds - MAX_AGE_SECONDS;
-    buffer = buffer.filter(point => point.time > cutoffTime);
-    if (buffer.length > MAX_DATA_POINTS) {
-      buffer = buffer.slice(-MAX_DATA_POINTS);
-    }
-    
-    dataBufferRef.current = buffer;
-    
-    // Convert to chart format
-    const chartData: LineData[] = buffer.map(point => ({
-      time: point.time as UTCTimestamp,
-      value: point.value,
+    // Convert to line data (close price only)
+    const lineData: LineData[] = validCandles.map(candle => ({
+      time: candle.time as UTCTimestamp,
+      value: candle.close,
     }));
     
-    // Update the series (without fitContent to prevent continuous refresh)
+    // Calculate delta areas (stacked positive/negative deltas)
+    const deltaAreas = calculateDeltaAreas(validCandles);
+    
     try {
-      lineSeriesRef.current.setData(chartData);
-      
-      // Only fit content once on initial load when we have enough data
-      if (!hasData && buffer.length >= 2) {
+      // Only use setData() for initial load
+      if (!hasData && lineData.length >= 1) {
+        lineSeriesRef.current.setData(lineData);
+        
+        // Set area series data (stacked behind line)
+        if (positiveAreaSeriesRef.current) {
+          positiveAreaSeriesRef.current.setData(deltaAreas.positive);
+        }
+        if (negativeAreaSeriesRef.current) {
+          negativeAreaSeriesRef.current.setData(deltaAreas.negative);
+        }
+        
         setHasData(true);
-        // Use requestAnimationFrame to ensure chart is ready
+        
+        // Set visible range ONCE during initial load only - show 72 candles (6 hours)
         requestAnimationFrame(() => {
-          if (chartRef.current) {
-            chartRef.current.timeScale().fitContent();
+          if (chartRef.current && lineData.length > 0 && !visibleRangeSetRef.current) {
+            const timeScale = chartRef.current.timeScale();
+            const visibleEnd = lineData.length - 1;
+            const visibleStart = Math.max(0, visibleEnd - Math.min(VISIBLE_CANDLES - 1, visibleEnd));
+            
+            if (visibleStart <= visibleEnd && visibleEnd >= 0) {
+              timeScale.setVisibleLogicalRange({
+                from: visibleStart,
+                to: visibleEnd,
+              });
+              visibleRangeSetRef.current = true;
+            } else {
+              timeScale.fitContent();
+              visibleRangeSetRef.current = true;
+            }
+            
+            updateTimeRangeDisplay();
           }
         });
+      } else {
+        // For live updates, use update() instead of setData() to avoid jitter
+        if (lineData.length > 0 && lineSeriesRef.current) {
+          const latestPoint = lineData[lineData.length - 1];
+          try {
+            lineSeriesRef.current.update(latestPoint);
+            
+            // Update area series with latest delta data
+            const latestDelta = calculateDeltaAreas([validCandles[validCandles.length - 1]]);
+            if (positiveAreaSeriesRef.current && latestDelta.positive.length > 0) {
+              positiveAreaSeriesRef.current.update(latestDelta.positive[0]);
+            }
+            if (negativeAreaSeriesRef.current && latestDelta.negative.length > 0) {
+              negativeAreaSeriesRef.current.update(latestDelta.negative[0]);
+            }
+          } catch (err) {
+            // If update fails, fall back to setData
+            console.warn('[PriceChart] Update failed, falling back to setData:', err);
+            lineSeriesRef.current.setData(lineData);
+            if (positiveAreaSeriesRef.current) {
+              positiveAreaSeriesRef.current.setData(deltaAreas.positive);
+            }
+            if (negativeAreaSeriesRef.current) {
+              negativeAreaSeriesRef.current.setData(deltaAreas.negative);
+            }
+          }
+        }
+        updateTimeRangeDisplay();
       }
     } catch (err) {
-      console.error('[PriceChart] Error updating chart:', err);
+      console.error('[PriceChart] Error loading chart data:', err);
     }
-  }, [isChartReady, hasData]);
+  }, [isChartReady, hasData, updateTimeRangeDisplay, calculateDeltaAreas]);
   
-  // Load pre-collected chart data when chart is ready
+  // Load initial data
   useEffect(() => {
     if (!isChartReady || !assetPair || isInitializedRef.current) return;
     
-    // Try to load pre-collected data
-    const preloadedData = getChartData(assetPair);
+    // Always use 5-minute resolution
+    const preloadedCandles = getChartData(assetPair, CHART_RESOLUTION);
     
-    if (preloadedData.length >= 2) {
-      // Use pre-loaded data
-      console.log('[PriceChart] Loading pre-collected data:', preloadedData.length, 'points');
-      dataBufferRef.current = preloadedData;
-      
-      const chartData: LineData[] = preloadedData.map(point => ({
-        time: point.time as UTCTimestamp,
-        value: point.value,
-      }));
-      
-      try {
-        if (lineSeriesRef.current) {
-          lineSeriesRef.current.setData(chartData);
-          // Use requestAnimationFrame to ensure chart is ready before fitting
-          requestAnimationFrame(() => {
-            if (chartRef.current) {
-              chartRef.current.timeScale().fitContent();
-            }
-          });
-          setHasData(true);
-          isInitializedRef.current = true;
-          console.log('[PriceChart] Chart initialized with pre-loaded data');
-        }
-      } catch (err) {
-        console.error('[PriceChart] Error loading pre-collected data:', err);
-      }
-    } else if (pythPrice !== null) {
-      // Fallback: initialize with current price
-      console.log('[PriceChart] No pre-loaded data, initializing with current price');
-      initializeWithCurrentPrice(pythPrice);
+    if (preloadedCandles.length >= 1) {
+      console.log('[PriceChart] Loading pre-collected data:', preloadedCandles.length, 'candles at', CHART_RESOLUTION, 's resolution');
+      dataBufferRef.current = preloadedCandles;
+      loadChartData(preloadedCandles);
+      isInitializedRef.current = true;
     }
-  }, [isChartReady, assetPair, pythPrice, initializeWithCurrentPrice]);
+  }, [isChartReady, assetPair, loadChartData]);
   
-  // Update chart with new Pyth price updates (throttled to minute intervals)
-  useEffect(() => {
-    if (pythPrice === null || !isChartReady || !isInitializedRef.current) return;
-    
-    const now = Date.now();
-    
-    // Throttle updates to minute intervals
-    if (now - lastUpdateRef.current < UPDATE_INTERVAL_MS) {
-      return;
-    }
-    lastUpdateRef.current = now;
-    
-    updateChart(pythPrice);
-  }, [pythPrice, isChartReady, updateChart]);
-  
-  // Periodically sync with pre-loaded data (in case chart data collector has newer data)
+  // Periodic sync for real-time updates
   useEffect(() => {
     if (!isChartReady || !assetPair || !isInitializedRef.current) return;
     
     const syncInterval = setInterval(() => {
-      const preloadedData = getChartData(assetPair);
-      
-      // Only sync if pre-loaded data has significantly more points (new minute added)
-      // Avoid syncing if data is identical to prevent unnecessary refreshes
+      // Always use 5-minute resolution
+      const preloadedCandles = getChartData(assetPair, CHART_RESOLUTION);
       const currentLength = dataBufferRef.current.length;
-      const newLength = preloadedData.length;
+      const newLength = preloadedCandles.length;
       
-      if (newLength > currentLength) {
-        // New data point added - sync it
-        console.log('[PriceChart] Syncing with pre-loaded data:', newLength, 'points (was', currentLength, ')');
-        dataBufferRef.current = preloadedData;
-        
-        const chartData: LineData[] = preloadedData.map(point => ({
-          time: point.time as UTCTimestamp,
-          value: point.value,
-        }));
-        
-        try {
-          if (lineSeriesRef.current) {
-            lineSeriesRef.current.setData(chartData);
-            // Never call fitContent here - it causes continuous refresh
-          }
-        } catch (err) {
-          console.error('[PriceChart] Error syncing with pre-loaded data:', err);
-        }
+      const lengthChanged = newLength !== currentLength;
+      const timeChanged = newLength > 0 && currentLength > 0 && 
+                          preloadedCandles[newLength - 1].time !== dataBufferRef.current[currentLength - 1].time;
+      const priceChanged = newLength > 0 && currentLength > 0 && 
+                          preloadedCandles[newLength - 1].close !== dataBufferRef.current[currentLength - 1].close;
+      
+      if (lengthChanged || timeChanged || priceChanged) {
+        dataBufferRef.current = preloadedCandles;
+        loadChartData(preloadedCandles);
       }
-    }, SYNC_PRELOADED_DATA_INTERVAL);
+    }, SYNC_INTERVAL_MS);
     
     return () => clearInterval(syncInterval);
-  }, [isChartReady, assetPair]);
+  }, [isChartReady, assetPair, loadChartData]);
   
-  // Clear data when asset changes
+  // Clear on asset change
   useEffect(() => {
     dataBufferRef.current = [];
     setHasData(false);
-    lastUpdateRef.current = 0;
+    setTimeRange('');
     isInitializedRef.current = false;
+    visibleRangeSetRef.current = false;
     
-    // Clear chart data
     if (lineSeriesRef.current) {
       try {
         lineSeriesRef.current.setData([]);
-      } catch (err) {
-        // Ignore errors during cleanup
-      }
+      } catch (err) {}
+    }
+    if (positiveAreaSeriesRef.current) {
+      try {
+        positiveAreaSeriesRef.current.setData([]);
+      } catch (err) {}
+    }
+    if (negativeAreaSeriesRef.current) {
+      try {
+        negativeAreaSeriesRef.current.setData([]);
+      } catch (err) {}
     }
   }, [assetPair]);
 
-  // Initialize chart - using useLayoutEffect for synchronous execution before paint
+  // Initialize chart
   useLayoutEffect(() => {
-    if (!containerRef.current) {
-      console.error('[PriceChart] Container ref is null, cannot initialize chart');
-      return;
-    }
-
-    // Skip if chart already exists (prevent recreation on pnl changes)
-    if (chartRef.current) {
-      return;
-    }
+    if (!containerRef.current || chartRef.current) return;
 
     try {
-      // Get container width - ensure it fills mobile view
-      // Use multiple fallbacks to ensure we get a valid width
       const containerWidth = 
         containerRef.current.clientWidth || 
         containerRef.current.offsetWidth || 
         containerRef.current.getBoundingClientRect().width ||
         window.innerWidth;
       
-      // Ensure minimum width for chart to render
       const chartWidth = Math.max(containerWidth, 200);
+      const pricePrecision = pythPrice ? getPricePrecision(pythPrice) : 2;
       
-      // Create chart with TradingView-style config
+      // Create chart
       const chart = createChart(containerRef.current, {
         width: chartWidth,
         height,
         layout: {
-          background: { color: '#000000' },
-          textColor: '#666666',
+          background: { color: CHART_COLORS.background },
+          textColor: CHART_COLORS.text,
+          fontFamily: "'Trebuchet MS', 'Lucida Grande', 'Lucida Sans Unicode', Arial, sans-serif",
+          fontSize: 10,
         },
         grid: {
-          vertLines: { color: '#1a1a1a' },
-          horzLines: { color: '#1a1a1a' },
+          vertLines: { 
+            visible: false,
+          },
+          horzLines: { 
+            visible: false, // Disable grid lines
+          },
         },
         crosshair: {
-          mode: 0, // Normal crosshair
+          mode: CrosshairMode.Normal,
           vertLine: {
-            color: '#CCFF00',
+            color: CHART_COLORS.crosshair,
             width: 1,
-            style: 2, // Dashed
+            style: LineStyle.Dashed,
+            labelBackgroundColor: CHART_COLORS.background,
           },
           horzLine: {
-            color: '#CCFF00',
+            color: CHART_COLORS.crosshair,
             width: 1,
-            style: 2, // Dashed
+            style: LineStyle.Dashed,
+            labelBackgroundColor: CHART_COLORS.background,
           },
         },
+        leftPriceScale: {
+          visible: false,
+        },
         rightPriceScale: {
-          borderColor: '#2B2B2B',
-          textColor: '#999999',
+          borderColor: 'rgba(255, 255, 255, 0.06)',
+          textColor: CHART_COLORS.text,
+          scaleMargins: {
+            top: 0.2,
+            bottom: 0.2,
+          },
+          alignLabels: true,
+          borderVisible: false,
+          entireTextOnly: true,
+          autoScale: true,
+          visible: true,
         },
         timeScale: {
-          borderColor: '#2B2B2B',
+          borderColor: 'rgba(255, 255, 255, 0.06)',
           timeVisible: true,
-          secondsVisible: false,
+          secondsVisible: false, // No seconds for 5m candles
+          borderVisible: false,
+          fixLeftEdge: false,
+          fixRightEdge: false,
+          rightOffset: 2,
+          barSpacing: 5, // Optimized for iPhone 15 Pro Max (430px width) - 72 candles
+          minBarSpacing: 2,
+          tickMarkFormatter: (time: UTCTimestamp) => {
+            const date = new Date(time * 1000);
+            return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+          },
         },
-        handleScale: false, // Disable zoom on mobile
-        handleScroll: false, // Disable scroll on mobile
+        handleScale: {
+          axisPressedMouseMove: {
+            time: true,
+            price: false,
+          },
+          mouseWheel: false,
+          pinch: false,
+        },
+        handleScroll: {
+          mouseWheel: false,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false,
+        },
+        localization: {
+          priceFormatter: (price: number) => formatPrice(price),
+        },
       });
 
-      // Determine colors based on PnL (initial)
-      const isProfit = pnl >= 0;
-      const chartLineColor = isProfit ? '#CCFF00' : '#FF006E';
-      const topColor = isProfit ? 'rgba(204, 255, 0, 0.4)' : 'rgba(255, 0, 110, 0.4)';
-      const bottomColor = 'rgba(0, 0, 0, 0)';
+      // Add positive delta area series (behind line, rendered first)
+      const positiveAreaSeries = chart.addSeries(AreaSeries, {
+        topColor: CHART_COLORS.areaPositive,
+        bottomColor: 'rgba(0, 0, 0, 0)',
+        lineColor: 'transparent', // No visible line border
+        priceLineVisible: false,
+        lastValueVisible: false, // No last-value label
+        priceFormat: {
+          type: 'price',
+          precision: pricePrecision,
+          minMove: 0.01,
+        },
+      });
 
-      // Add area series (v5 API: use addSeries with AreaSeries type)
-      const areaSeries = chart.addSeries(AreaSeries, {
-        topColor: topColor,
-        bottomColor: bottomColor,
-        lineColor: chartLineColor,
-        lineWidth: 3,
-        crosshairMarkerVisible: true,
-        crosshairMarkerRadius: 4,
-        crosshairMarkerBackgroundColor: chartLineColor,
-        crosshairMarkerBorderColor: '#ffffff',
-        crosshairMarkerBorderWidth: 1,
-        lastValueVisible: true,
-        priceLineVisible: false, // Hide default price line (we have entry marker)
+      // Add negative delta area series (behind line, rendered second)
+      const negativeAreaSeries = chart.addSeries(AreaSeries, {
+        topColor: CHART_COLORS.areaNegative,
+        bottomColor: 'rgba(0, 0, 0, 0)',
+        lineColor: 'transparent', // No visible line border
+        priceLineVisible: false,
+        lastValueVisible: false, // No last-value label
+        priceFormat: {
+          type: 'price',
+          precision: pricePrecision,
+          minMove: 0.01,
+        },
+      });
+
+      // Add line series (on top of areas) - primary series using close price
+      const lineSeries = chart.addSeries(LineSeries, {
+        color: lineColor,
+        lineWidth: 2,
+        priceLineVisible: true, // Keep last-price horizontal line + label
+        lastValueVisible: true, // Show last price label
+        priceFormat: {
+          type: 'price',
+          precision: pricePrecision,
+          minMove: 0.01,
+        },
+        visible: true,
+      });
+
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        updateTimeRangeDisplay();
       });
 
       chartRef.current = chart;
-      lineSeriesRef.current = areaSeries;
+      lineSeriesRef.current = lineSeries;
+      positiveAreaSeriesRef.current = positiveAreaSeries;
+      negativeAreaSeriesRef.current = negativeAreaSeries;
       setIsChartReady(true);
       
-      // Force initial resize after a short delay to ensure container is fully rendered
       setTimeout(() => {
         if (containerRef.current && chartRef.current) {
           const newWidth = 
@@ -363,14 +465,10 @@ function PriceChartComponent({
         }
       }, 100);
     } catch (err) {
-      console.error('[PriceChart] FATAL: Failed to create chart:', err);
-      console.error('[PriceChart] Error details:', {
-        message: err instanceof Error ? err.message : 'Unknown error',
-        stack: err instanceof Error ? err.stack : undefined,
-      });
+      console.error('[PriceChart] Failed to create chart:', err);
     }
 
-    // Handle resize with debouncing
+    // Resize handling
     let resizeTimeout: NodeJS.Timeout;
     const handleResize = () => {
       clearTimeout(resizeTimeout);
@@ -380,16 +478,19 @@ function PriceChartComponent({
             containerRef.current.clientWidth || 
             containerRef.current.offsetWidth ||
             containerRef.current.getBoundingClientRect().width;
-          if (newWidth > 0) {
+          const newHeight = 
+            containerRef.current.clientHeight ||
+            height;
+          if (newWidth > 0 && newHeight > 0) {
             chartRef.current.applyOptions({
               width: newWidth,
+              height: newHeight,
             });
           }
         }
-      }, 150);
+      }, 100);
     };
 
-    // Use ResizeObserver for better mobile responsiveness
     let resizeObserver: ResizeObserver | null = null;
     if (containerRef.current && typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(handleResize);
@@ -398,7 +499,6 @@ function PriceChartComponent({
       window.addEventListener('resize', handleResize);
     }
 
-    // Cleanup
     return () => {
       clearTimeout(resizeTimeout);
       if (resizeObserver && containerRef.current) {
@@ -411,99 +511,153 @@ function PriceChartComponent({
         chartRef.current.remove();
         chartRef.current = null;
         lineSeriesRef.current = null;
-        priceLineRef.current = null;
+        positiveAreaSeriesRef.current = null;
+        negativeAreaSeriesRef.current = null;
+        entryPriceLineRef.current = null;
+        liquidationPriceLineRef.current = null;
       }
       setIsChartReady(false);
     };
-  }, [height]); // Only recreate on height change, NOT on pnl change
+  }, []); // Only initialize once
 
-  // Update area colors when PnL changes
+  // Update chart height when it changes
   useEffect(() => {
-    if (lineSeriesRef.current) {
-      const isProfit = pnl >= 0;
-      const chartLineColor = isProfit ? '#CCFF00' : '#FF006E';
-      const topColor = isProfit ? 'rgba(204, 255, 0, 0.4)' : 'rgba(255, 0, 110, 0.4)';
-      const bottomColor = 'rgba(0, 0, 0, 0)';
-      
-      lineSeriesRef.current.applyOptions({
-        topColor: topColor,
-        bottomColor: bottomColor,
-        lineColor: chartLineColor,
-        crosshairMarkerBackgroundColor: chartLineColor,
-      });
+    if (chartRef.current && isChartReady) {
+      chartRef.current.applyOptions({ height });
     }
-  }, [pnl]);
+  }, [height, isChartReady]);
 
-  // Update entry price line
+  // Update line color when it changes
+  useEffect(() => {
+    if (lineSeriesRef.current && isChartReady) {
+      lineSeriesRef.current.applyOptions({ color: lineColor });
+    }
+  }, [lineColor, isChartReady]);
+
+  // Entry price line
   useEffect(() => {
     if (!isChartReady || !lineSeriesRef.current) return;
 
-    // Remove existing price line
-    if (priceLineRef.current) {
+    if (entryPriceLineRef.current) {
       try {
-        lineSeriesRef.current.removePriceLine(priceLineRef.current);
-      } catch (err) {
-        // Ignore errors during cleanup
-      }
-      priceLineRef.current = null;
+        lineSeriesRef.current.removePriceLine(entryPriceLineRef.current);
+      } catch (err) {}
+      entryPriceLineRef.current = null;
     }
 
-    // Add new entry price line if provided
     if (entryPrice !== null && entryPrice > 0) {
       try {
-        priceLineRef.current = lineSeriesRef.current.createPriceLine({
+        entryPriceLineRef.current = lineSeriesRef.current.createPriceLine({
           price: entryPrice,
-          color: '#666666',
+          color: CHART_COLORS.entry,
           lineWidth: 1,
-          lineStyle: 2, // Dashed
+          lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
-          title: 'Entry',
+          title: '',
         });
       } catch (err) {
-        console.error('[PriceChart] Error creating price line:', err);
+        console.error('[PriceChart] Error creating entry price line:', err);
       }
     }
   }, [entryPrice, isChartReady]);
 
-  // Always show chart container - no loading state needed
+  // Liquidation price line
+  useEffect(() => {
+    if (!isChartReady || !lineSeriesRef.current) return;
+
+    if (liquidationPriceLineRef.current) {
+      try {
+        lineSeriesRef.current.removePriceLine(liquidationPriceLineRef.current);
+      } catch (err) {}
+      liquidationPriceLineRef.current = null;
+    }
+
+    if (liquidationPrice !== null && liquidationPrice > 0) {
+      try {
+        liquidationPriceLineRef.current = lineSeriesRef.current.createPriceLine({
+          price: liquidationPrice,
+          color: CHART_COLORS.liquidation,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: '',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating liquidation price line:', err);
+      }
+    }
+  }, [liquidationPrice, isChartReady]);
+
+  const candleCount = dataBufferRef.current.length;
+  const hasHistory = candleCount > VISIBLE_CANDLES;
+  const priceChange = entryPrice && pythPrice 
+    ? ((pythPrice - entryPrice) / entryPrice) * 100 
+    : null;
+  const isPriceUp = priceChange !== null && priceChange > 0;
+
   return (
     <div 
       className="w-full relative price-chart-container" 
       style={{ 
         width: '100%', 
         margin: 0, 
-        padding: 0,
-        minWidth: 0, // Prevent flexbox overflow issues
-        maxWidth: '100%', // Ensure it doesn't exceed parent
+        padding: '0 4px', // Reduced padding for better mobile fit
+        minWidth: 0,
+        maxWidth: '100%',
+        boxSizing: 'border-box',
       }}
     >
-      {/* Connection status indicator - smaller and bottom right */}
-      <div className="absolute bottom-2 right-2 z-10">
+      {/* Minimal time range overlay */}
+      {timeRange && candleCount > 0 && (
         <div 
-          className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
-          title={isConnected ? 'Connected' : 'Disconnected'}
-        />
-      </div>
+          className="absolute top-2 left-2 z-10 px-2 py-1 rounded text-[10px] font-sans"
+          style={{
+            background: 'rgba(19, 23, 34, 0.8)',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            color: CHART_COLORS.text,
+            fontSize: '10px',
+          }}
+        >
+          {timeRange}
+        </div>
+      )}
       
-      {/* Chart container - optimized for mobile width */}
+      {/* Minimal price change indicator */}
+      {priceChange !== null && (
+        <div 
+          className="absolute bottom-2 right-2 z-10 px-2 py-1 rounded text-[10px] font-sans"
+          style={{
+            background: 'rgba(19, 23, 34, 0.8)',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            color: isPriceUp ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
+            fontSize: '10px',
+          }}
+        >
+          {isPriceUp ? '+' : ''}{priceChange.toFixed(2)}%
+        </div>
+      )}
+      
+      {/* Chart container */}
       <div 
         ref={containerRef}
-        className="w-full"
+        className="w-full touch-pan-x chart-touch-container"
         style={{ 
           height,
           width: '100%',
           margin: 0,
           padding: 0,
-          minWidth: 0, // Prevent flexbox overflow
-          maxWidth: '100%', // Ensure responsive
-          boxSizing: 'border-box', // Include padding/border in width
-        } as React.CSSProperties}
+          minWidth: 0,
+          maxWidth: '100%',
+          boxSizing: 'border-box',
+        }}
       />
     </div>
   );
 }
 
-// Memoize to prevent unnecessary re-renders
 export const PriceChart = memo(PriceChartComponent);
-
 export default PriceChart;
