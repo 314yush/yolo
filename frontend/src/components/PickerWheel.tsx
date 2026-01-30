@@ -147,7 +147,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     spinWheels();
   };
 
-  // Render a ring segment
+  // Render a ring segment with responsive sizing
   const renderRingSegment = (
     index: number,
     total: number,
@@ -155,7 +155,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     outerRadius: number,
     color: string,
     label: string,
-    fontSize: number,
+    baseFontSize: number,
     isImage: boolean = false
   ) => {
     const segmentAngle = 360 / total;
@@ -176,7 +176,14 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     const textRadius = (innerRadius + outerRadius) / 2;
     const textX = 200 + textRadius * Math.cos(((textAngle - 90) * Math.PI) / 180);
     const textY = 200 + textRadius * Math.sin(((textAngle - 90) * Math.PI) / 180);
-    const imageSize = fontSize * 1.2; // Smaller size for cleaner look
+    
+    // Scale font size relative to base - will scale with SVG container
+    // Use em units so it scales with the SVG's font-size style
+    const fontSizeEm = (baseFontSize / 16).toFixed(2); // Convert to em relative to 16px base
+    const fontSize = `${fontSizeEm}em`;
+    const imageSize = baseFontSize * 1.2;
+    // Scale stroke width proportionally - thinner on small screens  
+    const strokeWidth = baseFontSize <= 16 ? '2' : '3';
 
     return (
       <g key={index}>
@@ -184,7 +191,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           d={`M ${x1Outer} ${y1Outer} A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${x2Outer} ${y2Outer} L ${x2Inner} ${y2Inner} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${x1Inner} ${y1Inner} Z`}
           fill={color}
           stroke="#000"
-          strokeWidth="3"
+          strokeWidth={strokeWidth}
         />
         {isImage ? (
           <image
@@ -194,6 +201,10 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             width={imageSize}
             height={imageSize}
             transform={`rotate(${textAngle}, ${textX}, ${textY})`}
+            style={{
+              maxWidth: `clamp(${imageSize * 0.5}px, ${imageSize * 0.7}vw, ${imageSize}px)`,
+              maxHeight: `clamp(${imageSize * 0.5}px, ${imageSize * 0.7}vw, ${imageSize}px)`,
+            }}
           />
         ) : (
           <text
@@ -205,6 +216,9 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             fontSize={fontSize}
             fontWeight="bold"
             transform={`rotate(${textAngle}, ${textX}, ${textY})`}
+            style={{
+              fontSize: fontSize,
+            }}
           >
             {label}
           </text>
@@ -214,56 +228,93 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
   };
 
   return (
-    <div className="flex flex-col items-center w-full px-4">
-      {/* Selection chips */}
-      <div 
-        className="flex flex-wrap gap-2 sm:gap-3 mb-6 sm:mb-8 justify-center min-h-[60px] items-start"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        aria-label="Selected trade parameters"
-      >
-        {showAssetChip && selection?.asset && (
-          <div
-            className="selection-chip px-4 sm:px-6 py-2 sm:py-3 text-black font-bold text-lg sm:text-xl animate-bounce-in flex items-center gap-2"
-            style={{ backgroundColor: selection.asset.color }}
-            role="status"
-            aria-label={`Selected asset: ${selection.asset.name}`}
-          >
-            <img 
-              src={selection.asset.icon} 
-              alt={`${selection.asset.name} icon`} 
-              className="w-5 h-5 sm:w-6 sm:h-6"
-              aria-hidden="true"
-            />
-            <span>{selection.asset.name}</span>
-          </div>
-        )}
-        {showLeverageChip && selection?.leverage && (
-          <div
-            className="selection-chip px-4 sm:px-6 py-2 sm:py-3 text-black font-bold text-lg sm:text-xl animate-bounce-in"
-            style={{ backgroundColor: selection.leverage.color }}
-            role="status"
-            aria-label={`Selected leverage: ${selection.leverage.name}`}
-          >
-            {selection.leverage.name}
-          </div>
-        )}
-        {showDirectionChip && selection?.direction && (
-          <div
-            className="selection-chip px-4 sm:px-6 py-2 sm:py-3 text-black font-bold text-lg sm:text-xl animate-bounce-in"
-            style={{ backgroundColor: selection.direction.color }}
-            role="status"
-            aria-label={`Selected direction: ${selection.direction.name}`}
-          >
-            {selection.direction.name}
-          </div>
-        )}
-      </div>
+    <div 
+      className="relative w-full h-full"
+      style={{
+        height: '100%',
+        maxHeight: '100%',
+        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {/* Selection chips - Positioned above wheel, absolutely */}
+      {(showAssetChip || showLeverageChip || showDirectionChip) && (
+        <div 
+          className="absolute flex flex-wrap gap-2 justify-center items-start z-20"
+          style={{
+            top: 'clamp(1rem, 5vh, 2rem)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 'calc(100% - clamp(2rem, 8vw, 4rem))',
+            maxWidth: 'calc(100vw - clamp(2rem, 8vw, 4rem) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))',
+          }}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-label="Selected trade parameters"
+        >
+          {showAssetChip && selection?.asset && (
+            <div
+              className="selection-chip text-black font-bold animate-bounce-in flex items-center gap-2"
+              style={{ 
+                backgroundColor: selection.asset.color,
+                padding: 'clamp(0.375rem, 1.5vh, 0.75rem) clamp(0.75rem, 2vw, 1.5rem)',
+                fontSize: 'clamp(0.875rem, 2.5vw, 1.25rem)',
+              }}
+              role="status"
+              aria-label={`Selected asset: ${selection.asset.name}`}
+            >
+              <img 
+                src={selection.asset.icon} 
+                alt={`${selection.asset.name} icon`} 
+                style={{ width: 'clamp(1rem, 3vw, 1.5rem)', height: 'clamp(1rem, 3vw, 1.5rem)' }}
+                aria-hidden="true"
+              />
+              <span>{selection.asset.name}</span>
+            </div>
+          )}
+          {showLeverageChip && selection?.leverage && (
+            <div
+              className="selection-chip text-black font-bold animate-bounce-in"
+              style={{ 
+                backgroundColor: selection.leverage.color,
+                padding: 'clamp(0.375rem, 1.5vh, 0.75rem) clamp(0.75rem, 2vw, 1.5rem)',
+                fontSize: 'clamp(0.875rem, 2.5vw, 1.25rem)',
+              }}
+              role="status"
+              aria-label={`Selected leverage: ${selection.leverage.name}`}
+            >
+              {selection.leverage.name}
+            </div>
+          )}
+          {showDirectionChip && selection?.direction && (
+            <div
+              className="selection-chip text-black font-bold animate-bounce-in"
+              style={{ 
+                backgroundColor: selection.direction.color,
+                padding: 'clamp(0.375rem, 1.5vh, 0.75rem) clamp(0.75rem, 2vw, 1.5rem)',
+                fontSize: 'clamp(0.875rem, 2.5vw, 1.25rem)',
+              }}
+              role="status"
+              aria-label={`Selected direction: ${selection.direction.name}`}
+            >
+              {selection.direction.name}
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Wheel container */}
+      {/* Wheel container - Centered on screen */}
       <div
-        className="relative touch-none cursor-pointer w-full max-w-[400px] aspect-square"
+        className="relative touch-none cursor-pointer"
+        style={{
+          width: 'clamp(180px, min(75vw, 75dvh), 400px)',
+          height: 'clamp(180px, min(75vw, 75dvh), 400px)',
+          maxWidth: 'clamp(180px, min(75vw, 75dvh), 400px)',
+          maxHeight: 'clamp(180px, min(75vw, 75dvh), 400px)',
+        }}
         onClick={handleWheelClick}
         onKeyDown={(e) => {
           if ((e.key === 'Enter' || e.key === ' ') && stage === 'idle') {
@@ -284,6 +335,9 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           aria-hidden="true"
           role="img"
           aria-label="Trading wheel with asset, leverage, and direction segments"
+          style={{
+            fontSize: 'clamp(10px, min(2.5vw, 2.5dvh), 16px)',
+          }}
         >
           {/* OUTER RING - Assets */}
           <g
@@ -321,14 +375,30 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             )}
           </g>
 
-          {/* Center dot */}
-          <circle cx="200" cy="200" r="25" fill="#000" stroke="#fff" strokeWidth="4" />
+          {/* Center dot - scales with wheel */}
+          <circle 
+            cx="200" 
+            cy="200" 
+            r="25" 
+            fill="#000" 
+            stroke="#fff" 
+            strokeWidth="4"
+          />
         </svg>
 
-        {/* Pointer at top */}
-        <div className="absolute -top-1 left-1/2 -translate-x-1/2 z-10 w-12 h-12 sm:w-14 sm:h-14">
+        {/* Pointer at top - Scales with wheel */}
+        <div 
+          className="absolute z-10"
+          style={{
+            top: '0',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: 'clamp(2rem, 8vw, 3.5rem)',
+            height: 'clamp(2rem, 8vw, 3.5rem)',
+          }}
+        >
           <svg className="w-full h-full" viewBox="0 0 50 50" preserveAspectRatio="xMidYMid meet">
-            <polygon points="25,40 8,8 42,8" fill="#CCFF00" stroke="#000" strokeWidth="4" />
+            <polygon points="25,10 8,42 42,42" fill="#CCFF00" stroke="#000" strokeWidth="4" />
           </svg>
         </div>
 
@@ -336,10 +406,18 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
         <div className="absolute inset-0 rounded-full border-8 border-black pointer-events-none shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]" />
       </div>
 
-      {/* Status text */}
+      {/* Status text - Positioned below wheel, absolutely */}
       {stage === 'spinning' && (
         <div 
-          className="mt-6 sm:mt-8 text-white/60 text-sm sm:text-base text-center font-medium px-4 min-h-[24px]"
+          className="absolute text-white/60 text-center font-medium px-4 z-20"
+          style={{
+            bottom: 'clamp(1rem, 5vh, 2rem)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 'calc(100% - clamp(2rem, 8vw, 4rem))',
+            fontSize: 'clamp(0.75rem, 2vw, 1rem)',
+            minHeight: 'clamp(1.5rem, 4vh, 2rem)',
+          }}
           role="status"
           aria-live="polite"
           aria-atomic="true"

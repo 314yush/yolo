@@ -3,6 +3,7 @@ import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings
 import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constants';
 import { loadSettings } from '@/lib/settings';
 import { loadStats, saveStats } from '@/lib/stats';
+import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
 import type { Toast } from '@/components/Toast';
 import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
 
@@ -58,6 +59,8 @@ interface TradeState {
   // Delegate setup status
   delegateStatus: DelegateStatus;
   setDelegateStatus: (status: DelegateStatus) => void;
+  // Load delegate status for current user
+  loadDelegateStatusForUser: (userAddress: string | null) => void;
 
   // Collateral amount (now part of settings)
   collateral: number;
@@ -130,11 +133,15 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   txHash: null,
   isExecuting: false,
   error: null,
-  delegateStatus: {
-    isSetup: false,
-    delegateAddress: null,
-    usdcApproved: false,
-  },
+  delegateStatus: (() => {
+    // Try to load from localStorage if we have a user address
+    // This will be updated when userAddress is set
+    return {
+      isSetup: false,
+      delegateAddress: null,
+      usdcApproved: false,
+    };
+  })(),
   collateral: DEFAULT_COLLATERAL,
   userAddress: null,
   openTrades: [],
@@ -203,7 +210,43 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
   setError: (error) => set({ error }),
-  setDelegateStatus: (delegateStatus) => set({ delegateStatus }),
+  setDelegateStatus: (delegateStatus) => {
+    const state = get();
+    // Persist to localStorage when status changes
+    if (state.userAddress) {
+      saveDelegateStatus(state.userAddress, delegateStatus);
+    }
+    set({ delegateStatus });
+  },
+  loadDelegateStatusForUser: (userAddress) => {
+    if (!userAddress) {
+      // Reset to default if no user
+      set({
+        delegateStatus: {
+          isSetup: false,
+          delegateAddress: null,
+          usdcApproved: false,
+        },
+      });
+      return;
+    }
+
+    // Load from localStorage
+    const cached = loadDelegateStatus(userAddress);
+    if (cached) {
+      console.log('📦 Loaded cached delegate status:', cached);
+      set({ delegateStatus: cached });
+    } else {
+      // No cached status, start with defaults
+      set({
+        delegateStatus: {
+          isSetup: false,
+          delegateAddress: null,
+          usdcApproved: false,
+        },
+      });
+    }
+  },
   setCollateral: (collateral) => set({ collateral }),
   setUserAddress: (userAddress) => set({ userAddress }),
   setOpenTrades: (openTrades) => set({ openTrades }),

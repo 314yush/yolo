@@ -37,6 +37,7 @@ export default function HomePage() {
     userAddress,
     setUserAddress,
     delegateStatus,
+    loadDelegateStatusForUser,
     collateral,
     currentTrade,
     setCurrentTrade,
@@ -56,14 +57,20 @@ export default function HomePage() {
   const { delegateAddress } = useDelegateWallet();
   
   // Ensure userAddress is set when user is authenticated
+  // Also load cached delegate status for this user
   useEffect(() => {
     if (authenticated && user?.wallet?.address) {
       const address = user.wallet.address as `0x${string}`;
       if (address !== userAddress) {
         setUserAddress(address);
+        // Load cached delegate status for this user
+        loadDelegateStatusForUser(address);
       }
+    } else if (!authenticated) {
+      // Clear delegate status when logged out
+      loadDelegateStatusForUser(null);
     }
-  }, [authenticated, user, userAddress, setUserAddress]);
+  }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser]);
   const { getTrades, getPnL } = useAvantisAPI();  // Only read operations from backend
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playWin, playBoom } = useSound();
@@ -279,7 +286,7 @@ export default function HomePage() {
     startConfirmation,
   ]);
 
-  // Handle spin complete - check trade status and show PnL
+  // Handle spin complete - show PnL immediately (optimistic UI)
   const handleSpinComplete = useCallback(async () => {
     if (!userAddress) {
       setError('User address not available');
@@ -287,205 +294,59 @@ export default function HomePage() {
       return;
     }
     
-    // Wait for transaction hash to be set (with timeout to prevent infinite wait)
     const spinStartTime = spinStartTimeRef.current || Date.now();
-    const WAIT_FOR_TX_TIMEOUT = 5000; // Wait up to 5 seconds for tx hash
-    const waitStartTime = Date.now();
-    let waitedForTx = false;
     
-    // Wait for transaction hash if not already set
-    while ((Date.now() - waitStartTime) < WAIT_FOR_TX_TIMEOUT) {
-      const storeState = useTradeStore.getState();
-      if (storeState.txHash) {
-        waitedForTx = true;
-        break;
+    // OPTIMISTIC UI: Show PnLScreen immediately if we have txHash
+    // This prevents the stuck spinning screen issue
+    const storeState = useTradeStore.getState();
+    if (storeState.txHash) {
+      // We have a transaction hash, show PnL screen immediately
+      // Initialize with current selection as fallback
+      if (storeState.selection && !storeState.currentTrade) {
+        // Create a temporary trade object from selection for display
+        const tempTrade: Trade = {
+          tradeIndex: 0,
+          pairIndex: storeState.selection.asset.pairIndex,
+          pair: `${storeState.selection.asset.name}/USD`,
+          collateral: collateral,
+          leverage: storeState.selection.leverage.value,
+          isLong: storeState.selection.direction.isLong,
+          openPrice: prices[`${storeState.selection.asset.name}/USD`]?.price || 0,
+          tp: 0,
+          sl: 0,
+          liquidationPrice: 0,
+          openedAt: Date.now(),
+        };
+        setCurrentTrade(tempTrade);
+        setPnLData({
+          trade: tempTrade,
+          currentPrice: tempTrade.openPrice,
+          pnl: 0,
+          pnlPercentage: 0,
+        });
       }
-      await new Promise(resolve => setTimeout(resolve, 100)); // Check every 100ms
+      setStage('pnl');
+      // Continue polling in background via useOpenTrades hook
+      return;
     }
     
-    const wasConfirmedViaPusher = tradeConfirmedRef.current;
-    const startTime = Date.now();
-    const MAX_POLLING_TIME = 15000; // Maximum 15 seconds total polling time
-
-    try {
-      // Faster polling if already confirmed via Pusher
-      const pollingInterval = wasConfirmedViaPusher ? 100 : 500;
-      const maxAttempts = wasConfirmedViaPusher ? 50 : 20;
-      let attempts = 0;
-      
-      const pollForTrade = async (): Promise<boolean> => {
-        // Check if we've exceeded maximum polling time
-        if (Date.now() - startTime > MAX_POLLING_TIME) {
-          console.warn('Polling timeout exceeded');
-          return false;
-        }
-
-        attempts++;
-        
-        try {
-          const trades = await getTrades(userAddress);
-          
-          if (trades.length > 0) {
-            // Sort by openedAt timestamp to find the ACTUAL newest trade
-            // Avantis API does not guarantee chronological ordering!
-            // FIX: API returns openedAt in SECONDS, but spinStartTime is in MILLISECONDS
-            // Convert openedAt to milliseconds for comparison (if < 1e12, it's likely seconds)
-            const sortedTrades = [...trades].sort((a, b) => {
-              const aMs = a.openedAt < 1e12 ? a.openedAt * 1000 : a.openedAt;
-              const bMs = b.openedAt < 1e12 ? b.openedAt * 1000 : b.openedAt;
-              return bMs - aMs;
-            });
-            
-            // CRITICAL FIX: Only consider trades opened AFTER the spin started
-            // This prevents matching old trades when handleSpinComplete runs before transaction completes
-            // Convert openedAt to milliseconds for comparison
-            const newTrades = sortedTrades.filter(trade => {
-              const openedAtMs = trade.openedAt < 1e12 ? trade.openedAt * 1000 : trade.openedAt;
-              return openedAtMs >= spinStartTime;
-            });
-            
-            if (newTrades.length === 0) {
-              // No new trades yet, continue polling
-              return false;
-            }
-            
-            const latestTrade = newTrades[0];
-            
-            // Only set currentTrade if we don't already have one, or if this is explicitly a new trade from spin
-            // This prevents overwriting the user's selected position when multiple positions exist
-            const { currentTrade: existingTrade } = useTradeStore.getState();
-            if (!existingTrade || latestTrade.openedAt > (existingTrade.openedAt || 0)) {
-              setCurrentTrade(latestTrade);
-              
-              // Initialize PnL data
-              setPnLData({
-                trade: latestTrade,
-                currentPrice: latestTrade.openPrice,
-                pnl: 0,
-                pnlPercentage: 0,
-              });
-            }
-            
-            const tradeFoundTime = Date.now();
-            timingRef.current.tradeFound = tradeFoundTime;
-            const elapsedFromSpinStart = timingRef.current.spinStart ? tradeFoundTime - timingRef.current.spinStart : 0;
-            const elapsedFromTxSent = timingRef.current.txSent ? tradeFoundTime - timingRef.current.txSent : null;
-            const elapsedFromTxConfirmed = timingRef.current.txConfirmed ? tradeFoundTime - timingRef.current.txConfirmed : null;
-            console.log(`🎯 [Trade Timing] Trade found in API (${elapsedFromSpinStart}ms from spin start${elapsedFromTxConfirmed ? `, ${elapsedFromTxConfirmed}ms from tx confirmed` : ''}, attempt ${attempts})`);
-            setStage('pnl');
-            playWin();
-            incrementTotalTrades();
-            
-            // Remove pending hash - trade is confirmed
-            const { txHash: currentTxHash } = useTradeStore.getState();
-            if (currentTxHash) {
-              removePendingTradeHash(currentTxHash);
-            }
-            
-            return true;
-          }
-        } catch (err) {
-          console.error('Error fetching trades:', err);
-          // Continue to try PnL endpoint
-        }
-        
-        try {
-          // Also try PnL endpoint
-          const positions = await getPnL(userAddress);
-          if (positions.length > 0) {
-            // FIX: Sort by openedAt timestamp to find the ACTUAL newest position
-            // FIX: API returns openedAt in SECONDS, but spinStartTime is in MILLISECONDS
-            // Convert openedAt to milliseconds for comparison (if < 1e12, it's likely seconds)
-            const sortedPositions = [...positions].sort((a, b) => {
-              const aMs = a.trade.openedAt < 1e12 ? a.trade.openedAt * 1000 : a.trade.openedAt;
-              const bMs = b.trade.openedAt < 1e12 ? b.trade.openedAt * 1000 : b.trade.openedAt;
-              return bMs - aMs;
-            });
-            
-            // CRITICAL FIX: Only consider positions opened AFTER the spin started
-            // This prevents matching old positions when handleSpinComplete runs before transaction completes
-            // Convert openedAt to milliseconds for comparison
-            const newPositions = sortedPositions.filter(pos => {
-              const openedAtMs = pos.trade.openedAt < 1e12 ? pos.trade.openedAt * 1000 : pos.trade.openedAt;
-              return openedAtMs >= spinStartTime;
-            });
-            
-            if (newPositions.length === 0) {
-              // No new positions yet, continue polling
-              return false;
-            }
-            
-            const latestPosition = newPositions[0];
-            
-            // Only set currentTrade if we don't already have one, or if this is explicitly a new trade from spin
-            // This prevents overwriting the user's selected position when multiple positions exist
-            const { currentTrade: existingTrade } = useTradeStore.getState();
-            if (!existingTrade || latestPosition.trade.openedAt > (existingTrade.openedAt || 0)) {
-              setCurrentTrade(latestPosition.trade);
-              setPnLData(latestPosition);
-            }
-            
-            const tradeFoundTime = Date.now();
-            timingRef.current.tradeFound = tradeFoundTime;
-            const elapsedFromSpinStart = timingRef.current.spinStart ? tradeFoundTime - timingRef.current.spinStart : 0;
-            const elapsedFromTxSent = timingRef.current.txSent ? tradeFoundTime - timingRef.current.txSent : null;
-            const elapsedFromTxConfirmed = timingRef.current.txConfirmed ? tradeFoundTime - timingRef.current.txConfirmed : null;
-            console.log(`🎯 [Trade Timing] Position found in API (${elapsedFromSpinStart}ms from spin start${elapsedFromTxConfirmed ? `, ${elapsedFromTxConfirmed}ms from tx confirmed` : ''}, attempt ${attempts})`);
-            setStage('pnl');
-            playWin();
-            incrementTotalTrades();
-            
-            // Remove pending hash - trade is confirmed
-            const { txHash: currentTxHash } = useTradeStore.getState();
-            if (currentTxHash) {
-              removePendingTradeHash(currentTxHash);
-            }
-            
-            return true;
-          }
-        } catch (err) {
-          console.error('Error fetching PnL:', err);
-          // Continue polling
-        }
-        
-        return false;
-      };
-      
-      // Try immediately
-      if (await pollForTrade()) {
-        return;
-      }
-      
-      // Poll at determined interval with timeout protection
-      while (attempts < maxAttempts) {
-        // Check timeout before each poll
-        if (Date.now() - startTime > MAX_POLLING_TIME) {
-          break;
-        }
-
-        await new Promise(resolve => setTimeout(resolve, pollingInterval));
-        
-        if (await pollForTrade()) {
-          return;
-        }
-      }
-      
-      // Still no trade after polling - check if we have a pending txHash
-      const { txHash } = useTradeStore.getState();
-      if (txHash) {
-        // We have a transaction hash, show PnL screen - it will continue polling via useOpenTrades
-        // Initialize with current selection as fallback
-        const storeState = useTradeStore.getState();
-        if (storeState.selection && !storeState.currentTrade) {
-          // Create a temporary trade object from selection for display
+    // If no txHash yet, wait briefly for it (max 2 seconds)
+    const WAIT_FOR_TX_TIMEOUT = 2000;
+    const waitStartTime = Date.now();
+    
+    while ((Date.now() - waitStartTime) < WAIT_FOR_TX_TIMEOUT) {
+      const currentState = useTradeStore.getState();
+      if (currentState.txHash) {
+        // Found txHash, show PnL screen immediately
+        if (currentState.selection && !currentState.currentTrade) {
           const tempTrade: Trade = {
             tradeIndex: 0,
-            pairIndex: storeState.selection.asset.pairIndex,
-            pair: `${storeState.selection.asset.name}/USD`,
+            pairIndex: currentState.selection.asset.pairIndex,
+            pair: `${currentState.selection.asset.name}/USD`,
             collateral: collateral,
-            leverage: storeState.selection.leverage.value,
-            isLong: storeState.selection.direction.isLong,
-            openPrice: prices[`${storeState.selection.asset.name}/USD`]?.price || 0,
+            leverage: currentState.selection.leverage.value,
+            isLong: currentState.selection.direction.isLong,
+            openPrice: prices[`${currentState.selection.asset.name}/USD`]?.price || 0,
             tp: 0,
             sl: 0,
             liquidationPrice: 0,
@@ -500,23 +361,44 @@ export default function HomePage() {
           });
         }
         setStage('pnl');
-      } else {
-        // No transaction hash - something went wrong
-        setError('Trade execution may have failed. Please check your wallet and try again.');
-        setStage('error');
+        return;
       }
-    } catch (err) {
-      console.error('Spin complete error:', err);
-      // Show PnL screen if we have a selection, otherwise show error
-      const storeState = useTradeStore.getState();
-      if (storeState.selection) {
-        setStage('pnl'); // PnL screen will continue polling
-      } else {
-        setError(err instanceof Error ? err.message : 'Failed to confirm trade');
-        setStage('error');
-      }
+      await new Promise(resolve => setTimeout(resolve, 100)); // Check every 100ms
     }
-  }, [userAddress, getTrades, getPnL, setCurrentTrade, setPnLData, setStage, setError, playWin, incrementTotalTrades, removePendingTradeHash, collateral, prices]);
+    
+    // Fallback: If still no txHash after waiting, show PnL screen anyway
+    // The useOpenTrades hook will continue polling in the background
+    const finalState = useTradeStore.getState();
+    if (finalState.selection) {
+      const tempTrade: Trade = {
+        tradeIndex: 0,
+        pairIndex: finalState.selection.asset.pairIndex,
+        pair: `${finalState.selection.asset.name}/USD`,
+        collateral: collateral,
+        leverage: finalState.selection.leverage.value,
+        isLong: finalState.selection.direction.isLong,
+        openPrice: prices[`${finalState.selection.asset.name}/USD`]?.price || 0,
+        tp: 0,
+        sl: 0,
+        liquidationPrice: 0,
+        openedAt: Date.now(),
+      };
+      setCurrentTrade(tempTrade);
+      setPnLData({
+        trade: tempTrade,
+        currentPrice: tempTrade.openPrice,
+        pnl: 0,
+        pnlPercentage: 0,
+      });
+      setStage('pnl');
+    } else {
+      setError('Trade execution may have failed. Please check your wallet and try again.');
+      setStage('error');
+    }
+    
+    // Background polling continues via useOpenTrades hook
+    // No need to poll here - PnLScreen will update when trade is confirmed
+  }, [userAddress, setCurrentTrade, setPnLData, setStage, setError, collateral, prices]);
 
   useEffect(() => {
     if (stage === 'pnl') {
@@ -627,7 +509,20 @@ export default function HomePage() {
 
   // Main app
   return (
-    <div className={`min-h-screen bg-black flex flex-col items-center justify-between px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom relative w-full ${stage === 'pnl' ? '' : 'max-w-md mx-auto'}`}>
+    <div 
+      className={`bg-black flex flex-col relative w-full safe-area-top safe-area-bottom ${stage === 'pnl' ? '' : 'max-w-md mx-auto'}`}
+      style={{
+        height: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') 
+          ? '100dvh' 
+          : 'min-h-screen',
+        maxHeight: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') 
+          ? '100dvh' 
+          : 'none',
+        overflow: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') 
+          ? 'hidden' 
+          : 'auto',
+      }}
+    >
       {/* Skip to main content link for keyboard users */}
       <a
         href="#main-content"
@@ -639,20 +534,59 @@ export default function HomePage() {
       {/* Abstract Background */}
       <AbstractBackground />
       
-      {/* Header - Hidden when PnL screen is active */}
+      {/* Header - Compact and always visible */}
       {stage !== 'pnl' && (
-        <header className="w-full flex justify-between items-center mb-6 sm:mb-8 relative z-10">
+        <header className="w-full flex justify-between items-center px-4 pt-3 pb-2 relative z-10 flex-shrink-0">
           <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
           <LoginButton />
         </header>
       )}
 
-      {/* Main content */}
+      {/* Financial Info Bar - Prominent and always visible */}
+      {stage !== 'pnl' && (
+        <div className="w-full px-4 py-2 border-b-2 border-white/10 bg-black/50 backdrop-blur-sm relative z-10 flex-shrink-0">
+          <div className="flex justify-center items-center gap-4 sm:gap-6 text-white/80 text-xs sm:text-sm font-mono">
+            <div className="flex items-center gap-2">
+              <span className="text-white/60 font-semibold">COLLATERAL:</span>
+              <span className="text-[#CCFF00] font-bold" aria-live="polite">
+                <span className="sr-only">Collateral: </span>${collateral} USDC
+              </span>
+            </div>
+            <div className="w-1 h-1 rounded-full bg-white/40" aria-hidden="true" />
+            <div className="flex items-center gap-2">
+              <span className="text-white/60 font-semibold">BALANCE:</span>
+              <span className="text-[#CCFF00] font-bold" aria-live="polite">
+                <span className="sr-only">Balance: </span>
+                {usdcBalance !== null 
+                  ? `$${usdcBalance.toFixed(2)} USDC`
+                  : '--'
+                }
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main content - No scroll for picker/pnl screens */}
       <main 
         id="main-content"
-        className="flex-1 flex items-center justify-center w-full min-h-0 relative z-10"
+        className={`flex-1 flex items-center justify-center w-full min-h-0 relative z-10 ${
+          (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl')
+            ? 'overflow-hidden'
+            : 'overflow-y-auto'
+        }`}
         role="main"
         aria-label="Trading interface"
+        style={{
+          paddingBottom: (stage === 'idle' || stage === 'spinning' || stage === 'executing') 
+            ? 'calc(200px + env(safe-area-inset-bottom, 0px))' 
+            : stage === 'pnl'
+            ? '0'
+            : 'calc(80px + env(safe-area-inset-bottom, 0px))',
+          height: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl')
+            ? '100%'
+            : 'auto',
+        }}
       >
         {/* Live region for status updates */}
         <div 
@@ -664,32 +598,114 @@ export default function HomePage() {
         />
         
         {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
-          <section aria-label="Trade selection wheel" className="w-full flex flex-col items-center">
+          <section 
+            aria-label="Trade selection wheel" 
+            className="w-full h-full flex flex-col items-center justify-center"
+            style={{
+              padding: 'clamp(0.5rem, 2vh, 1rem)',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
             {/* Warning banner if positions are open */}
             {stage === 'idle' && openTrades.length > 0 && (
-              <div className="w-full max-w-md mb-4 p-3 border-4 border-[#FFD60A] bg-[#FFD60A]/10 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-[#FFD60A] font-bold text-sm">
-                  <span>⚠️</span>
-                  <span>{openTrades.length} POSITION{openTrades.length > 1 ? 'S' : ''} OPEN</span>
-                </div>
-                <a 
-                  href="/activity" 
-                  className="text-[#FFD60A] text-xs font-bold underline hover:no-underline"
+              <div 
+                className="shrink-0 rounded-lg"
+                style={{
+                  width: 'calc(100% - clamp(1rem, 4vh, 2rem))',
+                  maxWidth: 'calc(100vw - clamp(1rem, 4vh, 2rem) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))',
+                  marginBottom: 'clamp(0.5rem, 2vh, 1rem)',
+                  padding: 'clamp(0.375rem, 1vh, 0.625rem)',
+                  paddingLeft: 'clamp(0.5rem, 1.5vw, 0.75rem)',
+                  paddingRight: 'clamp(0.5rem, 1.5vw, 0.75rem)',
+                  borderWidth: 'clamp(2px, 0.5vw, 4px)',
+                  borderColor: '#FFD60A',
+                  borderStyle: 'solid',
+                  backgroundColor: 'rgba(255, 214, 10, 0.1)',
+                  boxSizing: 'border-box',
+                  overflow: 'hidden',
+                }}
+              >
+                <div 
+                  className="flex items-center gap-2"
+                  style={{
+                    minWidth: 0,
+                    width: '100%',
+                    flexWrap: 'nowrap',
+                  }}
                 >
-                  VIEW →
-                </a>
+                  <div 
+                    className="flex items-center gap-1 text-[#FFD60A] font-bold"
+                    style={{ 
+                      fontSize: 'clamp(0.625rem, 1.6vw, 0.75rem)',
+                      minWidth: 0,
+                      flexShrink: 1,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <span 
+                      style={{ 
+                        fontSize: 'clamp(0.6875rem, 1.8vw, 0.8125rem)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      ⚠️
+                    </span>
+                    <span 
+                      className="whitespace-nowrap truncate"
+                      style={{ 
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {openTrades.length} POSITION{openTrades.length > 1 ? 'S' : ''} OPEN
+                    </span>
+                  </div>
+                  <a 
+                    href="/activity" 
+                    className="text-[#FFD60A] font-bold underline hover:no-underline touch-manipulation"
+                    style={{ 
+                      fontSize: 'clamp(0.5625rem, 1.4vw, 0.6875rem)',
+                      minHeight: '44px',
+                      minWidth: 'clamp(3rem, 12vw, 4rem)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      paddingLeft: 'clamp(0.25rem, 1vw, 0.5rem)',
+                      flexShrink: 0,
+                      whiteSpace: 'nowrap',
+                    }}
+                    aria-label={`View ${openTrades.length} open position${openTrades.length !== 1 ? 's' : ''}`}
+                  >
+                    VIEW →
+                  </a>
+                </div>
               </div>
             )}
-            <PickerWheel
-              onSpinStart={handleSpinStart}
-              onSpinComplete={handleSpinComplete}
-              triggerSpin={shouldSpin}
-            />
+            <div 
+              className="w-full h-full flex items-center justify-center shrink-0"
+              style={{ minHeight: 0 }}
+            >
+              <PickerWheel
+                onSpinStart={handleSpinStart}
+                onSpinComplete={handleSpinComplete}
+                triggerSpin={shouldSpin}
+              />
+            </div>
           </section>
         )}
 
         {stage === 'pnl' && (
-          <section aria-label="Profit and loss display">
+          <section 
+            aria-label="Profit and loss display"
+            className="w-full h-full"
+            style={{
+              height: '100%',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
             <PnLScreen
               onClose={handleCloseTrade}
               onRollAgain={handleRollAgain}
@@ -719,110 +735,192 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* Footer with roll button */}
+      {/* Bottom Action Area - Stacked Nav Bar + ROLL Button */}
       {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
-        <footer className="w-full mt-6 sm:mt-8 mb-20 relative z-10">
-          <button
-            onClick={() => {
-              if (stage === 'idle') {
-                setShouldSpin(true);
-                setTimeout(() => setShouldSpin(false), 100);
-              }
-            }}
-            disabled={stage !== 'idle'}
-            aria-label={stage === 'idle' ? 'Spin the wheel to select trade parameters' : 'Wheel is spinning, please wait'}
-            aria-busy={stage !== 'idle'}
-            className={`
-              w-full py-5 sm:py-6 text-2xl sm:text-3xl font-bold brutal-button min-h-[56px] touch-manipulation mb-3 sm:mb-4
-              focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black
-              ${stage === 'idle'
-                ? 'bg-[#CCFF00] text-black hover:opacity-90 active:opacity-80'
-                : 'bg-gray-600 text-gray-400 cursor-not-allowed'
-              }
-            `}
-          >
-            {stage === 'idle' ? 'ROLL' : 'SPINNING...'}
-          </button>
+        <footer 
+          className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/98 to-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-40 safe-area-bottom"
+          style={{ 
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          }}
+        >
+          <div className="px-4 pt-4 pb-3 max-w-md mx-auto space-y-3">
+            {/* ROLL Button - Top of stack */}
+            <div>
+              <button
+                onClick={() => {
+                  if (stage === 'idle') {
+                    setShouldSpin(true);
+                    setTimeout(() => setShouldSpin(false), 100);
+                  }
+                }}
+                disabled={stage !== 'idle'}
+                aria-label={stage === 'idle' ? 'Spin the wheel to select trade parameters' : 'Wheel is spinning, please wait'}
+                aria-busy={stage !== 'idle'}
+                className={`
+                  w-full py-4 sm:py-5 text-2xl sm:text-3xl font-black brutal-button min-h-[64px] touch-manipulation
+                  transition-all duration-200 shadow-[0_8px_0px_0px_rgba(0,0,0,0.3)]
+                  focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black
+                  ${stage === 'idle'
+                    ? 'bg-[#CCFF00] text-black hover:shadow-[0_6px_0px_0px_rgba(0,0,0,0.3)] hover:translate-y-[2px] active:shadow-[0_2px_0px_0px_rgba(0,0,0,0.3)] active:translate-y-[6px]'
+                    : 'bg-gray-700 text-gray-400 cursor-not-allowed shadow-[0_4px_0px_0px_rgba(0,0,0,0.3)]'
+                  }
+                `}
+              >
+                {stage === 'idle' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg 
+                      className="w-6 h-6 sm:w-7 sm:h-7" 
+                      viewBox="0 0 24 24" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <path d="M9 9h.01M15 9h.01M9 15h.01M15 15h.01" />
+                    </svg>
+                    <span>ROLL</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg 
+                      className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" 
+                      viewBox="0 0 24 24" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                    <span>SPINNING...</span>
+                  </span>
+                )}
+              </button>
+            </div>
 
-          <div className="flex justify-center items-center gap-4 sm:gap-6 text-white/60 text-xs sm:text-sm mb-20" role="group" aria-label="Account information">
-            <div className="flex items-center gap-1.5">
-              <span className="font-bold text-white/80">COLLATERAL:</span>
-              <span className="text-[#CCFF00] font-mono" aria-live="polite">
-                <span className="sr-only">Collateral: </span>${collateral} USDC
-              </span>
-            </div>
-            <div className="text-white/40">•</div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-bold text-white/80">BALANCE:</span>
-              <span className="text-[#CCFF00] font-mono" aria-live="polite">
-                <span className="sr-only">Balance: </span>
-                {usdcBalance !== null 
-                  ? `$${usdcBalance.toFixed(2)} USDC`
-                  : '--'
-                }
-              </span>
-            </div>
+            {/* Navigation Bar - Below ROLL button */}
+            <nav 
+              className="flex justify-around items-center py-2"
+              aria-label="Main navigation"
+              role="navigation"
+            >
+              <Link
+                href="/activity"
+                className="relative flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+                aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
+              >
+                <svg
+                  className="w-6 h-6 text-[#CCFF00]"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 3h18v18H3zM3 9h18M9 3v18" />
+                </svg>
+                <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Activity</span>
+                {openTrades.length > 0 && (
+                  <span 
+                    className="absolute top-0 right-0 bg-[#FF006E] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center border-2 border-black animate-danger-pulse"
+                    aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
+                  >
+                    <span className="sr-only">{openTrades.length}</span>
+                    <span aria-hidden="true">{openTrades.length}</span>
+                  </span>
+                )}
+              </Link>
+              <Link
+                href="/settings"
+                className="flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+                aria-label="Settings"
+              >
+                <svg
+                  className="w-6 h-6 text-[#CCFF00]"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3m15.364 6.364l-4.243-4.243m0 0L12 12m4.121-4.121l4.243-4.243M12 12l-4.121-4.121m0 0L3.636 3.636m4.243 4.243L12 12" />
+                </svg>
+                <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Settings</span>
+              </Link>
+            </nav>
           </div>
         </footer>
       )}
 
-      {/* Bottom Navigation Bar - Mobile Only */}
-      <nav 
-        className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-4 border-black backdrop-blur-sm z-50 safe-area-bottom"
-        aria-label="Main navigation"
-        role="navigation"
-      >
-        <div className="flex justify-around items-center px-4 py-3">
-          <Link
-            href="/activity"
-            className="relative flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
-            aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
-          >
-            <svg
-              className="w-6 h-6 text-[#CCFF00]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+      {/* Bottom Navigation Bar - Only shown when not in trading stage */}
+      {stage !== 'idle' && stage !== 'spinning' && stage !== 'executing' && (
+        <nav 
+          className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-2 border-white/10 backdrop-blur-md z-30 safe-area-bottom"
+          aria-label="Main navigation"
+          role="navigation"
+        >
+          <div className="flex justify-around items-center px-4 py-2.5 max-w-md mx-auto">
+            <Link
+              href="/activity"
+              className="relative flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+              aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
             >
-              <path d="M3 3h18v18H3zM3 9h18M9 3v18" />
-            </svg>
-            <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Activity</span>
-            {openTrades.length > 0 && (
-              <span 
-                className="absolute top-0 right-0 bg-[#FF006E] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center border-2 border-black animate-danger-pulse"
-                aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
+              <svg
+                className="w-6 h-6 text-[#CCFF00]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                <span className="sr-only">{openTrades.length}</span>
-                <span aria-hidden="true">{openTrades.length}</span>
-              </span>
-            )}
-          </Link>
-          <Link
-            href="/settings"
-            className="flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
-            aria-label="Settings"
-          >
-            <svg
-              className="w-6 h-6 text-[#CCFF00]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+                <path d="M3 3h18v18H3zM3 9h18M9 3v18" />
+              </svg>
+              <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Activity</span>
+              {openTrades.length > 0 && (
+                <span 
+                  className="absolute top-0 right-0 bg-[#FF006E] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center border-2 border-black animate-danger-pulse"
+                  aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
+                >
+                  <span className="sr-only">{openTrades.length}</span>
+                  <span aria-hidden="true">{openTrades.length}</span>
+                </span>
+              )}
+            </Link>
+            <Link
+              href="/settings"
+              className="flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+              aria-label="Settings"
             >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3m15.364 6.364l-4.243-4.243m0 0L12 12m4.121-4.121l4.243-4.243M12 12l-4.121-4.121m0 0L3.636 3.636m4.243 4.243L12 12" />
-            </svg>
-            <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Settings</span>
-          </Link>
-        </div>
-      </nav>
+              <svg
+                className="w-6 h-6 text-[#CCFF00]"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3m15.364 6.364l-4.243-4.243m0 0L12 12m4.121-4.121l4.243-4.243M12 12l-4.121-4.121m0 0L3.636 3.636m4.243 4.243L12 12" />
+              </svg>
+              <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Settings</span>
+            </Link>
+          </div>
+        </nav>
+      )}
 
 
       {/* Toast notifications */}

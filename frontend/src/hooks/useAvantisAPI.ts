@@ -13,8 +13,8 @@ import {
 } from '@/lib/avantisEncoder';
 import type { UnsignedTx } from '@/types';
 
-// Minimum USDC allowance considered "sufficient" (1 million USDC in 6 decimals)
-const MIN_SUFFICIENT_ALLOWANCE = 1_000_000n * 10n ** 6n;
+// Minimum USDC allowance considered "sufficient" (10,000 USDC in 6 decimals)
+const MIN_SUFFICIENT_ALLOWANCE = 10_000n * 10n ** 6n;
 
 export function useAvantisAPI() {
   // Build delegation setup transaction - Direct encoding (no backend!)
@@ -62,10 +62,13 @@ export function useAvantisAPI() {
   );
 
   // Build USDC approval transaction - Direct encoding (no backend!)
+  // Approves 10,000 USDC limit
   const buildUsdcApprovalTx = useCallback(
     async (_trader: string): Promise<UnsignedTx | null> => {
       try {
-        const tx = buildUsdcApprovalTxDirect();
+        // 10,000 USDC in 6 decimals
+        const approvalLimit = 10_000n * 10n ** 6n;
+        const tx = buildUsdcApprovalTxDirect(approvalLimit);
         return {
           to: tx.to,
           data: tx.data,

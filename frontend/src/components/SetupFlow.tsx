@@ -5,6 +5,7 @@ import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
+import { useBatchedSetup } from '@/hooks/useBatchedSetup';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { CONTRACTS, CHAIN_CONFIG } from '@/lib/constants';
 
@@ -12,7 +13,7 @@ interface SetupFlowProps {
   onSetupComplete: () => void;
 }
 
-type SetupStep = 'checking' | 'delegate' | 'approve' | 'complete';
+type SetupStep = 'checking' | 'setup' | 'complete';
 
 // NOTE: With Tachyon gas sponsorship, delegate wallet no longer needs ETH!
 // ETH funding step has been removed from the setup flow.
@@ -25,11 +26,12 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   const { wallets, ready: walletsReady } = useWallets();
   const { setDelegateStatus } = useTradeStore();
   const { ensureDelegateWallet, delegateAddress } = useDelegateWallet();
-  const { buildDelegateSetupTx, checkDelegateStatus, buildUsdcApprovalTx, checkUsdcAllowance } = useAvantisAPI();
+  const { checkDelegateStatus, checkUsdcAllowance } = useAvantisAPI();
+  const { executeBatchedSetup, isProcessing: isBatching } = useBatchedSetup();
 
   const [step, setStep] = useState<SetupStep>('checking');
-  const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   // NOTE: delegateBalance state removed - with Tachyon gas sponsorship, delegate doesn't need ETH
   const [hasCheckedStatus, setHasCheckedStatus] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
@@ -155,13 +157,37 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       
       // If we've already checked and are in an error state, don't re-check automatically
       // Only re-check if the user address changes (new login)
-      if (hasCheckedStatus && error && step === 'delegate') {
+      if (hasCheckedStatus && error && step === 'setup') {
+        return;
+      }
+
+      // Check if we have cached status that says setup is complete
+      // If so, verify it's still valid on-chain, but don't block the UI
+      const { delegateStatus: cachedStatus } = useTradeStore.getState();
+      if (cachedStatus.isSetup && cachedStatus.usdcApproved && cachedStatus.delegateAddress) {
+        console.log('📦 Found cached setup status, verifying on-chain...');
+        // Don't block UI - show complete state immediately, verify in background
+        setStep('complete');
+        setIsCheckingStatus(false);
+        onSetupComplete();
+        
+        // Verify on-chain in background (non-blocking)
+        checkStatusOnChain().catch((err) => {
+          console.error('Background status check failed:', err);
+          // If verification fails, we'll re-check on next mount or user action
+        });
         return;
       }
 
       setIsCheckingStatus(true);
       setStep('checking');
       setError(null);
+      
+      await checkStatusOnChain();
+    }
+
+    async function checkStatusOnChain() {
+      if (!userAddress) return; // Type guard
       
       try {
         // Step 1: Ensure we have a delegate wallet locally (instant - localStorage check)
@@ -185,13 +211,13 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         if (status.error) {
           console.error('Failed to check delegate status:', status.error);
           setError(`API Error: ${status.error}. Make sure the backend is running.`);
-          // Don't block - show delegate setup but with error message
-          setStep('delegate');
+          // Don't block - show setup but with error message
+          setStep('setup');
           setIsCheckingStatus(false);
           return;
         }
       
-      if (status.isSetup) {
+        if (status.isSetup) {
         // Delegation is already set up on-chain
         // Check if it matches our local delegate
         const onChainDelegate = status.delegateAddress?.toLowerCase();
@@ -204,7 +230,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           console.log('Delegate mismatch! On-chain:', onChainDelegate, 'Local:', localDelegate);
           console.log('User needs to re-register delegation with local delegate');
           setHasCheckedStatus(true); // Mark as checked
-          setStep('delegate');
+          setStep('setup');
           setIsCheckingStatus(false);
           return;
         }
@@ -224,33 +250,36 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           // Need to approve USDC for the Trading contract
           console.log('USDC allowance insufficient, need to approve');
           setHasCheckedStatus(true); // Mark as checked
-          setStep('approve');
+          setStep('setup');
           setIsCheckingStatus(false);
           return;
         }
         
         // With Tachyon gas sponsorship, delegate doesn't need ETH
         // Go directly to complete after USDC is approved
+        // Status is automatically persisted via setDelegateStatus
         
-        setDelegateStatus({
+        const newStatus = {
           isSetup: true,
           delegateAddress: wallet.address,
           usdcApproved: true,
-        });
+        };
+        setDelegateStatus(newStatus);
+        console.log('✅ Setup verified and cached:', newStatus);
         setHasCheckedStatus(true); // Mark as checked so we don't re-check
         setStep('complete');
         setIsCheckingStatus(false);
         onSetupComplete();
       } else {
-        // Need to set up delegation
+        // Need to set up delegation and approval
         setHasCheckedStatus(true); // Mark as checked
-        setStep('delegate');
+        setStep('setup');
       }
       } catch (err) {
         console.error('Error checking status:', err);
         setHasCheckedStatus(true);
         setError('Failed to check setup status. Please refresh the page.');
-        setStep('delegate');
+        setStep('setup');
       } finally {
         setIsCheckingStatus(false);
       }
@@ -261,10 +290,10 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userAddress, privyReady, walletsReady]);
 
-  // Set up delegation
-  const handleSetupDelegate = useCallback(async () => {
-    if (!userAddress || !delegateAddress) {
-      setError('Missing wallet addresses');
+  // Batched setup: delegate + USDC approval
+  const handleBatchedSetup = useCallback(async () => {
+    if (!userAddress) {
+      setError('User address not available');
       return;
     }
     
@@ -272,207 +301,62 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     setError(null);
 
     try {
-      // Get the user's wallet (embedded or external)
-      const userWallet = getUserWallet();
+      const result = await executeBatchedSetup(userAddress);
       
-      if (!userWallet) {
-        console.error('No wallet found. Available wallets:', wallets);
-        throw new Error(`No wallet found. Please ensure you're logged in with a wallet. (Found ${wallets?.length || 0} wallets)`);
+      if (!result.success) {
+        setError(result.error || 'Failed to complete setup');
+        return;
       }
 
-      console.log('Using wallet:', userWallet.address, 'type:', userWallet.walletClientType, 'connector:', userWallet.connectorType);
-
-      // Get provider with error handling
-      let provider;
-      try {
-        provider = await getEthereumProviderSafe(userWallet);
-      } catch (providerError: any) {
-        // If it's a connector error, provide helpful message
-        if (providerError?.message?.toLowerCase().includes('connector') || 
-            providerError?.message?.toLowerCase().includes('unknown')) {
-          throw new Error(
-            `Unable to connect to your wallet. ` +
-            `Wallet type: ${userWallet.walletClientType || 'unknown'}, ` +
-            `Connector: ${userWallet.connectorType || 'unknown'}. ` +
-            `Please try disconnecting and reconnecting your wallet, or use a different wallet.`
-          );
+      // Wait a moment for transactions to be mined, then check status
+      // In a production app, you might want to wait for confirmations
+      setTimeout(async () => {
+        try {
+          // Re-check status to verify setup completed
+          const status = await checkDelegateStatus(userAddress);
+          const allowanceCheck = await checkUsdcAllowance(userAddress);
+          
+          if (status.isSetup && allowanceCheck.hasSufficient) {
+            setDelegateStatus({
+              isSetup: true,
+              delegateAddress: delegateAddress || null,
+              usdcApproved: true,
+            });
+            setStep('complete');
+            onSetupComplete();
+          } else {
+            // Setup may still be processing, show success but let user know to wait
+            setDelegateStatus({
+              isSetup: status.isSetup,
+              delegateAddress: status.delegateAddress || delegateAddress || null,
+              usdcApproved: allowanceCheck.hasSufficient,
+            });
+            setStep('complete');
+            onSetupComplete();
+          }
+        } catch (err) {
+          console.error('Error verifying setup:', err);
+          // Still mark as complete since transactions were sent
+          setDelegateStatus({
+            isSetup: true,
+            delegateAddress: delegateAddress || null,
+            usdcApproved: true,
+          });
+          setStep('complete');
+          onSetupComplete();
         }
-        throw providerError;
-      }
-      
-      // Switch to Base network first
-      console.log('Switching to Base network...');
-      try {
-        await switchToBase(provider);
-        console.log('Switched to Base network');
-      } catch (switchError: any) {
-        // If switch fails, provide helpful error
-        if (switchError?.code === 4001) {
-          throw new Error('Network switch was rejected. Please approve the network switch to continue.');
-        }
-        throw new Error(`Failed to switch to Base network: ${switchError?.message || switchError}`);
-      }
-
-      // Build the delegation tx
-      const unsignedTx = await buildDelegateSetupTx(userAddress, delegateAddress);
-      if (!unsignedTx) {
-        throw new Error('Failed to build delegation transaction');
-      }
-
-      console.log('Unsigned tx:', unsignedTx);
-
-      // Estimate gas to avoid eth_fillTransaction (not supported on Base)
-      let estimatedGas: string;
-      try {
-        estimatedGas = await provider.request({
-          method: 'eth_estimateGas',
-          params: [{
-            from: userAddress,
-            to: unsignedTx.to,
-            data: unsignedTx.data,
-            value: unsignedTx.value || '0x0',
-          }],
-        });
-        console.log('Estimated gas for delegation:', estimatedGas);
-      } catch (error) {
-        console.warn('Gas estimation failed, using fallback:', error);
-        estimatedGas = '0x493e0'; // 300k gas fallback
-      }
-
-      // Get gas price
-      const gasPrice = await provider.request({
-        method: 'eth_gasPrice',
-        params: [],
-      });
-      console.log('Gas price:', gasPrice);
-
-      // Send transaction on Base with explicit gas fields
-      const txHash = await provider.request({
-        method: 'eth_sendTransaction',
-        params: [{
-          from: userAddress,
-          to: unsignedTx.to,
-          data: unsignedTx.data,
-          value: unsignedTx.value || '0x0',
-          gas: estimatedGas,
-          gasPrice: gasPrice,
-        }],
-      });
-
-      console.log('Delegation tx sent:', txHash);
-      
-      // Move to approval step
-      setStep('approve');
+      }, 2000);
     } catch (err: any) {
-      console.error('Delegation setup error:', err);
-      // Check if user rejected
+      console.error('Batched setup error:', err);
       if (err.code === 4001) {
         setError('Transaction rejected by user');
-      } else if (err?.message) {
-        // Use the error message directly (already formatted by getEthereumProviderSafe)
-        setError(err.message);
       } else {
-        setError(err instanceof Error ? err.message : 'Failed to set up delegation');
+        setError(err?.message || 'Failed to complete setup');
       }
     } finally {
       setIsProcessing(false);
     }
-  }, [userAddress, delegateAddress, wallets, getUserWallet, getEthereumProviderSafe, buildDelegateSetupTx, switchToBase]);
-
-  // Approve USDC spending
-  const handleApproveUSDC = useCallback(async () => {
-    if (!userAddress) return;
-    
-    setIsProcessing(true);
-    setError(null);
-
-    try {
-      const userWallet = getUserWallet();
-      if (!userWallet) {
-        throw new Error('No wallet found');
-      }
-
-      const provider = await getEthereumProviderSafe(userWallet);
-      
-      // Switch to Base network first
-      try {
-        await switchToBase(provider);
-      } catch (switchError: any) {
-        if (switchError?.code === 4001) {
-          throw new Error('Network switch was rejected. Please approve the network switch to continue.');
-        }
-        throw new Error(`Failed to switch to Base network: ${switchError?.message || switchError}`);
-      }
-      
-      // Build the USDC approval tx via backend
-      // This approves the correct Trading Storage contract
-      const unsignedTx = await buildUsdcApprovalTx(userAddress);
-      if (!unsignedTx) {
-        throw new Error('Failed to build USDC approval transaction');
-      }
-
-      console.log('USDC approval tx:', unsignedTx);
-
-      // Estimate gas to avoid eth_fillTransaction (not supported on Base)
-      let estimatedGas: string;
-      try {
-        estimatedGas = await provider.request({
-          method: 'eth_estimateGas',
-          params: [{
-            from: userAddress,
-            to: unsignedTx.to,
-            data: unsignedTx.data,
-            value: unsignedTx.value || '0x0',
-          }],
-        });
-        console.log('Estimated gas for approval:', estimatedGas);
-      } catch (error) {
-        console.warn('Gas estimation failed, using fallback:', error);
-        estimatedGas = '0x493e0'; // 300k gas fallback
-      }
-
-      // Get gas price
-      const gasPrice = await provider.request({
-        method: 'eth_gasPrice',
-        params: [],
-      });
-
-      const txHash = await provider.request({
-        method: 'eth_sendTransaction',
-        params: [{
-          from: userAddress,
-          to: unsignedTx.to,
-          data: unsignedTx.data,
-          value: unsignedTx.value || '0x0',
-          gas: estimatedGas,
-          gasPrice: gasPrice,
-        }],
-      });
-
-      console.log('Approval tx sent:', txHash);
-      
-      // With Tachyon gas sponsorship, delegate doesn't need ETH
-      // Go directly to complete
-      setDelegateStatus({
-        isSetup: true,
-        delegateAddress: delegateAddress,
-        usdcApproved: true,
-      });
-      setStep('complete');
-      onSetupComplete();
-    } catch (err: any) {
-      console.error('USDC approval error:', err);
-      if (err.code === 4001) {
-        setError('Transaction rejected by user');
-      } else if (err?.message) {
-        setError(err.message);
-      } else {
-        setError(err instanceof Error ? err.message : 'Failed to approve USDC');
-      }
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [userAddress, getUserWallet, getEthereumProviderSafe, delegateAddress, setDelegateStatus, onSetupComplete, switchToBase, buildUsdcApprovalTx]);
+  }, [userAddress, executeBatchedSetup, checkDelegateStatus, checkUsdcAllowance, delegateAddress, setDelegateStatus, onSetupComplete]);
 
   // NOTE: handleFundDelegate removed - with Tachyon gas sponsorship, delegate doesn't need ETH
 
@@ -504,13 +388,13 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
     <div className="flex flex-col items-center justify-center p-4 sm:p-6 text-center max-w-md mx-auto w-full">
       <div className="text-2xl sm:text-3xl font-bold text-[#CCFF00] mb-6 sm:mb-8">SETUP REQUIRED</div>
       
-      {step === 'delegate' && (
+      {step === 'setup' && (
         <>
           <div className="text-white text-base sm:text-lg mb-4 leading-relaxed">
-            To trade instantly, you need to authorize a delegate wallet to execute trades on your behalf.
+            Enable trading by authorizing a delegate wallet and approving USDC spending.
           </div>
           <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
-            This is a one-time setup on Base network. Your funds remain in your wallet.
+            This is a one-time setup on Base network. Your funds remain in your wallet. USDC approval is set to 10,000 USDC.
           </div>
           
           {/* Debug info */}
@@ -521,30 +405,11 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           </div>
           
           <button
-            onClick={handleSetupDelegate}
-            disabled={isProcessing}
+            onClick={handleBatchedSetup}
+            disabled={isProcessing || isBatching}
             className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button disabled:opacity-50 bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
           >
-            {isProcessing ? 'SWITCHING TO BASE...' : 'SETUP DELEGATION'}
-          </button>
-        </>
-      )}
-
-      {step === 'approve' && (
-        <>
-          <div className="text-white text-base sm:text-lg mb-4 leading-relaxed">
-            Step 2: Approve USDC spending to open trades.
-          </div>
-          <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
-            This allows the trading contract to use your USDC for positions.
-          </div>
-          
-          <button
-            onClick={handleApproveUSDC}
-            disabled={isProcessing}
-            className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button disabled:opacity-50 bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
-          >
-            {isProcessing ? 'APPROVING...' : 'APPROVE USDC'}
+            {isProcessing || isBatching ? 'ENABLING TRADING...' : 'ENABLE TRADING'}
           </button>
         </>
       )}
