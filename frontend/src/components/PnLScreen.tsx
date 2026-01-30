@@ -46,10 +46,20 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   useEffect(() => {
     const currentPnl = pnlData?.pnl ?? 0;
     if (prevPnl !== null && prevPnl !== currentPnl) {
-      setIsFlashing(true);
-      setTimeout(() => setIsFlashing(false), 300);
+      // Use setTimeout to avoid synchronous setState in effect
+      setTimeout(() => {
+        setIsFlashing(true);
+        setTimeout(() => {
+          setIsFlashing(false);
+          setPrevPnl(currentPnl);
+        }, 300);
+      }, 0);
+    } else if (prevPnl === null) {
+      // Initialize prevPnl on mount - use setTimeout to avoid synchronous setState
+      setTimeout(() => {
+        setPrevPnl(currentPnl);
+      }, 0);
     }
-    setPrevPnl(currentPnl);
   }, [pnlData?.pnl, prevPnl]);
 
   const handleFlip = async () => {
@@ -69,14 +79,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const color = isProfit ? '#CCFF00' : '#FF006E';
   const glowClass = isProfit ? 'pnl-glow-green' : 'pnl-glow-red';
 
-  // Calculate TP progress (0 to 200%)
-  const tpProgress = Math.min(Math.max(pnlPercentage, -100), 200);
-  const tpProgressNormalized = (tpProgress + 100) / 3; // -100% to 200% -> 0 to 100
-
   // Calculate liquidation distance (simplified - ~90% loss = liquidation for high leverage)
   const liqDistance = currentTrade ? Math.abs(100 + pnlPercentage) : 100;
   const isNearLiq = liqDistance < 20;
-  const isNearTP = pnlPercentage > 80;
 
   // Get the correct entry price from pnlData (matches the displayed PnL)
   // This ensures we show the entry price for the trade that matches the PnL being displayed

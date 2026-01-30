@@ -134,7 +134,10 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
   useEffect(() => {
     if (triggerSpin && stage === 'idle' && !hasTriggeredRef.current) {
       hasTriggeredRef.current = true;
-      spinWheels();
+      // Use setTimeout to avoid synchronous setState in effect
+      setTimeout(() => {
+        spinWheels();
+      }, 0);
     }
     // Reset the ref when triggerSpin becomes false
     if (!triggerSpin) {

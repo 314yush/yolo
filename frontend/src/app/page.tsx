@@ -25,7 +25,7 @@ import {
   buildOpenTradeTx as buildOpenTradeTxDirect,
 } from '@/lib/avantisEncoder';
 import Link from 'next/link';
-import type { Trade, PnLData } from '@/types';
+import type { Trade } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DEFAULT_COLLATERAL } from '@/lib/constants';
 
@@ -44,10 +44,8 @@ export default function HomePage() {
     setPnLData,
     setTxHash,
     setError,
-    incrementTotalTrades,
     openTrades,
     addPendingTradeHash,
-    removePendingTradeHash,
     reset,
     toasts,
     removeToast,
@@ -71,9 +69,9 @@ export default function HomePage() {
       loadDelegateStatusForUser(null);
     }
   }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser]);
-  const { getTrades, getPnL } = useAvantisAPI();  // Only read operations from backend
+  const { getPnL } = useAvantisAPI();  // Only read operations from backend
   const { signAndBroadcast, signAndWait } = useTxSigner();
-  const { playWin, playBoom } = useSound();
+  const { playBoom } = useSound();
   const { balance: usdcBalance } = useUsdcBalance();
   
   // Start fetching open trades + PnL immediately when user logs in
@@ -133,7 +131,7 @@ export default function HomePage() {
   }, [stage, currentTrade, userAddress, getPnL, setCurrentTrade, setPnLData]);
   
   // Pre-build transactions when selection changes
-  const { prebuiltTx, isPrebuilding, rebuildNow } = usePrebuiltTx();
+  usePrebuiltTx();
   
   // Track if trade was confirmed via Pusher before wheel finished
   const tradeConfirmedRef = useRef(false);
@@ -294,8 +292,6 @@ export default function HomePage() {
       return;
     }
     
-    const spinStartTime = spinStartTimeRef.current || Date.now();
-    
     // OPTIMISTIC UI: Show PnLScreen immediately if we have txHash
     // This prevents the stuck spinning screen issue
     const storeState = useTradeStore.getState();
@@ -405,9 +401,6 @@ export default function HomePage() {
       const pnlRenderTime = Date.now();
       const timing = timingRef.current;
       const elapsedFromSpinStart = timing.spinStart ? pnlRenderTime - timing.spinStart : null;
-      const elapsedFromTxSent = timing.txSent ? pnlRenderTime - timing.txSent : null;
-      const elapsedFromTxConfirmed = timing.txConfirmed ? pnlRenderTime - timing.txConfirmed : null;
-      const elapsedFromTradeFound = timing.tradeFound ? pnlRenderTime - timing.tradeFound : null;
       
       // Calculate phase durations
       const txBuildTime = timing.txSent && timing.spinStart ? timing.txSent - timing.spinStart : null;

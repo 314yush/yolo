@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo, useCallback } from 'react';
-import { createChart, IChartApi, ISeriesApi, LineData, AreaData, UTCTimestamp, LineStyle, CrosshairMode, LineSeries, AreaSeries } from 'lightweight-charts';
+import { createChart, IChartApi, ISeriesApi, IPriceLine, LineData, AreaData, UTCTimestamp, LineStyle, CrosshairMode, LineSeries, AreaSeries } from 'lightweight-charts';
 import { useTradeStore } from '@/store/tradeStore';
 import { getChartData, type CandlestickDataPoint, type Resolution } from '@/hooks/useChartDataCollector';
 
@@ -69,8 +69,8 @@ function PriceChartComponent({
   const lineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const positiveAreaSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const negativeAreaSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
-  const entryPriceLineRef = useRef<any>(null);
-  const liquidationPriceLineRef = useRef<any>(null);
+  const entryPriceLineRef = useRef<IPriceLine | null>(null);
+  const liquidationPriceLineRef = useRef<IPriceLine | null>(null);
   
   const [isChartReady, setIsChartReady] = useState(false);
   const [hasData, setHasData] = useState(false);

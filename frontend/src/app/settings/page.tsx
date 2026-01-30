@@ -11,12 +11,13 @@ const COLLATERAL_PRESETS = [5, 10, 25, 50, 100, 250, 500, 1000];
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { settings, setSettings, setCollateral, tradeStats, setTradeStats } = useTradeStore();
-  const [localSettings, setLocalSettings] = useState<Settings>(settings);
+  const { setSettings, setCollateral, setTradeStats } = useTradeStore();
+  // Use lazy initialization to avoid setState in effect
+  const [localSettings, setLocalSettings] = useState<Settings>(() => loadSettings());
 
   useEffect(() => {
+    // Sync loaded settings to store (localSettings already initialized)
     const loadedSettings = loadSettings();
-    setLocalSettings(loadedSettings);
     setSettings(loadedSettings);
     setCollateral(loadedSettings.collateral);
     
