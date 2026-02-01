@@ -21,6 +21,22 @@ body {
   font-family: 'JetBrains Mono', 'Courier New', monospace;
 }
 
+/* Enforce mobile constraints on desktop - center content */
+@media (min-width: 768px) {
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  
+  /* Next.js root container */
+  #__next {
+    width: 100%;
+    max-width: 28rem; /* 448px - mobile-first constraint */
+    margin: 0 auto;
+  }
+}
+
 /* Typography consistency - standardize font family */
 .font-mono {
   font-family: 'JetBrains Mono', 'Courier New', monospace !important;

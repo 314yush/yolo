@@ -648,7 +648,7 @@ export default function HomePage() {
   // Main app
   return (
     <div 
-      className={`bg-black flex flex-col relative w-full safe-area-top safe-area-bottom ${stage === 'pnl' ? '' : 'max-w-md mx-auto'}`}
+      className="bg-black flex flex-col relative w-full safe-area-top safe-area-bottom max-w-md mx-auto"
       style={{
         height: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') 
           ? '100dvh' 
@@ -659,6 +659,9 @@ export default function HomePage() {
         overflow: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') 
           ? 'hidden' 
           : 'auto',
+        // Enforce mobile constraints on desktop
+        maxWidth: '28rem', // 448px - mobile-first max width
+        width: '100%',
       }}
     >
       {/* Skip to main content link for keyboard users */}

@@ -306,47 +306,8 @@ function PriceChartComponent({
         if (lineData.length > 0) {
           series.setData(lineData);
           
-          // Calculate price range that includes all price lines and data
-          const dataPrices = lineData.map(d => d.value);
-          const priceLines = [
-            entryPrice,
-            calculatedLiquidationPrice,
-            takeProfitPrice,
-          ].filter((p): p is number => p !== null && p > 0);
-          
-          const allPrices = [...dataPrices, ...priceLines];
-          
           requestAnimationFrame(() => {
             chart.timeScale().fitContent();
-            
-            // Ensure price lines are included in visible range
-            // Add data points at price line levels to force scale to include them
-            if (allPrices.length > 0 && priceLines.length > 0 && lineData.length > 0) {
-              const extendedData = [...lineData];
-              const firstTime = lineData[0].time;
-              const lastTime = lineData[lineData.length - 1].time;
-              
-              // Add data points at price line levels (at start and end times)
-              // These ensure the price scale includes the price lines
-              priceLines.forEach(price => {
-                extendedData.push({
-                  time: firstTime,
-                  value: price,
-                });
-                extendedData.push({
-                  time: lastTime,
-                  value: price,
-                });
-              });
-              
-              // Set data with price line levels included, then restore
-              // This forces the scale to include price lines
-              series.setData(extendedData);
-              requestAnimationFrame(() => {
-                // Restore original data - scale will maintain the range
-                series.setData(lineData);
-              });
-            }
           });
         }
       }
@@ -501,12 +462,6 @@ function PriceChartComponent({
         requestAnimationFrame(() => {
           if (chartRef.current) {
             chartRef.current.timeScale().fitContent();
-            // Force price scale update to include price lines
-            if (allPrices.length > 0 && chartRef.current) {
-              chartRef.current.priceScale('right').applyOptions({
-                autoScale: true,
-              });
-            }
           }
         });
       }
@@ -583,47 +538,6 @@ function PriceChartComponent({
       }
     }
 
-    // After creating price lines, ensure they're visible by adjusting price scale
-    // Get current data range
-    const currentData = seriesRef.current.data();
-    if (currentData && currentData.length > 0) {
-      const dataPrices = currentData.map((d: any) => d.value);
-      const priceLines = [
-        entryPrice,
-        calculatedLiquidationPrice,
-        takeProfitPrice,
-      ].filter((p): p is number => p !== null && p > 0);
-      
-      const allPrices = [...dataPrices, ...priceLines];
-      if (allPrices.length > 0) {
-        const minPrice = Math.min(...allPrices);
-        const maxPrice = Math.max(...allPrices);
-        const priceRange = maxPrice - minPrice;
-        const padding = Math.max(priceRange * 0.1, maxPrice * 0.01);
-        
-        // Force price scale to include all prices
-        requestAnimationFrame(() => {
-          if (chartRef.current && seriesRef.current) {
-            // Add invisible data points at price line levels to force scale inclusion
-            const timeScale = chartRef.current.timeScale();
-            const visibleRange = timeScale.getVisibleRange();
-            if (visibleRange) {
-              // Add temporary invisible markers to ensure price lines are in range
-              priceLines.forEach(price => {
-                try {
-                  // The price lines should already be visible, but we ensure scale includes them
-                  chartRef.current?.priceScale('right').applyOptions({
-                    autoScale: true,
-                  });
-                } catch (err) {
-                  // Ignore errors
-                }
-              });
-            }
-          }
-        });
-      }
-    }
   }, [entryPrice, calculatedLiquidationPrice, takeProfitPrice]);
 
   return (
