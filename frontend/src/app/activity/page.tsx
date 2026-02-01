@@ -8,15 +8,16 @@ import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { useTxSigner } from '@/hooks/useTxSigner';
 import { TradeCard } from '@/components/TradeCard';
 import { ToastContainer } from '@/components/Toast';
+import { AvantisFooter } from '@/components/AvantisFooter';
 import { saveClosedTrade, loadClosedTrades } from '@/lib/closedTrades';
-import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect } from '@/lib/avantisEncoder';
+import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculate200PercentGainMultiplier } from '@/lib/avantisEncoder';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 export default function ActivityPage() {
   const router = useRouter();
-  const { userAddress, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast, tradeStats } = useTradeStore();
+  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast, tradeStats, setTradeStats } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
-  const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
+  const { getTrades, getPnL, getClosedTrades } = useAvantisAPI();  // Only need read operations now
   const { signAndWait, signAndBroadcast } = useTxSigner();
   const { prices } = useTradeStore();  // Real-time Pyth prices
   
@@ -26,18 +27,90 @@ export default function ActivityPage() {
   const [flippingTradeIndex, setFlippingTradeIndex] = useState<number | null>(null);
   const [closingTradeIndex, setClosingTradeIndex] = useState<number | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [hasInitialized, setHasInitialized] = useState(false);
+  const [displayedClosedTradesCount, setDisplayedClosedTradesCount] = useState(12); // Default to 12 trades
 
   // Prevent hydration mismatch by only rendering stats after mount
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Load closed trades from localStorage
+  // Calculate aggregate stats
+  const aggregateStats = React.useMemo(() => {
+    const totalPnL = tradesWithPnL.reduce((sum, item) => sum + (item.pnlData?.pnl ?? 0), 0);
+    const totalCollateral = tradesWithPnL.reduce((sum, item) => sum + item.trade.collateral, 0);
+    return { totalPnL, totalCollateral };
+  }, [tradesWithPnL]);
+
+  // Default to OPEN tab when trades exist (only on initial load)
+  useEffect(() => {
+    if (!hasInitialized && tradesWithPnL.length > 0) {
+      setShowClosedTrades(false);
+      setHasInitialized(true);
+    } else if (!hasInitialized && tradesWithPnL.length === 0 && closedTrades.length > 0) {
+      // If no open trades but have closed trades, show closed
+      setShowClosedTrades(true);
+      setHasInitialized(true);
+    } else if (!hasInitialized && tradesWithPnL.length === 0 && closedTrades.length === 0) {
+      setHasInitialized(true);
+    }
+  }, [tradesWithPnL.length, closedTrades.length, hasInitialized]);
+
+  // Load and merge closed trades from localStorage and Avantis API
   useEffect(() => {
     if (!userAddress) return;
-    const closed = loadClosedTrades(userAddress);
-    setClosedTrades(closed);
-  }, [userAddress]);
+    
+    const loadAllClosedTrades = async () => {
+      // Load from localStorage
+      const localClosed = loadClosedTrades(userAddress);
+      
+      // Fetch from Avantis API (first page only for now)
+      let apiClosed: ClosedTrade[] = [];
+      try {
+        apiClosed = await getClosedTrades(userAddress, 1);
+      } catch (error) {
+        console.error('[ActivityPage] Failed to fetch closed trades from API:', error);
+      }
+      
+      // Merge: combine both sources, deduplicate by pairIndex + tradeIndex
+      const mergedMap = new Map<string, ClosedTrade>();
+      
+      // Add API trades first (they're more authoritative)
+      apiClosed.forEach(trade => {
+        const key = `${trade.pairIndex}-${trade.tradeIndex}`;
+        mergedMap.set(key, trade);
+      });
+      
+      // Add local trades (only if not already present from API)
+      localClosed.forEach(trade => {
+        const key = `${trade.pairIndex}-${trade.tradeIndex}`;
+        if (!mergedMap.has(key)) {
+          mergedMap.set(key, trade);
+        }
+      });
+      
+      // Sort by closedAt (most recent first), fallback to openedAt if closedAt is missing
+      // Timestamp units: openedAt is in seconds (Unix timestamp), closedAt is in milliseconds
+      // Convert both to milliseconds for consistent comparison
+      const merged = Array.from(mergedMap.values()).sort((a, b) => {
+        // Normalize both timestamps to milliseconds for comparison
+        const aTime = (a.closedAt && a.closedAt > 0) 
+          ? a.closedAt  // closedAt is already in milliseconds
+          : (a.openedAt && a.openedAt > 0 ? a.openedAt * 1000 : 0); // openedAt is in seconds, convert to ms
+        const bTime = (b.closedAt && b.closedAt > 0)
+          ? b.closedAt  // closedAt is already in milliseconds
+          : (b.openedAt && b.openedAt > 0 ? b.openedAt * 1000 : 0); // openedAt is in seconds, convert to ms
+        return bTime - aTime; // Descending order (latest first)
+      });
+      
+      setClosedTrades(merged);
+    };
+    
+    loadAllClosedTrades();
+  }, [userAddress, getClosedTrades]);
+
+  // Note: Volume is incremented when trades are opened, not recalculated here
+  // Volume = cumulative sum of position sizes (collateral * leverage) for all opened trades
 
   // Load trades with PnL - adaptive polling (faster when pending trades exist)
   useEffect(() => {
@@ -108,6 +181,12 @@ export default function ActivityPage() {
   }, [userAddress, pendingTradeHashes.size]); // Restart polling when pending count changes
 
   const handleFlip = async (trade: Trade) => {
+    // CRITICAL: Prevent trading if setup is not complete
+    if (!delegateStatus.isSetup) {
+      alert('Please complete setup before trading. Enable trading in the setup flow first.');
+      return;
+    }
+
     if (!userAddress || !delegateAddress) return;
 
     // Find the trade in the current list to ensure we have the correct data
@@ -186,6 +265,10 @@ export default function ActivityPage() {
         leverage: verifiedTrade.leverage,
         isLong: !verifiedTrade.isLong, // Flip direction
         openPrice: currentPrice, // Use current price
+        takeProfitMultiplier: calculate200PercentGainMultiplier(
+          !verifiedTrade.isLong,
+          verifiedTrade.leverage
+        ),
       });
 
       // Open opposite position
@@ -226,6 +309,12 @@ export default function ActivityPage() {
   };
 
   const handleClose = async (trade: Trade) => {
+    // CRITICAL: Prevent closing trades if setup is not complete (defensive check)
+    if (!delegateStatus.isSetup) {
+      alert('Please complete setup before closing trades. Enable trading in the setup flow first.');
+      return;
+    }
+
     if (!userAddress || !delegateAddress) return;
 
     const tradeIndex = tradesWithPnL.findIndex((t) => 
@@ -325,16 +414,45 @@ export default function ActivityPage() {
           <div className="w-16 sm:w-20" />
         </div>
         
+        {/* Aggregate Stats - Total PnL across all open positions */}
+        {mounted && tradesWithPnL.length > 0 && !showClosedTrades && (
+          <div 
+            className="mb-4 p-4 border-4"
+            style={{
+              borderColor: aggregateStats.totalPnL >= 0 ? '#CCFF00' : '#FF006E',
+              backgroundColor: aggregateStats.totalPnL >= 0 ? 'rgba(204, 255, 0, 0.1)' : 'rgba(255, 0, 110, 0.1)',
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Total P&L</div>
+                <div 
+                  className="font-black text-2xl font-mono"
+                  style={{ color: aggregateStats.totalPnL >= 0 ? '#CCFF00' : '#FF006E' }}
+                >
+                  {aggregateStats.totalPnL >= 0 ? '+' : '-'}${Math.abs(aggregateStats.totalPnL).toFixed(2)}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Collateral</div>
+                <div className="text-white font-bold text-lg font-mono">
+                  ${aggregateStats.totalCollateral.toFixed(2)}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Toggle and Stats - Improved layout */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
-          <div className="brutal-toggle flex-shrink-0">
+          <div className="brutal-toggle shrink-0">
             <button
               onClick={() => setShowClosedTrades(false)}
               className={`brutal-toggle-option ${!showClosedTrades ? 'active' : ''}`}
               aria-pressed={!showClosedTrades}
               aria-label="Show open trades"
             >
-              OPEN
+              OPEN {tradesWithPnL.length > 0 && `(${tradesWithPnL.length})`}
             </button>
             <button
               onClick={() => setShowClosedTrades(true)}
@@ -342,28 +460,22 @@ export default function ActivityPage() {
               aria-pressed={showClosedTrades}
               aria-label="Show closed trades"
             >
-              CLOSED
+              CLOSED {closedTrades.length > 0 && `(${closedTrades.length})`}
             </button>
           </div>
           
-          {/* Enhanced Stats */}
-          <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 text-xs sm:text-sm min-w-0">
+          {/* Compact Stats */}
+          <div className="flex items-center justify-end gap-4 text-xs sm:text-sm min-w-0">
             <div className="text-center shrink-0">
-              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Total</div>
+              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Trades</div>
               <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
                 {mounted ? tradeStats.totalTrades : 0}
               </div>
             </div>
             <div className="text-center shrink-0">
-              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Open</div>
+              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Volume</div>
               <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
-                {mounted ? tradesWithPnL.length : 0}
-              </div>
-            </div>
-            <div className="text-center shrink-0">
-              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Closed</div>
-              <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
-                {mounted ? closedTrades.length : 0}
+                {mounted ? `$${tradeStats.totalVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '$0'}
               </div>
             </div>
           </div>
@@ -405,7 +517,7 @@ export default function ActivityPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-6">
-              {closedTrades.map((closedTrade) => {
+              {closedTrades.slice(0, displayedClosedTradesCount).map((closedTrade) => {
                 // Convert ClosedTrade to Trade + PnLData for TradeCard
                 const trade: Trade = {
                   tradeIndex: closedTrade.tradeIndex,
@@ -439,6 +551,15 @@ export default function ActivityPage() {
                   />
                 );
               })}
+              {closedTrades.length > displayedClosedTradesCount && (
+                <button
+                  onClick={() => setDisplayedClosedTradesCount(prev => Math.min(prev + 10, closedTrades.length))}
+                  className="px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
+                  aria-label="Load more closed trades"
+                >
+                  LOAD MORE ({closedTrades.length - displayedClosedTradesCount} remaining)
+                </button>
+              )}
             </div>
           )
         ) : (
@@ -489,6 +610,9 @@ export default function ActivityPage() {
           )
         )}
       </main>
+
+      {/* Footer */}
+      <AvantisFooter />
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />

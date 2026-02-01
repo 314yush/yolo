@@ -1,11 +1,11 @@
 'use client';
 
 import React from 'react';
-import type { Trade, PnLData } from '@/types';
+import type { Trade, PnLData, ClosedTrade } from '@/types';
 import { ASSETS, DIRECTIONS } from '@/lib/constants';
 
 interface TradeCardProps {
-  trade: Trade;
+  trade: Trade | ClosedTrade;
   pnlData?: PnLData;
   onFlip: (trade: Trade) => void;
   onClose: (trade: Trade) => void;
@@ -14,45 +14,92 @@ interface TradeCardProps {
   isClosed?: boolean; // New prop to indicate closed trade
 }
 
+/**
+ * Normalize timestamp to milliseconds
+ * openedAt is in seconds (Unix timestamp), closedAt is in milliseconds
+ */
+function normalizeToMs(timestamp: number | undefined | null, isOpenedAt: boolean): number | null {
+  if (!timestamp || timestamp === 0) {
+    return null;
+  }
+  // If it's openedAt, it's in seconds, so multiply by 1000
+  // If it's closedAt, it's already in milliseconds
+  return isOpenedAt ? timestamp * 1000 : timestamp;
+}
+
+// Format timestamp to UTC string
+// Expects timestamp in milliseconds
+function formatTimestamp(timestampMs: number | null): string {
+  if (!timestampMs) return 'N/A';
+  const date = new Date(timestampMs);
+  return date.toUTCString().replace('GMT', 'UTC');
+}
+
+// Format timestamp to relative time (e.g., "2 hours ago")
+// Expects timestamp in milliseconds
+function formatRelativeTime(timestampMs: number | null | undefined): string {
+  if (!timestampMs || timestampMs === 0) {
+    return 'N/A';
+  }
+  
+  const date = new Date(timestampMs);
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  
+  // For older dates, show formatted date
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+}
+
 export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosing, isClosed = false }: TradeCardProps) {
   const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   
-  const pnl = pnlData?.pnl ?? 0;
-  const pnlPercentage = pnlData?.pnlPercentage ?? 0;
-  const currentPrice = pnlData?.currentPrice ?? trade.openPrice;
+  // Check if this is a ClosedTrade
+  const closedTrade = isClosed && 'finalPnL' in trade ? trade as ClosedTrade : null;
+  const pnl = closedTrade ? closedTrade.finalPnL : (pnlData?.pnl ?? 0);
+  const pnlPercentage = closedTrade ? closedTrade.finalPnLPercentage : (pnlData?.pnlPercentage ?? 0);
+  const currentPrice = closedTrade ? closedTrade.closePrice : (pnlData?.currentPrice ?? trade.openPrice);
   const isProfit = pnl >= 0;
   const color = isProfit ? '#CCFF00' : '#FF006E';
   
   const positionSize = trade.collateral * trade.leverage;
+  const isLiquidated = closedTrade?.isLiquidated ?? false;
 
   // Card border color based on P&L
   const cardClass = isProfit ? 'brutal-card-winning' : 'brutal-card-losing';
+  
+  // Basescan URL for Base network
+  const BASESCAN_BASE = 'https://basescan.org/tx';
 
   return (
     <div className={`brutal-card ${cardClass} p-3 sm:p-4 min-w-0`}>
-      {/* Header: Chips - Improved spacing and wrapping */}
-      <div className="flex items-center gap-1.5 flex-wrap mb-3 min-w-0">
+      {/* Header: Simplified text-based display (60/30/10 rule - no button-like fills) */}
+      <div className="flex items-center gap-2 mb-3 min-w-0 text-sm sm:text-base font-bold font-mono text-white/80">
         {asset && (
-          <div
-            className="selection-chip px-2 py-1 text-[11px] sm:text-xs font-bold text-black flex items-center gap-1 shrink-0"
-            style={{ backgroundColor: asset.color }}
-          >
-            <img src={asset.icon} alt="" className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" aria-hidden="true" />
+          <span className="flex items-center gap-1.5 shrink-0">
+            <span style={{ color: asset.color }}>●</span>
             <span className="whitespace-nowrap">{asset.name}</span>
-          </div>
+          </span>
         )}
+        <span className="text-white/30">•</span>
+        <span className="whitespace-nowrap">{trade.leverage}x</span>
+        <span className="text-white/30">•</span>
         {direction && (
-          <div
-            className="selection-chip px-2 py-1 text-[11px] sm:text-xs font-bold text-black shrink-0 whitespace-nowrap"
-            style={{ backgroundColor: direction.color }}
+          <span 
+            className="whitespace-nowrap"
+            style={{ color: direction.color }}
           >
             {direction.name}
-          </div>
+          </span>
         )}
-        <div className="selection-chip px-2 py-1 text-[11px] sm:text-xs font-bold bg-white/20 text-white shrink-0 whitespace-nowrap">
-          {trade.leverage}x
-        </div>
       </div>
 
       {/* PnL Display - Enhanced visual hierarchy */}
@@ -78,7 +125,9 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
         </div>
         <div className="text-white/30 text-base sm:text-lg shrink-0 pt-3">→</div>
         <div className="flex-1 text-right min-w-0">
-          <div className="text-white/40 text-[10px] sm:text-xs mb-1 uppercase tracking-wide">Current</div>
+          <div className="text-white/40 text-[10px] sm:text-xs mb-1 uppercase tracking-wide">
+            {isClosed ? 'Closed At' : 'Current'}
+          </div>
           <div className="font-bold text-sm sm:text-base wrap-break-word" style={{ color }}>
             ${currentPrice.toLocaleString(undefined, { 
               minimumFractionDigits: 2, 
@@ -94,6 +143,87 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
           ${trade.collateral.toLocaleString()} × {trade.leverage}x = ${positionSize.toLocaleString()}
         </div>
       )}
+
+      {/* Timestamps and Transaction Links */}
+      <div className="flex flex-col gap-2 mb-3 text-xs font-mono">
+        {/* Opened timestamp */}
+        <div className="flex items-center justify-between text-white/50">
+          <span>Opened:</span>
+          <div className="flex items-center gap-2">
+            <span className="text-white/70">{formatRelativeTime(normalizeToMs(trade.openedAt, true))}</span>
+            {closedTrade?.txHash && (
+              <a
+                href={`${BASESCAN_BASE}/${closedTrade.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#CCFF00] hover:text-[#CCFF00]/80 underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <svg
+                  className="w-3 h-3"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
+                </svg>
+              </a>
+            )}
+          </div>
+        </div>
+        
+        {/* Closed timestamp (if closed) */}
+        {closedTrade && (
+          <div className="flex items-center justify-between text-white/50">
+            <span className="flex items-center gap-1.5">
+              {isLiquidated ? (
+                <>
+                  <span className="text-[#FF006E]">⚡</span>
+                  <span>Liquidated:</span>
+                </>
+              ) : (
+                <span>Closed:</span>
+              )}
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-white/70">
+                {formatRelativeTime(normalizeToMs(closedTrade.closedAt, false))}
+              </span>
+              {closedTrade.closeTxHash && (
+                <a
+                  href={`${BASESCAN_BASE}/${closedTrade.closeTxHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#CCFF00] hover:text-[#CCFF00]/80 underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <svg
+                    className="w-3 h-3"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
+                  </svg>
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {/* Full UTC timestamp on hover/tap (for closed trades) */}
+        {closedTrade && (
+          <div className="text-white/30 text-[10px] mt-1">
+            {formatTimestamp(normalizeToMs(trade.openedAt, true))} → {formatTimestamp(normalizeToMs(closedTrade.closedAt, false))}
+          </div>
+        )}
+      </div>
 
       {/* Actions - Enhanced with icons and better states */}
       {!isClosed && (

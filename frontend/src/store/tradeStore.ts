@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats } from '@/types';
 import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constants';
 import { loadSettings } from '@/lib/settings';
-import { loadStats, saveStats } from '@/lib/stats';
+import { loadStats, saveStats, incrementVolume } from '@/lib/stats';
 import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
 import type { Toast } from '@/components/Toast';
 import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
@@ -45,6 +45,12 @@ interface TradeState {
   // PnL data for display
   pnlData: PnLData | null;
   setPnLData: (data: PnLData | null) => void;
+  
+  // Liquidation state
+  isLiquidated: boolean;
+  setIsLiquidated: (liquidated: boolean) => void;
+  lastKnownPnLPercentage: number | null; // Track last PnL % to detect liquidation
+  setLastKnownPnLPercentage: (percentage: number | null) => void;
 
   // Trade execution state
   txHash: `0x${string}` | null;
@@ -87,6 +93,7 @@ interface TradeState {
   tradeStats: TradeStats;
   setTradeStats: (stats: TradeStats) => void;
   incrementTotalTrades: () => void;
+  incrementVolume: (collateral: number, leverage: number) => void;
   updateActivePositions: (count: number) => void;
 
   // Toast notifications
@@ -130,6 +137,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   rememberedPairIndex: null,
   rememberedTradeIndex: null,
   pnlData: null,
+  isLiquidated: false,
+  lastKnownPnLPercentage: null,
   txHash: null,
   isExecuting: false,
   error: null,
@@ -180,11 +189,17 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   tradeStats: (() => {
     // Load stats from localStorage on store init
     if (typeof window !== 'undefined') {
-      return loadStats();
+      const loaded = loadStats();
+      return {
+        totalTrades: loaded.totalTrades ?? 0,
+        activePositions: loaded.activePositions ?? 0,
+        totalVolume: loaded.totalVolume ?? 0,
+      };
     }
     return {
       totalTrades: 0,
       activePositions: 0,
+      totalVolume: 0,
     };
   })(),
 
@@ -206,7 +221,15 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
   },
   setRememberedIndices: (pairIndex, tradeIndex) => set({ rememberedPairIndex: pairIndex, rememberedTradeIndex: tradeIndex }),
-  setPnLData: (pnlData) => set({ pnlData }),
+  setPnLData: (pnlData) => {
+    set({ pnlData });
+    // Update last known PnL percentage when PnL data is set
+    if (pnlData) {
+      set({ lastKnownPnLPercentage: pnlData.pnlPercentage });
+    }
+  },
+  setIsLiquidated: (isLiquidated) => set({ isLiquidated }),
+  setLastKnownPnLPercentage: (lastKnownPnLPercentage) => set({ lastKnownPnLPercentage }),
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
   setError: (error) => set({ error }),
@@ -271,6 +294,20 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       const newStats = {
         ...state.tradeStats,
         totalTrades: state.tradeStats.totalTrades + 1,
+      };
+      // Save to localStorage
+      if (typeof window !== 'undefined') {
+        saveStats(newStats);
+      }
+      return { tradeStats: newStats };
+    });
+  },
+  incrementVolume: (collateral, leverage) => {
+    set((state) => {
+      const positionSize = collateral * leverage;
+      const newStats = {
+        ...state.tradeStats,
+        totalVolume: state.tradeStats.totalVolume + positionSize,
       };
       // Save to localStorage
       if (typeof window !== 'undefined') {
@@ -358,6 +395,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     rememberedPairIndex: null,
     rememberedTradeIndex: null,
     pnlData: null,
+    isLiquidated: false,
+    lastKnownPnLPercentage: null,
     txHash: null,
     isExecuting: false,
     error: null,

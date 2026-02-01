@@ -11,9 +11,11 @@ interface TradeWithPnL {
 }
 
 export function useOpenTrades() {
-  const { userAddress, setOpenTrades, updateActivePositions } = useTradeStore();
+  const { userAddress, setOpenTrades, updateActivePositions, incrementVolume } = useTradeStore();
   const { getTrades, getPnL } = useAvantisAPI();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Track which trades we've already counted for volume (by pairIndex-tradeIndex)
+  const countedTradesRef = useRef<Set<string>>(new Set());
 
   const fetchTrades = useCallback(async () => {
     if (!userAddress) {
@@ -43,6 +45,16 @@ export function useOpenTrades() {
         };
       });
 
+      // Check for new trades and increment volume for them
+      trades.forEach((trade) => {
+        const tradeKey = `${trade.pairIndex}-${trade.tradeIndex}`;
+        if (!countedTradesRef.current.has(tradeKey)) {
+          // New trade discovered - increment volume
+          incrementVolume(trade.collateral, trade.leverage);
+          countedTradesRef.current.add(tradeKey);
+        }
+      });
+
       // Update store
       setOpenTrades(trades);
       updateActivePositions(trades.length);
@@ -56,7 +68,11 @@ export function useOpenTrades() {
 
   // Fetch on mount and poll for updates
   useEffect(() => {
-    if (!userAddress) return;
+    if (!userAddress) {
+      // Reset counted trades when user changes
+      countedTradesRef.current.clear();
+      return;
+    }
 
     let isMounted = true;
 
@@ -77,7 +93,7 @@ export function useOpenTrades() {
         intervalRef.current = null;
       }
     };
-  }, [userAddress]); // Only depend on userAddress, fetchTrades is stable
+  }, [userAddress, fetchTrades]); // Reset when user changes
 
   return { fetchTrades };
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useAvantisAPI } from './useAvantisAPI';
+import { saveClosedTrade } from '@/lib/closedTrades';
 
 interface UsePnLOptions {
   enabled?: boolean;
@@ -12,7 +13,7 @@ interface UsePnLOptions {
 export function usePnL(options: UsePnLOptions = {}) {
   const { enabled = true, interval = 2000 } = options;
   
-  const { userAddress, currentTrade, setPnLData, stage, rememberedPairIndex, rememberedTradeIndex } = useTradeStore();
+  const { userAddress, currentTrade, pnlData, setPnLData, setIsLiquidated, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex } = useTradeStore();
   const { getPnL } = useAvantisAPI();
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -21,6 +22,7 @@ export function usePnL(options: UsePnLOptions = {}) {
   const isPollingRef = useRef<boolean>(false);
   const lastErrorRef = useRef<Error | null>(null);
   const lastTradeKeyRef = useRef<string | null>(null);
+  const pnlDataRef = useRef(pnlData);
   
   // Store latest values in refs to avoid dependency issues
   const userAddressRef = useRef(userAddress);
@@ -28,6 +30,8 @@ export function usePnL(options: UsePnLOptions = {}) {
   const stageRef = useRef(stage);
   const getPnLRef = useRef(getPnL);
   const setPnLDataRef = useRef(setPnLData);
+  const setIsLiquidatedRef = useRef(setIsLiquidated);
+  const lastKnownPnLPercentageRef = useRef(lastKnownPnLPercentage);
   const rememberedPairIndexRef = useRef(rememberedPairIndex);
   const rememberedTradeIndexRef = useRef(rememberedTradeIndex);
   
@@ -41,12 +45,15 @@ export function usePnL(options: UsePnLOptions = {}) {
   useEffect(() => {
     userAddressRef.current = userAddress;
     currentTradeRef.current = currentTrade;
+    pnlDataRef.current = pnlData;
     stageRef.current = stage;
     getPnLRef.current = getPnL;
     setPnLDataRef.current = setPnLData;
+    setIsLiquidatedRef.current = setIsLiquidated;
+    lastKnownPnLPercentageRef.current = lastKnownPnLPercentage;
     rememberedPairIndexRef.current = rememberedPairIndex;
     rememberedTradeIndexRef.current = rememberedTradeIndex;
-  }, [userAddress, currentTrade, stage, getPnL, setPnLData, rememberedPairIndex, rememberedTradeIndex]);
+  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setIsLiquidated, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex]);
 
   const fetchPnL = useCallback(async (isRetry = false): Promise<void> => {
     const userAddr = userAddressRef.current;
@@ -95,13 +102,101 @@ export function usePnL(options: UsePnLOptions = {}) {
       
       if (currentPnL) {
         console.log('[usePnL] Found matching PnL:', currentPnL);
+        
+        // Check if position has been liquidated by comparing current price to liquidation price
+        const trade = currentTradeRef.current;
+        const liquidationPrice = currentPnL.trade.liquidationPrice;
+        const currentPrice = currentPnL.currentPrice;
+        
+        if (trade && liquidationPrice > 0 && currentPrice > 0) {
+          let isLiquidatedByPrice = false;
+          
+          if (trade.isLong) {
+            // For LONG: liquidated when price drops to or below liquidation price
+            isLiquidatedByPrice = currentPrice <= liquidationPrice;
+          } else {
+            // For SHORT: liquidated when price rises to or above liquidation price
+            isLiquidatedByPrice = currentPrice >= liquidationPrice;
+          }
+          
+          // Also check if PnL percentage is at or below -85%
+          const isLiquidatedByPnL = currentPnL.pnlPercentage <= -85;
+          
+          if (isLiquidatedByPrice || isLiquidatedByPnL) {
+            console.log('[usePnL] Position liquidated detected:', {
+              isLiquidatedByPrice,
+              isLiquidatedByPnL,
+              currentPrice,
+              liquidationPrice,
+              pnlPercentage: currentPnL.pnlPercentage,
+              isLong: trade.isLong,
+            });
+            
+            setIsLiquidatedRef.current(true);
+            
+            // Update PnL data with final values (at liquidation, typically -85%)
+            // Ensure we show the correct liquidation PnL
+            const finalPnLData = {
+              ...currentPnL,
+              pnlPercentage: Math.min(currentPnL.pnlPercentage, -85), // Cap at -85% for liquidation
+              pnl: (trade.collateral * currentPnL.pnlPercentage / 100), // Recalculate PnL at liquidation
+            };
+            setPnLDataRef.current(finalPnLData);
+            
+            // Save liquidated trade
+            const userAddr = userAddressRef.current;
+            if (userAddr && trade) {
+              try {
+                saveClosedTrade(userAddr, trade, finalPnLData, {
+                  isLiquidated: true,
+                });
+              } catch (error) {
+                console.error('[usePnL] Failed to save liquidated trade:', error);
+              }
+            }
+            
+            // Don't continue updating PnL once liquidated
+            return;
+          } else {
+            // Only clear liquidation state if we're certain it's not liquidated
+            // Check if PnL is significantly above -85% threshold (e.g., > -80%)
+            if (currentPnL.pnlPercentage > -80) {
+              setIsLiquidatedRef.current(false);
+            }
+            // Otherwise, keep liquidation state if we're close to threshold
+          }
+        }
+        
+        // Update PnL data (liquidation check already handled above)
         setPnLDataRef.current(currentPnL);
       } else {
         console.warn('[usePnL] No matching PnL found. Available positions:', positions.map(p => ({
           pairIndex: p.trade.pairIndex,
           tradeIndex: p.trade.tradeIndex
         })));
-        // Trade might have been closed - don't treat as error, just log
+        
+        // Check if this might be a liquidation
+        // If we previously had PnL data and it was near -85%, the position was likely liquidated
+        const lastPnL = lastKnownPnLPercentageRef.current;
+        const lastPnLData = pnlDataRef.current;
+        const userAddr = userAddressRef.current;
+        const trade = currentTradeRef.current;
+        
+        if (lastPnL !== null && lastPnL <= -84 && lastPnLData && userAddr && trade) {
+          // Position disappeared and was near liquidation threshold - mark as liquidated
+          console.log('[usePnL] Position disappeared near liquidation threshold. Last PnL:', lastPnL, '- Marking as liquidated');
+          setIsLiquidatedRef.current(true);
+          
+          // Save liquidated trade
+          try {
+            saveClosedTrade(userAddr, trade, lastPnLData, {
+              isLiquidated: true,
+            });
+          } catch (error) {
+            console.error('[usePnL] Failed to save liquidated trade:', error);
+          }
+        }
+        // Trade might have been closed manually or liquidated - don't treat as error, just log
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -175,6 +270,7 @@ export function usePnL(options: UsePnLOptions = {}) {
         lastTradeKeyRef.current = currentTradeKey;
         isPollingRef.current = true;
         retryCountRef.current = 0; // Reset retry count for new trade
+        setIsLiquidatedRef.current(false); // Reset liquidation state for new trade
         
         // Fetch immediately
         fetchPnL();

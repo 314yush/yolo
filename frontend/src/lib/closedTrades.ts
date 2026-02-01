@@ -38,7 +38,12 @@ export function loadClosedTrades(address: string): ClosedTrade[] {
 export function saveClosedTrade(
   address: string,
   trade: Trade,
-  pnlData: PnLData | null
+  pnlData: PnLData | null,
+  options?: {
+    txHash?: `0x${string}`;
+    closeTxHash?: `0x${string}`;
+    isLiquidated?: boolean;
+  }
 ): void {
   if (typeof window === 'undefined' || !address) {
     return;
@@ -51,6 +56,9 @@ export function saveClosedTrade(
       finalPnL: pnlData?.pnl ?? 0,
       finalPnLPercentage: pnlData?.pnlPercentage ?? 0,
       closePrice: pnlData?.currentPrice ?? trade.openPrice,
+      txHash: options?.txHash,
+      closeTxHash: options?.closeTxHash,
+      isLiquidated: options?.isLiquidated ?? false,
     };
 
     const existing = loadClosedTrades(address);

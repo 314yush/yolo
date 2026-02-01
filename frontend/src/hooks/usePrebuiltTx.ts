@@ -6,6 +6,7 @@ import { useDelegateWallet } from './useDelegateWallet';
 import { 
   buildOpenTradeTx as buildOpenTradeTxDirect, 
   validatePositionSize,
+  calculate200PercentGainMultiplier,
 } from '@/lib/avantisEncoder';
 
 // How long a pre-built tx is considered valid (30 seconds)
@@ -100,6 +101,10 @@ export function usePrebuiltTx() {
         leverage: selection.leverage.value,
         isLong: selection.direction.isLong,
         openPrice: currentPrice,
+        takeProfitMultiplier: calculate200PercentGainMultiplier(
+          selection.direction.isLong,
+          selection.leverage.value
+        ),
       });
 
       setPrebuiltTx(tx);

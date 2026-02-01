@@ -63,6 +63,9 @@ export interface ClosedTrade extends Trade {
   finalPnL: number;
   finalPnLPercentage: number;
   closePrice: number;
+  txHash?: `0x${string}`; // Transaction hash for opening the trade
+  closeTxHash?: `0x${string}`; // Transaction hash for closing the trade
+  isLiquidated?: boolean; // Whether the trade was liquidated vs manually closed
 }
 
 // PnL data
@@ -101,6 +104,7 @@ export interface Settings {
 export interface TradeStats {
   totalTrades: number; // Total trades ever opened
   activePositions: number; // Current open positions count
+  totalVolume: number; // Total volume traded (sum of collateral * leverage for all trades)
   // NO PnL, win-rate, streaks, best/worst trades
 }
 

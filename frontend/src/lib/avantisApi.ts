@@ -6,9 +6,10 @@
  */
 
 import { ASSETS } from './constants';
-import type { Trade, PnLData } from '@/types';
+import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 const AVANTIS_API_BASE = 'https://core.avantisfi.com';
+const AVANTIS_HISTORY_API_BASE = 'https://api.avantisfi.com/v2/history/portfolio/history';
 
 // Decimal conversions
 const USDC_DECIMALS = 1e6;
@@ -175,4 +176,115 @@ export async function fetchPnL(
       pnlPercentage,
     };
   });
+}
+
+/**
+ * Portfolio history item from Avantis API
+ */
+interface AvantisPortfolioItem {
+  _id: string;
+  event: {
+    args: {
+      t: {
+        index: number;
+        initialPosToken: number;
+        leverage: number;
+        openPrice: number;
+        pairIndex: number;
+        positionSizeUSDC: number;
+        sl: number;
+        tp: number;
+        trader: string;
+        buy: boolean;
+        timestamp: number;
+      };
+      price: number;
+      positionSizeUSDC: number;
+      usdcSentToTrader: number;
+      isPnl: boolean;
+      _feeInfo: {
+        closingFee: number;
+        liquidationFee: number;
+        keeperFee: number;
+        actualCloseFee: number;
+      };
+    };
+  };
+  _grossPnl: number;
+  timeStamp: string; // ISO 8601 string
+}
+
+interface AvantisPortfolioResponse {
+  portfolio: AvantisPortfolioItem[];
+  count: number;
+  pageCount: number;
+  success: boolean;
+}
+
+/**
+ * Fetch closed trades from Avantis portfolio history API
+ * 
+ * @param traderAddress - Trader's wallet address
+ * @param pageNumber - Page number (1-based, default: 1)
+ */
+export async function fetchClosedTrades(
+  traderAddress: string,
+  pageNumber: number = 1
+): Promise<ClosedTrade[]> {
+  const url = `${AVANTIS_HISTORY_API_BASE}/${traderAddress}/${pageNumber}`;
+  
+  try {
+    const response = await fetchWithTimeout(url, 10000); // 10 second timeout
+    if (!response.ok) {
+      // If API returns error, return empty array (user might not have history yet)
+      if (response.status === 404) {
+        return [];
+      }
+      throw new Error(`Avantis History API error: ${response.status}`);
+    }
+    
+    const data: AvantisPortfolioResponse = await response.json();
+    
+    if (!data.success || !data.portfolio) {
+      return [];
+    }
+    
+    // Convert API response to ClosedTrade format
+    return data.portfolio.map((item) => {
+      const t = item.event.args.t;
+      const asset = ASSETS.find(a => a.pairIndex === t.pairIndex);
+      const pair = asset ? asset.name + '/USD' : `PAIR_${t.pairIndex}/USD`;
+      
+      // Calculate final PnL percentage
+      const collateral = t.initialPosToken;
+      const finalPnL = item._grossPnl;
+      const finalPnLPercentage = collateral > 0 ? (finalPnL / collateral) * 100 : 0;
+      
+      // Check if liquidated (liquidationFee > 0 indicates liquidation)
+      const isLiquidated = item.event.args._feeInfo.liquidationFee > 0;
+      
+      return {
+        tradeIndex: t.index,
+        pairIndex: t.pairIndex,
+        pair,
+        collateral,
+        leverage: t.leverage,
+        isLong: t.buy,
+        openPrice: t.openPrice,
+        tp: t.tp,
+        sl: t.sl,
+        liquidationPrice: 0, // Not available in history API
+        openedAt: t.timestamp,
+        closedAt: new Date(item.timeStamp).getTime(),
+        finalPnL,
+        finalPnLPercentage,
+        closePrice: item.event.args.price,
+        isLiquidated,
+      } as ClosedTrade;
+    });
+  } catch (error) {
+    console.error('[fetchClosedTrades] Failed to fetch closed trades:', error);
+    // Return empty array on error (don't break the app)
+    return [];
+  }
 }

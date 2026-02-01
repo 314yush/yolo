@@ -17,12 +17,15 @@ import { PickerWheel } from '@/components/PickerWheel';
 import { PnLScreen } from '@/components/PnLScreen';
 import { LoginButton } from '@/components/LoginButton';
 import { SetupFlow } from '@/components/SetupFlow';
+import { OnboardingFlow } from '@/components/OnboardingFlow';
 import { ToastContainer } from '@/components/Toast';
 import { AbstractBackground } from '@/components/AbstractBackground';
+import { hasCompletedOnboarding, clearOnboardingStatus } from '@/lib/onboarding';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { 
   buildCloseTradeTx as buildCloseTradeTxDirect,
   buildOpenTradeTx as buildOpenTradeTxDirect,
+  calculate200PercentGainMultiplier,
 } from '@/lib/avantisEncoder';
 import Link from 'next/link';
 import type { Trade } from '@/types';
@@ -53,23 +56,99 @@ export default function HomePage() {
   } = useTradeStore();
   
   const { delegateAddress } = useDelegateWallet();
+  const { getPnL, checkDelegateStatus } = useAvantisAPI();  // Only read operations from backend
   
   // Ensure userAddress is set when user is authenticated
   // Also load cached delegate status for this user
+  // Check onboarding status
+  // CRITICAL: Verify on-chain delegate status before trusting cache
   useEffect(() => {
-    if (authenticated && user?.wallet?.address) {
-      const address = user.wallet.address as `0x${string}`;
-      if (address !== userAddress) {
-        setUserAddress(address);
-        // Load cached delegate status for this user
-        loadDelegateStatusForUser(address);
+    async function verifyDelegateStatus() {
+      if (authenticated && user?.wallet?.address) {
+        const address = user.wallet.address as `0x${string}`;
+        if (address !== userAddress) {
+          setUserAddress(address);
+          // Load cached delegate status for this user
+          loadDelegateStatusForUser(address);
+          // Check if onboarding is already completed
+          setIsOnboardingComplete(hasCompletedOnboarding(address));
+        }
+
+        // CRITICAL FIX: Always verify on-chain delegate status if cache says setup is complete
+        // This prevents delegate mismatch issues
+        const { delegateStatus: cachedStatus } = useTradeStore.getState();
+        if (cachedStatus.isSetup && cachedStatus.delegateAddress) {
+          // Prevent multiple simultaneous verifications for the same address
+          if (verifyingRef.current === address) {
+            return; // Already verifying this address
+          }
+          
+          // Set verifying state to prevent trading during verification
+          verifyingRef.current = address;
+          setIsVerifyingDelegate(true);
+          
+          try {
+            // Use the hook's checkDelegateStatus function
+            const status = await checkDelegateStatus(address);
+            
+            // Check for delegate mismatch
+            const onChainDelegate = status.delegateAddress?.toLowerCase();
+            const cachedDelegate = cachedStatus.delegateAddress?.toLowerCase();
+            const localDelegate = delegateAddress?.toLowerCase();
+            
+            if (!status.isSetup) {
+              // On-chain says not set up, but cache says it is - clear cache
+              useTradeStore.getState().setDelegateStatus({
+                isSetup: false,
+                delegateAddress: null,
+                usdcApproved: false,
+              });
+            } else if (onChainDelegate && cachedDelegate && onChainDelegate !== cachedDelegate) {
+              // Delegate mismatch - clear cache and force re-setup
+              // User will see error message in SetupFlow guiding them to remove old delegate
+              useTradeStore.getState().setDelegateStatus({
+                isSetup: false,
+                delegateAddress: null,
+                usdcApproved: false,
+              });
+            } else if (onChainDelegate && localDelegate && onChainDelegate !== localDelegate) {
+              // On-chain delegate doesn't match local delegate - clear cache and force re-setup
+              useTradeStore.getState().setDelegateStatus({
+                isSetup: false,
+                delegateAddress: null,
+                usdcApproved: false,
+              });
+            }
+          } catch (err) {
+            console.error('Failed to verify delegate status:', err);
+            // On error, don't trust cache - force re-verification
+            useTradeStore.getState().setDelegateStatus({
+              isSetup: false,
+              delegateAddress: null,
+              usdcApproved: false,
+            });
+          } finally {
+            // Always clear verifying state
+            verifyingRef.current = null;
+            setIsVerifyingDelegate(false);
+          }
+        } else {
+          // No cached status to verify, clear verifying state
+          verifyingRef.current = null;
+          setIsVerifyingDelegate(false);
+        }
+      } else if (!authenticated) {
+        // Clear delegate status and onboarding status when logged out
+        if (userAddress) {
+          clearOnboardingStatus(userAddress);
+        }
+        loadDelegateStatusForUser(null);
+        setIsOnboardingComplete(false);
       }
-    } else if (!authenticated) {
-      // Clear delegate status when logged out
-      loadDelegateStatusForUser(null);
     }
-  }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser]);
-  const { getPnL } = useAvantisAPI();  // Only read operations from backend
+
+    verifyDelegateStatus();
+  }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playBoom } = useSound();
   const { balance: usdcBalance } = useUsdcBalance();
@@ -138,6 +217,8 @@ export default function HomePage() {
   const confirmationLatencyRef = useRef<number | null>(null);
   // Track when spin started to filter out old trades
   const spinStartTimeRef = useRef<number | null>(null);
+  // Track which trades we've already incremented volume for (by txHash)
+  const volumeIncrementedRef = useRef<Set<`0x${string}`>>(new Set());
   // Track timing milestones for debugging
   const timingRef = useRef<{
     spinStart: number | null;
@@ -173,11 +254,36 @@ export default function HomePage() {
   });
   
   const [isSetupComplete, setIsSetupComplete] = useState(false);
+  const [isOnboardingComplete, setIsOnboardingComplete] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
+  const [isVerifyingDelegate, setIsVerifyingDelegate] = useState(false);
+  const verifyingRef = useRef<string | null>(null); // Track which address is being verified
+
+  // Calculate total PnL for open trades (for warning banner)
+  const totalOpenPnL = React.useMemo(() => {
+    return openTrades.reduce((sum, trade) => {
+      // Estimate PnL based on current prices
+      const currentPrice = prices[trade.pair]?.price;
+      if (!currentPrice) return sum;
+      const pnlPercentage = trade.isLong 
+        ? ((currentPrice - trade.openPrice) / trade.openPrice) * trade.leverage * 100
+        : ((trade.openPrice - currentPrice) / trade.openPrice) * trade.leverage * 100;
+      const pnl = (pnlPercentage / 100) * trade.collateral;
+      return sum + pnl;
+    }, 0);
+  }, [openTrades, prices]);
 
   // Handle spin start - fire trade immediately
   const handleSpinStart = useCallback(async () => {
+    // CRITICAL: Prevent trading if setup is not complete
+    if (!delegateStatus.isSetup) {
+      console.error('[handleSpinStart] Trading blocked: Setup not complete');
+      setError('Please complete setup before trading. Enable trading in the setup flow first.');
+      setStage('error');
+      return;
+    }
+
     const spinStartTime = Date.now();
     // Reset timing tracking
     timingRef.current = {
@@ -227,6 +333,10 @@ export default function HomePage() {
         leverage: currentSelection.leverage.value,
         isLong: currentSelection.direction.isLong,
         openPrice: prices[`${currentSelection.asset.name}/USD`]?.price || 0,
+        takeProfitMultiplier: calculate200PercentGainMultiplier(
+          currentSelection.direction.isLong,
+          currentSelection.leverage.value
+        ),
       });
       const txEncodeTime = Date.now() - txBuildStart;
       if (txEncodeTime > 10) {
@@ -420,6 +530,13 @@ export default function HomePage() {
 
   // Handle close trade - uses pre-built tx or direct encoding (no SDK)
   const handleCloseTrade = useCallback(async () => {
+    // CRITICAL: Prevent closing trades if setup is not complete (defensive check)
+    if (!delegateStatus.isSetup) {
+      console.error('[handleCloseTrade] Trade close blocked: Setup not complete');
+      setError('Please complete setup before closing trades. Enable trading in the setup flow first.');
+      return;
+    }
+
     const { currentTrade, pnlData, prebuiltCloseTx, setPrebuiltCloseTx } = useTradeStore.getState();
     if (!userAddress || !delegateAddress || !currentTrade) return;
 
@@ -485,7 +602,35 @@ export default function HomePage() {
     );
   }
 
-  // Authenticated but not set up
+  // Authenticated - check onboarding first (only if delegate not set up)
+  // If delegate is already set up, skip onboarding (returning user)
+  // Check both state and localStorage to handle initial render correctly
+  const needsOnboarding = userAddress && !delegateStatus.isSetup && !hasCompletedOnboarding(userAddress) && !isOnboardingComplete;
+  if (needsOnboarding) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
+        <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
+          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+          <LoginButton />
+        </header>
+        <main className="flex-1 flex items-center justify-center px-4" id="main-content">
+          <OnboardingFlow onComplete={() => setIsOnboardingComplete(true)} />
+        </main>
+      </div>
+    );
+  }
+
+  // Show loading while verifying delegate status (prevents race condition)
+  if (isVerifyingDelegate) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
+        <div className="text-xl sm:text-2xl font-bold text-white mb-4">VERIFYING SETUP...</div>
+        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Authenticated but not set up (onboarding complete or skipped)
   if (!delegateStatus.isSetup && !isSetupComplete) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
@@ -529,7 +674,7 @@ export default function HomePage() {
       
       {/* Header - Compact and always visible */}
       {stage !== 'pnl' && (
-        <header className="w-full flex justify-between items-center px-4 pt-3 pb-2 relative z-10 flex-shrink-0">
+        <header className="w-full flex justify-between items-center px-4 pt-3 pb-2 relative z-10 shrink-0">
           <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
           <LoginButton />
         </header>
@@ -537,7 +682,7 @@ export default function HomePage() {
 
       {/* Financial Info Bar - Prominent and always visible */}
       {stage !== 'pnl' && (
-        <div className="w-full px-4 py-2 border-b-2 border-white/10 bg-black/50 backdrop-blur-sm relative z-10 flex-shrink-0">
+        <div className="w-full px-4 py-2 border-b-2 border-white/10 bg-black/50 backdrop-blur-sm relative z-10 shrink-0">
           <div className="flex justify-center items-center gap-4 sm:gap-6 text-white/80 text-xs sm:text-sm font-mono">
             <div className="flex items-center gap-2">
               <span className="text-white/60 font-semibold">COLLATERAL:</span>
@@ -600,80 +745,33 @@ export default function HomePage() {
               overflow: 'hidden',
             }}
           >
-            {/* Warning banner if positions are open */}
+            {/* Simple inline text for open positions */}
             {stage === 'idle' && openTrades.length > 0 && (
               <div 
-                className="shrink-0 rounded-lg"
+                className="shrink-0 mb-2 text-center"
                 style={{
-                  width: 'calc(100% - clamp(1rem, 4vh, 2rem))',
-                  maxWidth: 'calc(100vw - clamp(1rem, 4vh, 2rem) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))',
-                  marginBottom: 'clamp(0.5rem, 2vh, 1rem)',
-                  padding: 'clamp(0.375rem, 1vh, 0.625rem)',
-                  paddingLeft: 'clamp(0.5rem, 1.5vw, 0.75rem)',
-                  paddingRight: 'clamp(0.5rem, 1.5vw, 0.75rem)',
-                  borderWidth: 'clamp(2px, 0.5vw, 4px)',
-                  borderColor: '#FFD60A',
-                  borderStyle: 'solid',
-                  backgroundColor: 'rgba(255, 214, 10, 0.1)',
-                  boxSizing: 'border-box',
-                  overflow: 'hidden',
+                  fontSize: 'clamp(0.875rem, 2.5vw, 1rem)',
                 }}
               >
-                <div 
-                  className="flex items-center gap-2"
-                  style={{
-                    minWidth: 0,
-                    width: '100%',
-                    flexWrap: 'nowrap',
+                <span 
+                  className="font-semibold font-mono"
+                  style={{ 
+                    color: totalOpenPnL >= 0 ? '#CCFF00' : '#FF006E',
                   }}
                 >
-                  <div 
-                    className="flex items-center gap-1 text-[#FFD60A] font-bold"
-                    style={{ 
-                      fontSize: 'clamp(0.625rem, 1.6vw, 0.75rem)',
-                      minWidth: 0,
-                      flexShrink: 1,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <span 
-                      style={{ 
-                        fontSize: 'clamp(0.6875rem, 1.8vw, 0.8125rem)',
-                        flexShrink: 0,
-                      }}
-                    >
-                      ⚠️
-                    </span>
-                    <span 
-                      className="whitespace-nowrap truncate"
-                      style={{ 
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {openTrades.length} POSITION{openTrades.length > 1 ? 'S' : ''} OPEN
-                    </span>
-                  </div>
-                  <a 
-                    href="/activity" 
-                    className="text-[#FFD60A] font-bold underline hover:no-underline touch-manipulation"
-                    style={{ 
-                      fontSize: 'clamp(0.5625rem, 1.4vw, 0.6875rem)',
-                      minHeight: '44px',
-                      minWidth: 'clamp(3rem, 12vw, 4rem)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'flex-end',
-                      paddingLeft: 'clamp(0.25rem, 1vw, 0.5rem)',
-                      flexShrink: 0,
-                      whiteSpace: 'nowrap',
-                    }}
-                    aria-label={`View ${openTrades.length} open position${openTrades.length !== 1 ? 's' : ''}`}
-                  >
-                    VIEW →
-                  </a>
-                </div>
+                  {openTrades.length} open • {totalOpenPnL >= 0 ? '+' : ''}${totalOpenPnL.toFixed(2)} P&L
+                </span>
+                {' '}
+                <a 
+                  href="/activity" 
+                  className="font-semibold underline hover:no-underline touch-manipulation font-mono"
+                  style={{ 
+                    color: totalOpenPnL >= 0 ? '#CCFF00' : '#FF006E',
+                  }}
+                  aria-label={`View ${openTrades.length} open position${openTrades.length !== 1 ? 's' : ''}`}
+                >
+                  view
+                </a>
               </div>
             )}
             <div 
@@ -731,7 +829,7 @@ export default function HomePage() {
       {/* Bottom Action Area - Stacked Nav Bar + ROLL Button */}
       {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
         <footer 
-          className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/98 to-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-40 safe-area-bottom"
+          className="fixed bottom-0 left-0 right-0 bg-linear-to-t from-black via-black/98 to-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-40 safe-area-bottom"
           style={{ 
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
           }}
@@ -741,13 +839,19 @@ export default function HomePage() {
             <div>
               <button
                 onClick={() => {
-                  if (stage === 'idle') {
+                  if (stage === 'idle' && delegateStatus.isSetup) {
                     setShouldSpin(true);
                     setTimeout(() => setShouldSpin(false), 100);
                   }
                 }}
-                disabled={stage !== 'idle'}
-                aria-label={stage === 'idle' ? 'Spin the wheel to select trade parameters' : 'Wheel is spinning, please wait'}
+                disabled={stage !== 'idle' || !delegateStatus.isSetup}
+                aria-label={
+                  !delegateStatus.isSetup 
+                    ? 'Please complete setup before trading'
+                    : stage === 'idle' 
+                    ? 'Spin the wheel to select trade parameters' 
+                    : 'Wheel is spinning, please wait'
+                }
                 aria-busy={stage !== 'idle'}
                 className={`
                   w-full py-4 sm:py-5 text-2xl sm:text-3xl font-black brutal-button min-h-[64px] touch-manipulation
@@ -819,10 +923,11 @@ export default function HomePage() {
                 >
                   <path d="M3 3h18v18H3zM3 9h18M9 3v18" />
                 </svg>
-                <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Activity</span>
+                <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Activity</span>
                 {openTrades.length > 0 && (
                   <span 
-                    className="absolute top-0 right-0 bg-[#FF006E] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center border-2 border-black animate-danger-pulse"
+                    className="absolute top-0 right-0 bg-[#FF006E] text-white text-xs font-black rounded-full w-5 h-5 flex items-center justify-center border-2 border-black animate-danger-pulse"
+                    style={{ fontSize: 'clamp(0.625rem, 1.5vw, 0.75rem)' }}
                     aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
                   >
                     <span className="sr-only">{openTrades.length}</span>
@@ -848,7 +953,7 @@ export default function HomePage() {
                   <circle cx="12" cy="12" r="3" />
                   <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3m15.364 6.364l-4.243-4.243m0 0L12 12m4.121-4.121l4.243-4.243M12 12l-4.121-4.121m0 0L3.636 3.636m4.243 4.243L12 12" />
                 </svg>
-                <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Settings</span>
+                <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Settings</span>
               </Link>
             </nav>
           </div>
@@ -880,10 +985,11 @@ export default function HomePage() {
               >
                 <path d="M3 3h18v18H3zM3 9h18M9 3v18" />
               </svg>
-              <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Activity</span>
+              <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Activity</span>
               {openTrades.length > 0 && (
                 <span 
-                  className="absolute top-0 right-0 bg-[#FF006E] text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center border-2 border-black animate-danger-pulse"
+                  className="absolute top-0 right-0 bg-[#FF006E] text-white text-xs font-black rounded-full w-5 h-5 flex items-center justify-center border-2 border-black animate-danger-pulse"
+                  style={{ fontSize: 'clamp(0.625rem, 1.5vw, 0.75rem)' }}
                   aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
                 >
                   <span className="sr-only">{openTrades.length}</span>
@@ -909,12 +1015,14 @@ export default function HomePage() {
                 <circle cx="12" cy="12" r="3" />
                 <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3m15.364 6.364l-4.243-4.243m0 0L12 12m4.121-4.121l4.243-4.243M12 12l-4.121-4.121m0 0L3.636 3.636m4.243 4.243L12 12" />
               </svg>
-              <span className="text-[10px] font-bold text-[#CCFF00] uppercase">Settings</span>
+              <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Settings</span>
             </Link>
           </div>
         </nav>
       )}
 
+
+      {/* Confirmation Modal for Rolling with Open Trades */}
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />

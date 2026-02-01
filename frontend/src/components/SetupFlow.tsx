@@ -24,10 +24,10 @@ const BASE_CHAIN_ID_HEX = '0x2105'; // 8453 in hex
 export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   const { user, ready: privyReady } = usePrivy();
   const { wallets, ready: walletsReady } = useWallets();
-  const { setDelegateStatus } = useTradeStore();
+  const { setDelegateStatus, delegateStatus } = useTradeStore();
   const { ensureDelegateWallet, delegateAddress } = useDelegateWallet();
   const { checkDelegateStatus, checkUsdcAllowance } = useAvantisAPI();
-  const { executeBatchedSetup, isProcessing: isBatching } = useBatchedSetup();
+  const { executeBatchedSetup, isProcessing: isBatching, setupStatus } = useBatchedSetup();
 
   const [step, setStep] = useState<SetupStep>('checking');
   const [error, setError] = useState<string | null>(null);
@@ -162,20 +162,16 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       }
 
       // Check if we have cached status that says setup is complete
-      // If so, verify it's still valid on-chain, but don't block the UI
+      // CRITICAL FIX: Always verify on-chain before trusting cache
       const { delegateStatus: cachedStatus } = useTradeStore.getState();
       if (cachedStatus.isSetup && cachedStatus.usdcApproved && cachedStatus.delegateAddress) {
         console.log('📦 Found cached setup status, verifying on-chain...');
-        // Don't block UI - show complete state immediately, verify in background
-        setStep('complete');
-        setIsCheckingStatus(false);
-        onSetupComplete();
         
-        // Verify on-chain in background (non-blocking)
-        checkStatusOnChain().catch((err) => {
-          console.error('Background status check failed:', err);
-          // If verification fails, we'll re-check on next mount or user action
-        });
+        // Verify on-chain FIRST before proceeding
+        // Don't trust cache - always verify!
+        setIsCheckingStatus(true);
+        setStep('checking');
+        await checkStatusOnChain();
         return;
       }
 
@@ -195,7 +191,17 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         const wallet = ensureDelegateWallet();
         console.log('Local delegate wallet:', wallet.address);
         
-        // Step 2: Check if delegation is set up on-chain (API call - can be slow)
+        // Step 2: Check USDC allowance FIRST (checking if EOA is connected with TradingStorage)
+        // If USDC is already approved, user doesn't need to sign approval again
+        const allowanceCheck = await checkUsdcAllowance(userAddress).catch((err) => {
+          console.warn('USDC allowance check failed:', err);
+          return { hasSufficient: false, allowance: 0 };
+        });
+        
+        console.log('USDC allowance check:', allowanceCheck);
+        const hasUsdcApproved = allowanceCheck.hasSufficient;
+        
+        // Step 3: Check if delegation is set up on-chain (API call - can be slow)
         // Use Promise.race to add a timeout fallback - match API timeout of 35s
         const statusPromise = checkDelegateStatus(userAddress);
         const timeoutPromise = new Promise<{ isSetup: false; delegateAddress: null; error: string }>((resolve) => {
@@ -218,63 +224,65 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         }
       
         if (status.isSetup) {
-        // Delegation is already set up on-chain
-        // Check if it matches our local delegate
-        const onChainDelegate = status.delegateAddress?.toLowerCase();
-        const localDelegate = wallet.address.toLowerCase();
-        
-        if (onChainDelegate && onChainDelegate !== localDelegate) {
-          // MISMATCH: On-chain delegate doesn't match our local delegate
-          // This means we don't have the private key for the on-chain delegate
-          // User needs to re-register with our local delegate
-          console.log('Delegate mismatch! On-chain:', onChainDelegate, 'Local:', localDelegate);
-          console.log('User needs to re-register delegation with local delegate');
-          setHasCheckedStatus(true); // Mark as checked
+          // Delegation is already set up on-chain
+          // Check if it matches our local delegate
+          const onChainDelegate = status.delegateAddress?.toLowerCase();
+          const localDelegate = wallet.address.toLowerCase();
+          
+          if (onChainDelegate && onChainDelegate !== localDelegate) {
+            // MISMATCH: On-chain delegate doesn't match our local delegate
+            // If USDC is already approved, user only needs to set up new delegate (no approval needed)
+            // If USDC is not approved, user needs both delegate setup and approval
+            console.log('Delegate mismatch detected! On-chain:', onChainDelegate, 'Local:', localDelegate);
+            if (hasUsdcApproved) {
+              console.log('✅ USDC already approved - user only needs to set up new delegate');
+            } else {
+              console.log('⚠️ USDC not approved - user needs both delegate setup and approval');
+            }
+            // Proceed to setup step - batched setup will handle this intelligently
+            setHasCheckedStatus(true);
+            setStep('setup');
+            setIsCheckingStatus(false);
+            return;
+          }
+          
+          console.log('Delegation already set up with:', wallet.address);
+          
+          // Both delegate and USDC approval are set up correctly
+          if (hasUsdcApproved) {
+            const newStatus = {
+              isSetup: true,
+              delegateAddress: wallet.address,
+              usdcApproved: true,
+            };
+            setDelegateStatus(newStatus);
+            console.log('✅ Setup verified and cached:', newStatus);
+            setHasCheckedStatus(true);
+            setStep('complete');
+            setIsCheckingStatus(false);
+            onSetupComplete();
+            return;
+          } else {
+            // Delegate is set up but USDC approval is missing
+            console.log('⚠️ Delegate set up but USDC approval missing - need to approve');
+            setHasCheckedStatus(true);
+            setStep('setup');
+            setIsCheckingStatus(false);
+            return;
+          }
+        } else {
+          // No delegate set up on-chain
+          // If USDC is already approved, user only needs to set up delegate (no approval needed)
+          // If USDC is not approved, user needs both delegate setup and approval
+          if (hasUsdcApproved) {
+            console.log('✅ USDC already approved to TradingStorage - user only needs to set up delegate');
+          } else {
+            console.log('⚠️ Need both delegate setup and USDC approval');
+          }
+          setHasCheckedStatus(true);
           setStep('setup');
           setIsCheckingStatus(false);
-          return;
         }
-        
-        console.log('Delegation already set up with:', wallet.address);
-        
-        // Step 3: Check USDC allowance
-        // NOTE: With Tachyon, delegate doesn't need ETH, so we skip balance check
-        const allowanceCheck = await checkUsdcAllowance(userAddress).catch((err) => {
-          console.warn('USDC allowance check failed:', err);
-          return { hasSufficient: false, allowance: 0 };
-        });
-        
-        console.log('USDC allowance check:', allowanceCheck);
-        
-        if (!allowanceCheck.hasSufficient) {
-          // Need to approve USDC for the Trading contract
-          console.log('USDC allowance insufficient, need to approve');
-          setHasCheckedStatus(true); // Mark as checked
-          setStep('setup');
-          setIsCheckingStatus(false);
-          return;
-        }
-        
-        // With Tachyon gas sponsorship, delegate doesn't need ETH
-        // Go directly to complete after USDC is approved
-        // Status is automatically persisted via setDelegateStatus
-        
-        const newStatus = {
-          isSetup: true,
-          delegateAddress: wallet.address,
-          usdcApproved: true,
-        };
-        setDelegateStatus(newStatus);
-        console.log('✅ Setup verified and cached:', newStatus);
-        setHasCheckedStatus(true); // Mark as checked so we don't re-check
-        setStep('complete');
-        setIsCheckingStatus(false);
-        onSetupComplete();
-      } else {
-        // Need to set up delegation and approval
-        setHasCheckedStatus(true); // Mark as checked
-        setStep('setup');
-      }
       } catch (err) {
         console.error('Error checking status:', err);
         setHasCheckedStatus(true);
@@ -308,44 +316,111 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         return;
       }
 
-      // Wait a moment for transactions to be mined, then check status
-      // In a production app, you might want to wait for confirmations
-      setTimeout(async () => {
+      if (!result.txHashes || result.txHashes.length === 0) {
+        setError('Transaction hash not received. Setup may have failed.');
+        setIsProcessing(false);
+        return;
+      }
+
+      // With EIP-5792 sendCalls, we get a batch ID, not a transaction hash
+      // We'll poll the on-chain state directly to verify setup completion
+      const batchId = result.txHashes[0];
+
+      // Poll for on-chain state changes (up to 60 seconds)
+      // Since sendCalls returns a batch ID, we verify by checking on-chain state
+      const maxAttempts = 60;
+      let attempts = 0;
+      let setupVerified = false;
+
+      while (attempts < maxAttempts && !setupVerified) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between checks
+        
         try {
-          // Re-check status to verify setup completed
+          // Check if delegate is set up on-chain (USDC approval may already exist)
           const status = await checkDelegateStatus(userAddress);
-          const allowanceCheck = await checkUsdcAllowance(userAddress);
+          const allowanceCheck = await checkUsdcAllowance(userAddress).catch(() => ({ hasSufficient: false, allowance: 0 }));
           
-          if (status.isSetup && allowanceCheck.hasSufficient) {
-            setDelegateStatus({
-              isSetup: true,
-              delegateAddress: delegateAddress || null,
-              usdcApproved: true,
-            });
-            setStep('complete');
-            onSetupComplete();
-          } else {
-            // Setup may still be processing, show success but let user know to wait
-            setDelegateStatus({
-              isSetup: status.isSetup,
-              delegateAddress: status.delegateAddress || delegateAddress || null,
-              usdcApproved: allowanceCheck.hasSufficient,
-            });
-            setStep('complete');
-            onSetupComplete();
+          // Setup is verified if delegate is set up AND (USDC is approved OR was already approved before)
+          // We check delegate first since that's what we're setting up
+          if (status.isSetup) {
+            // Verify delegate matches our local delegate
+            const localDelegate = ensureDelegateWallet().address.toLowerCase();
+            const onChainDelegate = status.delegateAddress?.toLowerCase();
+            
+            if (onChainDelegate === localDelegate) {
+              // Delegate is set up correctly - check USDC approval
+              // If USDC is already approved, we're done. If not, we need to wait for approval tx
+              if (allowanceCheck.hasSufficient) {
+                setupVerified = true;
+                break;
+              }
+              // If USDC not approved yet, continue polling (approval might be in progress)
+            }
           }
-        } catch (err) {
-          console.error('Error verifying setup:', err);
-          // Still mark as complete since transactions were sent
+        } catch (err: any) {
+          console.warn('Error checking on-chain state:', err);
+        }
+        
+        attempts++;
+      }
+
+      if (!setupVerified) {
+        setError('Setup verification timeout. Please check your wallet and try again.');
+        setIsProcessing(false);
+        return;
+      }
+
+      // Now verify on-chain that delegate is set up (USDC approval may already exist)
+      try {
+        // Re-check status to verify setup completed
+        const status = await checkDelegateStatus(userAddress);
+        const allowanceCheck = await checkUsdcAllowance(userAddress).catch(() => ({ hasSufficient: false, allowance: 0 }));
+        
+        // CRITICAL: Delegate must be set up. USDC approval must be present (either from this setup or already existed)
+        if (status.isSetup) {
+          // Verify delegate matches our local delegate
+          const localDelegate = ensureDelegateWallet().address.toLowerCase();
+          const onChainDelegate = status.delegateAddress?.toLowerCase();
+          
+          if (onChainDelegate !== localDelegate) {
+            // This shouldn't happen if multicall worked correctly, but handle it gracefully
+            setError(
+              `Delegate mismatch detected after setup. The old delegate (${onChainDelegate?.slice(0, 8)}...${onChainDelegate?.slice(-6)}) is still registered. ` +
+              `Please try the setup again - it will automatically remove the old delegate. ` +
+              `If the issue persists, you can manually remove it on BaseScan: https://basescan.org/address/0x44914408af82bC9983bbb330e3578E1105e11d4e#writeProxyContract`
+            );
+            setIsProcessing(false);
+            return;
+          }
+          
+          // Delegate is set up correctly - check USDC approval
+          if (!allowanceCheck.hasSufficient) {
+            // USDC approval is missing - this shouldn't happen if we included it in the batch
+            // But it's possible if user cancelled the approval part
+            setError('USDC approval verification failed. Please try the setup again to approve USDC.');
+            setIsProcessing(false);
+            return;
+          }
+          
+          // Both delegate and USDC approval are verified
           setDelegateStatus({
             isSetup: true,
-            delegateAddress: delegateAddress || null,
+            delegateAddress: status.delegateAddress || delegateAddress || null,
             usdcApproved: true,
           });
           setStep('complete');
           onSetupComplete();
+        } else {
+          // Delegate setup failed
+          setError('Delegate setup verification failed. Please try again.');
+          setIsProcessing(false);
         }
-      }, 2000);
+      } catch (err) {
+        console.error('Error verifying setup:', err);
+        // CRITICAL FIX: Don't mark as complete if verification throws an error!
+        setError('Failed to verify setup. Please check your wallet and try again.');
+        setIsProcessing(false);
+      }
     } catch (err: any) {
       console.error('Batched setup error:', err);
       if (err.code === 4001) {
@@ -395,6 +470,11 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           </div>
           <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
             This is a one-time setup on Base network. Your funds remain in your wallet. USDC approval is set to 10,000 USDC.
+            {delegateStatus.delegateAddress && delegateStatus.delegateAddress.toLowerCase() !== delegateAddress?.toLowerCase() && (
+              <div className="mt-3 p-3 bg-[#FFD60A]/10 border-2 border-[#FFD60A]/30 text-[#FFD60A] text-xs rounded-lg">
+                ⚠️ Existing delegate detected. Setup will replace it with the new delegate automatically.
+              </div>
+            )}
           </div>
           
           {/* Debug info */}
@@ -404,21 +484,48 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             <div>Network: Base (Chain ID: 8453)</div>
           </div>
           
+          {/* Setup status message */}
+          {setupStatus && (
+            <div className="mb-4 p-3 bg-[#CCFF00]/10 border-2 border-[#CCFF00]/30 text-[#CCFF00] text-sm font-mono rounded-lg">
+              {setupStatus}
+            </div>
+          )}
+
           <button
             onClick={handleBatchedSetup}
             disabled={isProcessing || isBatching}
             className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button disabled:opacity-50 bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
           >
-            {isProcessing || isBatching ? 'ENABLING TRADING...' : 'ENABLE TRADING'}
+            {isProcessing || isBatching 
+              ? (setupStatus || 'ENABLING TRADING...')
+              : 'ENABLE TRADING'
+            }
           </button>
+          
+          {/* Helpful info about what will happen */}
+          {!isProcessing && !isBatching && (
+            <div className="mt-4 text-white/50 text-xs leading-relaxed">
+              This will set up your delegate wallet and approve USDC spending in a single transaction.
+            </div>
+          )}
         </>
       )}
 
       {/* NOTE: fund-delegate step removed - with Tachyon gas sponsorship, delegate doesn't need ETH */}
 
       {error && (
-        <div className="mt-6 p-4 bg-red-500/20 border-2 border-red-500 text-red-400 text-sm sm:text-base rounded-lg">
-          {error}
+        <div className="mt-6 p-4 bg-red-500/20 border-2 border-red-500 text-red-400 text-sm sm:text-base rounded-lg max-w-md">
+          <div className="whitespace-pre-wrap break-words">{error}</div>
+          {error.includes('basescan.org') && (
+            <a
+              href="https://basescan.org/address/0x44914408af82bC9983bbb330e3578E1105e11d4e#writeProxyContract"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-block px-4 py-2 bg-[#CCFF00] text-black font-bold brutal-button text-xs sm:text-sm hover:bg-[#B8E600] transition-colors"
+            >
+              OPEN BASESCAN CONTRACT PAGE →
+            </a>
+          )}
         </div>
       )}
     </div>

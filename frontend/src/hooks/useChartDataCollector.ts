@@ -29,7 +29,7 @@ interface TickDataPoint {
 }
 
 // Supported resolutions
-export type Resolution = 60 | 180 | 300 | 900; // 1m, 3m, 5m, 15m in seconds
+export type Resolution = 60 | 180 | 300 | 900 | 14400 | 86400; // 1m, 3m, 5m, 15m, 4h, 1d in seconds
 
 // Data storage configuration
 const MAX_TICKS = 18000; // 5 hours of 1-second ticks (5 * 3600)

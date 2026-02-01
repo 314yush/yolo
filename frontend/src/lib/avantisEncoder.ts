@@ -230,6 +230,21 @@ function scaleUSDC(amount: number): bigint {
 }
 
 /**
+ * Calculate take profit multiplier for 200% gain
+ * For LONG: TP = entryPrice * (1 + 2/leverage) → multiplier = 1 + 2/leverage
+ * For SHORT: TP = entryPrice * (1 - 2/leverage) → multiplier = 1 - 2/leverage
+ * 
+ * This represents a 200% profit gain relative to leverage.
+ * Example: With 250x leverage, a 0.8% price move = 200% profit
+ */
+export function calculate200PercentGainMultiplier(
+  isLong: boolean,
+  leverage: number
+): number {
+  return isLong ? 1 + 2 / leverage : 1 - 2 / leverage;
+}
+
+/**
  * Calculate take profit price
  */
 function calculateTakeProfit(
@@ -400,6 +415,7 @@ export function buildFlipTradeTxs(params: FlipTradeParams): FlipTradeResult {
     leverage,
     isLong: !currentIsLong,  // Flip direction
     openPrice: currentPrice,
+    takeProfitMultiplier: calculate200PercentGainMultiplier(!currentIsLong, leverage),
   });
 
   return { closeTx, openTx };
@@ -428,6 +444,16 @@ export function buildSetDelegateTx(
     value: '0',  // No value needed
     chainId: 8453,
   };
+}
+
+/**
+ * Build a removeDelegate transaction
+ * This removes the current delegate by setting it to the zero address
+ * Users need to call this before setting a new delegate if there's a mismatch
+ */
+export function buildRemoveDelegateTx(): EncodedTransaction {
+  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as `0x${string}`;
+  return buildSetDelegateTx(ZERO_ADDRESS);
 }
 
 // ============================================================

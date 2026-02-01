@@ -18,6 +18,12 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   overflow-x: hidden;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+/* Typography consistency - standardize font family */
+.font-mono {
+  font-family: 'JetBrains Mono', 'Courier New', monospace !important;
 }
 
 /* Brutal button styles - PRIMARY (lime) */
@@ -197,6 +203,30 @@ body {
   transform: rotate(-2deg);
 }
 
+/* Neobrutalist playful rotation - apply to key elements */
+.brutal-rotate {
+  transform: rotate(-2deg);
+}
+
+.brutal-rotate-slight {
+  transform: rotate(-1deg);
+}
+
+/* Colored shadows for brand elements (60/30/10 accent) */
+.brutal-shadow-lime {
+  box-shadow: 8px 8px 0px 0px rgba(204, 255, 0, 0.5);
+}
+
+.brutal-shadow-pink {
+  box-shadow: 8px 8px 0px 0px rgba(255, 0, 110, 0.5);
+}
+
+/* Minimum touch target utility */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
 /* Bounce animation for chips */
 @keyframes bounceIn {
   0% {
@@ -217,6 +247,22 @@ body {
 
 .animate-bounce-in {
   animation: bounceIn 0.5s ease-out forwards;
+}
+
+/* Fade-in animation for progressive disclosure */
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
 }
 
 /* Pulse animation for PnL - more dramatic */

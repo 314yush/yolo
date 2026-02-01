@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { fetchTrades, fetchPnL } from '@/lib/avantisApi';
+import { fetchTrades, fetchPnL, fetchClosedTrades } from '@/lib/avantisApi';
 import { publicClient } from '@/lib/viemClient';
 import {
   buildSetDelegateTx,
@@ -130,6 +130,17 @@ export function useAvantisAPI() {
     }
   }, []);
 
+  // Get closed trades from Avantis portfolio history API
+  const getClosedTrades = useCallback(async (address: string, pageNumber: number = 1) => {
+    try {
+      return await fetchClosedTrades(address, pageNumber);
+    } catch (error) {
+      console.error('[useAvantisAPI] Failed to fetch closed trades:', error);
+      // Return empty array on error to prevent hanging
+      return [];
+    }
+  }, []);
+
   return {
     // Setup operations - Direct encoding (no backend!)
     buildDelegateSetupTx,
@@ -139,5 +150,6 @@ export function useAvantisAPI() {
     // Read operations - Direct from Avantis API (no backend!)
     getTrades,
     getPnL,
+    getClosedTrades,
   };
 }

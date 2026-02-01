@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTradeStore } from '@/store/tradeStore';
 import { loadSettings, saveSettings } from '@/lib/settings';
 import { loadStats } from '@/lib/stats';
+import { AvantisFooter } from '@/components/AvantisFooter';
 import type { Settings } from '@/types';
 
 const COLLATERAL_PRESETS = [5, 10, 25, 50, 100, 250, 500, 1000];
@@ -174,6 +175,9 @@ export default function SettingsPage() {
         </section>
 
       </main>
+
+      {/* Footer */}
+      <AvantisFooter />
     </div>
   );
 }

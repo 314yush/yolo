@@ -7,7 +7,7 @@ import { useAvantisAPI } from './useAvantisAPI';
 import { useTxSigner } from './useTxSigner';
 import { useSound } from './useSound';
 import { saveClosedTrade } from '@/lib/closedTrades';
-import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, AVANTIS_CONTRACTS } from '@/lib/avantisEncoder';
+import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, AVANTIS_CONTRACTS, calculate200PercentGainMultiplier } from '@/lib/avantisEncoder';
 import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
 import { publicClient } from '@/lib/viemClient';
@@ -17,7 +17,8 @@ export function useFlipTrade() {
     userAddress, 
     setCurrentTrade, 
     setPnLData, 
-    incrementTotalTrades, 
+    incrementTotalTrades,
+    incrementVolume,
     setSelection, 
     selection, 
     addPendingTradeHash, 
@@ -32,6 +33,12 @@ export function useFlipTrade() {
   const [isFlipping, setIsFlipping] = useState(false);
 
   const flipTrade = useCallback(async (trade: Trade) => {
+    // CRITICAL: Prevent trading if setup is not complete
+    const { delegateStatus } = useTradeStore.getState();
+    if (!delegateStatus.isSetup) {
+      throw new Error('Please complete setup before trading. Enable trading in the setup flow first.');
+    }
+
     if (!userAddress || !delegateAddress) {
       throw new Error('Missing user address or delegate address');
     }
@@ -163,6 +170,10 @@ export function useFlipTrade() {
         leverage: trade.leverage,
         isLong: !trade.isLong, // Flip direction
         openPrice: currentPrice, // Use current price
+        takeProfitMultiplier: calculate200PercentGainMultiplier(
+          !trade.isLong,
+          trade.leverage
+        ),
       });
 
       // Open opposite position
@@ -267,6 +278,8 @@ export function useFlipTrade() {
           }
           
           incrementTotalTrades();
+          // Increment volume: position size = collateral * leverage
+          incrementVolume(flippedPosition.trade.collateral, flippedPosition.trade.leverage);
           removePendingTradeHash(hash);
           
           // Show success notification only once

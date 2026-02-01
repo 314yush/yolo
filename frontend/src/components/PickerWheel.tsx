@@ -242,68 +242,71 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
         justifyContent: 'center',
       }}
     >
-      {/* Selection chips - Positioned above wheel, absolutely */}
+      {/* Selection display - Simplified text-based, no button-like fills (60/30/10 rule) */}
       {(showAssetChip || showLeverageChip || showDirectionChip) && (
         <div 
-          className="absolute flex flex-wrap gap-2 justify-center items-start z-20"
+          className="absolute flex flex-col items-center gap-2 z-20"
           style={{
             top: 'clamp(1rem, 5vh, 2rem)',
             left: '50%',
             transform: 'translateX(-50%)',
             width: 'calc(100% - clamp(2rem, 8vw, 4rem))',
-            maxWidth: 'calc(100vw - clamp(2rem, 8vw, 4rem) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))',
           }}
           role="status"
           aria-live="polite"
           aria-atomic="true"
           aria-label="Selected trade parameters"
         >
-          {showAssetChip && selection?.asset && (
-            <div
-              className="selection-chip text-black font-bold animate-bounce-in flex items-center gap-2"
-              style={{ 
-                backgroundColor: selection.asset.color,
-                padding: 'clamp(0.375rem, 1.5vh, 0.75rem) clamp(0.75rem, 2vw, 1.5rem)',
-                fontSize: 'clamp(0.875rem, 2.5vw, 1.25rem)',
-              }}
-              role="status"
-              aria-label={`Selected asset: ${selection.asset.name}`}
+          {/* Combined selection display - inline text with color indicators */}
+          <div 
+            className="flex items-center justify-center gap-3 text-white font-bold font-mono animate-bounce-in"
+            style={{ 
+              fontSize: 'clamp(1rem, 3vw, 1.5rem)',
+            }}
+          >
+            {showAssetChip && selection?.asset && (
+              <span 
+                className="flex items-center gap-1.5"
+                role="status"
+                aria-label={`Selected asset: ${selection.asset.name}`}
+              >
+                <span style={{ color: selection.asset.color }}>●</span>
+                <span>{selection.asset.name}</span>
+              </span>
+            )}
+            {showLeverageChip && selection?.leverage && (
+              <>
+                <span className="text-white/30">•</span>
+                <span 
+                  className="text-white"
+                  role="status"
+                  aria-label={`Selected leverage: ${selection.leverage.name}`}
+                >
+                  {selection.leverage.name}
+                </span>
+              </>
+            )}
+            {showDirectionChip && selection?.direction && (
+              <>
+                <span className="text-white/30">•</span>
+                <span 
+                  style={{ color: selection.direction.color }}
+                  role="status"
+                  aria-label={`Selected direction: ${selection.direction.name}`}
+                >
+                  {selection.direction.name}
+                </span>
+              </>
+            )}
+          </div>
+          
+          {/* Gamification message */}
+          {showAssetChip && showLeverageChip && showDirectionChip && (
+            <div 
+              className="text-[#CCFF00] font-bold font-mono animate-bounce-in"
+              style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1.125rem)' }}
             >
-              <img 
-                src={selection.asset.icon} 
-                alt={`${selection.asset.name} icon`} 
-                style={{ width: 'clamp(1rem, 3vw, 1.5rem)', height: 'clamp(1rem, 3vw, 1.5rem)' }}
-                aria-hidden="true"
-              />
-              <span>{selection.asset.name}</span>
-            </div>
-          )}
-          {showLeverageChip && selection?.leverage && (
-            <div
-              className="selection-chip text-black font-bold animate-bounce-in"
-              style={{ 
-                backgroundColor: selection.leverage.color,
-                padding: 'clamp(0.375rem, 1.5vh, 0.75rem) clamp(0.75rem, 2vw, 1.5rem)',
-                fontSize: 'clamp(0.875rem, 2.5vw, 1.25rem)',
-              }}
-              role="status"
-              aria-label={`Selected leverage: ${selection.leverage.name}`}
-            >
-              {selection.leverage.name}
-            </div>
-          )}
-          {showDirectionChip && selection?.direction && (
-            <div
-              className="selection-chip text-black font-bold animate-bounce-in"
-              style={{ 
-                backgroundColor: selection.direction.color,
-                padding: 'clamp(0.375rem, 1.5vh, 0.75rem) clamp(0.75rem, 2vw, 1.5rem)',
-                fontSize: 'clamp(0.875rem, 2.5vw, 1.25rem)',
-              }}
-              role="status"
-              aria-label={`Selected direction: ${selection.direction.name}`}
-            >
-              {selection.direction.name}
+              Good luck!
             </div>
           )}
         </div>
@@ -362,7 +365,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             }}
           >
             {LEVERAGES.map((leverage, i) =>
-              renderRingSegment(i, LEVERAGES.length, 75, 125, leverage.color, leverage.name, 16)
+              renderRingSegment(i, LEVERAGES.length, 75, 125, leverage.color, leverage.name, 24)
             )}
           </g>
 
@@ -374,7 +377,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             }}
           >
             {DIRECTIONS.map((direction, i) =>
-              renderRingSegment(i, DIRECTIONS.length, 30, 70, direction.color, direction.symbol, 20, false)
+              renderRingSegment(i, DIRECTIONS.length, 30, 70, direction.color, direction.symbol, 28, false)
             )}
           </g>
 

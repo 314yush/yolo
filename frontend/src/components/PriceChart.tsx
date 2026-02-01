@@ -1,7 +1,17 @@
 'use client';
 
-import React, { useEffect, useLayoutEffect, useRef, useState, memo, useCallback } from 'react';
-import { createChart, IChartApi, ISeriesApi, IPriceLine, LineData, AreaData, UTCTimestamp, LineStyle, CrosshairMode, LineSeries, AreaSeries } from 'lightweight-charts';
+import React, { useEffect, useRef, memo, useCallback } from 'react';
+import { 
+  createChart, 
+  IChartApi, 
+  ISeriesApi, 
+  IPriceLine, 
+  UTCTimestamp, 
+  LineStyle, 
+  CrosshairMode, 
+  LineSeries,
+  LineData
+} from 'lightweight-charts';
 import { useTradeStore } from '@/store/tradeStore';
 import { getChartData, type CandlestickDataPoint, type Resolution } from '@/hooks/useChartDataCollector';
 
@@ -10,35 +20,39 @@ interface PriceChartProps {
   lineColor?: string;
   entryPrice?: number | null;
   liquidationPrice?: number | null;
+  takeProfitPrice?: number | null;
   height?: number;
   showLegend?: boolean;
   pnl?: number;
-  resolution?: Resolution; // 60 (1m), 180 (3m), 300 (5m), or 900 (15m)
+  resolution?: Resolution;
 }
 
-// 5-minute resolution (300 seconds)
-const CHART_RESOLUTION: Resolution = 300;
-// 6-hour rolling window = 72 data points at 5-minute resolution
-const VISIBLE_CANDLES = 72;
+// Fixed resolution for simplified chart - no user control
+const CHART_RESOLUTION: Resolution = 60;
+const SYNC_INTERVAL_MS = 1000;
 
-// Color palette for line + stacked area chart
-const CHART_COLORS = {
-  background: '#000000',
-  text: '#787b86',
-  textBright: '#d1d4dc',
-  crosshair: 'rgba(120, 123, 134, 0.5)',
-  entry: '#2962ff',
-  liquidation: '#f23645',
-  line: '#00AAE4', // Primary line color
-  // Area colors (25% opacity, no borders)
-  areaPositive: 'rgba(8, 153, 129, 0.25)', // Positive delta (green, 25% opacity)
-  areaNegative: 'rgba(242, 54, 69, 0.25)', // Negative delta (red, 25% opacity)
-  // Price change indicator colors
-  priceUp: '#089981', // Green for up price
-  priceDown: '#f23645', // Red for down price
+// YOLO Brand Colors - Neobrutalist Design System
+const BRAND_COLORS = {
+  primary: '#CCFF00',      // Lime Green - Success/Primary
+  secondary: '#FF006E',    // Hot Pink - Danger/Loss
+  black: '#000000',        // True Black - Base
+  white: '#FFFFFF',        // White - Text on dark
+  gray900: '#111827',      // Secondary backgrounds
+  gray600: '#4B5563',      // Disabled states
 };
 
-const SYNC_INTERVAL_MS = 1000; // Sync every second for real-time updates
+// Chart-specific colors aligned with brand
+const CHART_COLORS = {
+  background: BRAND_COLORS.black,
+  text: BRAND_COLORS.white,
+  textSecondary: BRAND_COLORS.gray600,
+  crosshair: BRAND_COLORS.primary,
+  entry: BRAND_COLORS.primary,        // Lime Green for entry
+  liquidation: BRAND_COLORS.secondary, // Hot Pink for liquidation
+  lineUp: BRAND_COLORS.primary,       // Lime Green line when profitable
+  lineDown: BRAND_COLORS.secondary,   // Hot Pink line when losing
+  border: BRAND_COLORS.black,
+};
 
 function formatPrice(price: number): string {
   if (price >= 10000) return price.toFixed(2);
@@ -56,595 +70,584 @@ function getPricePrecision(price: number): number {
 
 function PriceChartComponent({ 
   assetPair, 
-  lineColor = CHART_COLORS.line, 
+  lineColor = BRAND_COLORS.primary,
   entryPrice = null,
   liquidationPrice = null,
-  height = 150,
-  showLegend = true,
+  takeProfitPrice = null,
+  height = 120,
   pnl = 0,
-  resolution = CHART_RESOLUTION, // Default: 5 minutes
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const lineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const positiveAreaSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
-  const negativeAreaSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const entryPriceLineRef = useRef<IPriceLine | null>(null);
   const liquidationPriceLineRef = useRef<IPriceLine | null>(null);
-  
-  const [isChartReady, setIsChartReady] = useState(false);
-  const [hasData, setHasData] = useState(false);
-  const [timeRange, setTimeRange] = useState<string>('');
-  const dataBufferRef = useRef<CandlestickDataPoint[]>([]);
-  const isInitializedRef = useRef(false);
-  const visibleRangeSetRef = useRef(false);
+  const takeProfitPriceLineRef = useRef<IPriceLine | null>(null);
+  const chartDimensionsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
   
   const prices = useTradeStore(state => state.prices);
   const pythPrice = assetPair ? prices[assetPair]?.price ?? null : null;
-  const isConnected = pythPrice !== null;
   
-  const updateTimeRangeDisplay = useCallback(() => {
-    if (!chartRef.current) return;
-    
-    const timeScale = chartRef.current.timeScale();
-    const visibleRange = timeScale.getVisibleLogicalRange();
-    
-    if (visibleRange && dataBufferRef.current.length > 0) {
-      const startIdx = Math.max(0, Math.floor(visibleRange.from));
-      const endIdx = Math.min(dataBufferRef.current.length - 1, Math.ceil(visibleRange.to));
-      
-      if (startIdx < dataBufferRef.current.length && endIdx >= 0) {
-        const startTime = new Date(dataBufferRef.current[startIdx].time * 1000);
-        const endTime = new Date(dataBufferRef.current[Math.min(endIdx, dataBufferRef.current.length - 1)].time * 1000);
-        
-        const formatTime = (d: Date) => 
-          `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-        
-        setTimeRange(`${formatTime(startTime)} - ${formatTime(endTime)}`);
-      }
-    }
-  }, []);
+  // Determine line color based on PnL
+  const chartLineColor = pnl >= 0 ? CHART_COLORS.lineUp : CHART_COLORS.lineDown;
   
-  // Calculate positive/negative delta areas (stacked areas showing cumulative price changes per candle)
-  const calculateDeltaAreas = useCallback((candles: CandlestickDataPoint[]): { positive: AreaData[], negative: AreaData[] } => {
-    const positive: AreaData[] = [];
-    const negative: AreaData[] = [];
+  // Calculate liquidation price as -85% from entry price if not provided
+  const calculatedLiquidationPrice = liquidationPrice !== null && liquidationPrice > 0
+    ? liquidationPrice
+    : entryPrice !== null && entryPrice > 0
+    ? entryPrice * 0.15
+    : null;
+
+  // Convert candlestick data to line data (close prices only)
+  const convertToLineData = useCallback((candles: CandlestickDataPoint[]): LineData[] => {
+    const validCandles = candles.filter(candle => 
+      candle && 
+      !isNaN(candle.close) &&
+      candle.close > 0
+    );
     
-    if (candles.length === 0) return { positive, negative };
+    // Show last 30 data points for a smooth line
+    const visibleCandles = Math.min(30, validCandles.length);
+    const slicedCandles = validCandles.slice(-visibleCandles);
     
-    // Use first close price as baseline for stacking
-    const baseline = candles[0].close;
-    let cumulativePositive = 0;
-    let cumulativeNegative = 0;
-    
-    candles.forEach((candle) => {
-      const time = candle.time as UTCTimestamp;
-      const priceDelta = candle.close - candle.open;
-      
-      if (priceDelta > 0) {
-        // Positive delta: add to positive cumulative stack
-        cumulativePositive += priceDelta;
-        // Negative area stays at its current cumulative level (doesn't reset)
-      } else if (priceDelta < 0) {
-        // Negative delta: add magnitude to negative cumulative stack
-        cumulativeNegative += Math.abs(priceDelta);
-        // Positive area stays at its current cumulative level (doesn't reset)
-      }
-      // If priceDelta === 0, both cumulative values remain unchanged
-      
-      // Both areas always rendered, showing cumulative deltas stacked from baseline
-      positive.push({
-        time,
-        value: baseline + cumulativePositive,
-      });
-      negative.push({
-        time,
-        value: baseline + cumulativeNegative,
-      });
-    });
-    
-    return { positive, negative };
-  }, []);
-  
-  const loadChartData = useCallback((candles: CandlestickDataPoint[]) => {
-    if (!lineSeriesRef.current || !isChartReady) return;
-    
-    // Filter and validate data, keep only last 72 candles (6-hour window)
-    const validCandles = candles
-      .filter(candle => 
-        candle && 
-        !isNaN(candle.close) &&
-        candle.close > 0
-      )
-      .slice(-VISIBLE_CANDLES); // Keep only last 72 data points
-    
-    if (validCandles.length === 0) return;
-    
-    // Convert to line data (close price only)
-    const lineData: LineData[] = validCandles.map(candle => ({
+    return slicedCandles.map(candle => ({
       time: candle.time as UTCTimestamp,
       value: candle.close,
     }));
-    
-    // Calculate delta areas (stacked positive/negative deltas)
-    const deltaAreas = calculateDeltaAreas(validCandles);
-    
-    try {
-      // Only use setData() for initial load
-      if (!hasData && lineData.length >= 1) {
-        lineSeriesRef.current.setData(lineData);
-        
-        // Set area series data (stacked behind line)
-        if (positiveAreaSeriesRef.current) {
-          positiveAreaSeriesRef.current.setData(deltaAreas.positive);
-        }
-        if (negativeAreaSeriesRef.current) {
-          negativeAreaSeriesRef.current.setData(deltaAreas.negative);
-        }
-        
-        setHasData(true);
-        
-        // Set visible range ONCE during initial load only - show 72 candles (6 hours)
-        requestAnimationFrame(() => {
-          if (chartRef.current && lineData.length > 0 && !visibleRangeSetRef.current) {
-            const timeScale = chartRef.current.timeScale();
-            const visibleEnd = lineData.length - 1;
-            const visibleStart = Math.max(0, visibleEnd - Math.min(VISIBLE_CANDLES - 1, visibleEnd));
-            
-            if (visibleStart <= visibleEnd && visibleEnd >= 0) {
-              timeScale.setVisibleLogicalRange({
-                from: visibleStart,
-                to: visibleEnd,
-              });
-              visibleRangeSetRef.current = true;
-            } else {
-              timeScale.fitContent();
-              visibleRangeSetRef.current = true;
-            }
-            
-            updateTimeRangeDisplay();
-          }
-        });
-      } else {
-        // For live updates, use update() instead of setData() to avoid jitter
-        if (lineData.length > 0 && lineSeriesRef.current) {
-          const latestPoint = lineData[lineData.length - 1];
-          try {
-            lineSeriesRef.current.update(latestPoint);
-            
-            // Update area series with latest delta data
-            const latestDelta = calculateDeltaAreas([validCandles[validCandles.length - 1]]);
-            if (positiveAreaSeriesRef.current && latestDelta.positive.length > 0) {
-              positiveAreaSeriesRef.current.update(latestDelta.positive[0]);
-            }
-            if (negativeAreaSeriesRef.current && latestDelta.negative.length > 0) {
-              negativeAreaSeriesRef.current.update(latestDelta.negative[0]);
-            }
-          } catch (err) {
-            // If update fails, fall back to setData
-            console.warn('[PriceChart] Update failed, falling back to setData:', err);
-            lineSeriesRef.current.setData(lineData);
-            if (positiveAreaSeriesRef.current) {
-              positiveAreaSeriesRef.current.setData(deltaAreas.positive);
-            }
-            if (negativeAreaSeriesRef.current) {
-              negativeAreaSeriesRef.current.setData(deltaAreas.negative);
-            }
-          }
-        }
-        updateTimeRangeDisplay();
-      }
-    } catch (err) {
-      console.error('[PriceChart] Error loading chart data:', err);
-    }
-  }, [isChartReady, hasData, updateTimeRangeDisplay, calculateDeltaAreas]);
-  
-  // Load initial data
-  useEffect(() => {
-    if (!isChartReady || !assetPair || isInitializedRef.current) return;
-    
-    // Always use 5-minute resolution
-    const preloadedCandles = getChartData(assetPair, CHART_RESOLUTION);
-    
-    if (preloadedCandles.length >= 1) {
-      console.log('[PriceChart] Loading pre-collected data:', preloadedCandles.length, 'candles at', CHART_RESOLUTION, 's resolution');
-      dataBufferRef.current = preloadedCandles;
-      loadChartData(preloadedCandles);
-      isInitializedRef.current = true;
-    }
-  }, [isChartReady, assetPair, loadChartData]);
-  
-  // Periodic sync for real-time updates
-  useEffect(() => {
-    if (!isChartReady || !assetPair || !isInitializedRef.current) return;
-    
-    const syncInterval = setInterval(() => {
-      // Always use 5-minute resolution
-      const preloadedCandles = getChartData(assetPair, CHART_RESOLUTION);
-      const currentLength = dataBufferRef.current.length;
-      const newLength = preloadedCandles.length;
-      
-      const lengthChanged = newLength !== currentLength;
-      const timeChanged = newLength > 0 && currentLength > 0 && 
-                          preloadedCandles[newLength - 1].time !== dataBufferRef.current[currentLength - 1].time;
-      const priceChanged = newLength > 0 && currentLength > 0 && 
-                          preloadedCandles[newLength - 1].close !== dataBufferRef.current[currentLength - 1].close;
-      
-      if (lengthChanged || timeChanged || priceChanged) {
-        dataBufferRef.current = preloadedCandles;
-        loadChartData(preloadedCandles);
-      }
-    }, SYNC_INTERVAL_MS);
-    
-    return () => clearInterval(syncInterval);
-  }, [isChartReady, assetPair, loadChartData]);
-  
-  // Clear on asset change
-  useEffect(() => {
-    dataBufferRef.current = [];
-    setHasData(false);
-    setTimeRange('');
-    isInitializedRef.current = false;
-    visibleRangeSetRef.current = false;
-    
-    if (lineSeriesRef.current) {
-      try {
-        lineSeriesRef.current.setData([]);
-      } catch (err) {}
-    }
-    if (positiveAreaSeriesRef.current) {
-      try {
-        positiveAreaSeriesRef.current.setData([]);
-      } catch (err) {}
-    }
-    if (negativeAreaSeriesRef.current) {
-      try {
-        negativeAreaSeriesRef.current.setData([]);
-      } catch (err) {}
-    }
-  }, [assetPair]);
+  }, []);
 
-  // Initialize chart
-  useLayoutEffect(() => {
-    if (!containerRef.current || chartRef.current) return;
+  // Update price lines with brand colors
+  const updatePriceLines = useCallback(() => {
+    if (!seriesRef.current) return;
 
-    try {
-      const containerWidth = 
-        containerRef.current.clientWidth || 
-        containerRef.current.offsetWidth || 
-        containerRef.current.getBoundingClientRect().width ||
-        window.innerWidth;
-      
-      const chartWidth = Math.max(containerWidth, 200);
-      const pricePrecision = pythPrice ? getPricePrecision(pythPrice) : 2;
-      
-      // Create chart
-      const chart = createChart(containerRef.current, {
-        width: chartWidth,
-        height,
-        layout: {
-          background: { color: CHART_COLORS.background },
-          textColor: CHART_COLORS.text,
-          fontFamily: "'Trebuchet MS', 'Lucida Grande', 'Lucida Sans Unicode', Arial, sans-serif",
-          fontSize: 10,
-        },
-        grid: {
-          vertLines: { 
-            visible: false,
-          },
-          horzLines: { 
-            visible: false, // Disable grid lines
-          },
-        },
-        crosshair: {
-          mode: CrosshairMode.Normal,
-          vertLine: {
-            color: CHART_COLORS.crosshair,
-            width: 1,
-            style: LineStyle.Dashed,
-            labelBackgroundColor: CHART_COLORS.background,
-          },
-          horzLine: {
-            color: CHART_COLORS.crosshair,
-            width: 1,
-            style: LineStyle.Dashed,
-            labelBackgroundColor: CHART_COLORS.background,
-          },
-        },
-        leftPriceScale: {
-          visible: false,
-        },
-        rightPriceScale: {
-          borderColor: 'rgba(255, 255, 255, 0.06)',
-          textColor: CHART_COLORS.text,
-          scaleMargins: {
-            top: 0.2,
-            bottom: 0.2,
-          },
-          alignLabels: true,
-          borderVisible: false,
-          entireTextOnly: true,
-          autoScale: true,
-          visible: true,
-        },
-        timeScale: {
-          borderColor: 'rgba(255, 255, 255, 0.06)',
-          timeVisible: true,
-          secondsVisible: false, // No seconds for 5m candles
-          borderVisible: false,
-          fixLeftEdge: false,
-          fixRightEdge: false,
-          rightOffset: 2,
-          barSpacing: 5, // Optimized for iPhone 15 Pro Max (430px width) - 72 candles
-          minBarSpacing: 2,
-          tickMarkFormatter: (time: UTCTimestamp) => {
-            const date = new Date(time * 1000);
-            return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-          },
-        },
-        handleScale: {
-          axisPressedMouseMove: {
-            time: true,
-            price: false,
-          },
-          mouseWheel: false,
-          pinch: false,
-        },
-        handleScroll: {
-          mouseWheel: false,
-          pressedMouseMove: true,
-          horzTouchDrag: true,
-          vertTouchDrag: false,
-        },
-        localization: {
-          priceFormatter: (price: number) => formatPrice(price),
-        },
-      });
-
-      // Add positive delta area series (behind line, rendered first)
-      const positiveAreaSeries = chart.addSeries(AreaSeries, {
-        topColor: CHART_COLORS.areaPositive,
-        bottomColor: 'rgba(0, 0, 0, 0)',
-        lineColor: 'transparent', // No visible line border
-        priceLineVisible: false,
-        lastValueVisible: false, // No last-value label
-        priceFormat: {
-          type: 'price',
-          precision: pricePrecision,
-          minMove: 0.01,
-        },
-      });
-
-      // Add negative delta area series (behind line, rendered second)
-      const negativeAreaSeries = chart.addSeries(AreaSeries, {
-        topColor: CHART_COLORS.areaNegative,
-        bottomColor: 'rgba(0, 0, 0, 0)',
-        lineColor: 'transparent', // No visible line border
-        priceLineVisible: false,
-        lastValueVisible: false, // No last-value label
-        priceFormat: {
-          type: 'price',
-          precision: pricePrecision,
-          minMove: 0.01,
-        },
-      });
-
-      // Add line series (on top of areas) - primary series using close price
-      const lineSeries = chart.addSeries(LineSeries, {
-        color: lineColor,
-        lineWidth: 2,
-        priceLineVisible: true, // Keep last-price horizontal line + label
-        lastValueVisible: true, // Show last price label
-        priceFormat: {
-          type: 'price',
-          precision: pricePrecision,
-          minMove: 0.01,
-        },
-        visible: true,
-      });
-
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-        updateTimeRangeDisplay();
-      });
-
-      chartRef.current = chart;
-      lineSeriesRef.current = lineSeries;
-      positiveAreaSeriesRef.current = positiveAreaSeries;
-      negativeAreaSeriesRef.current = negativeAreaSeries;
-      setIsChartReady(true);
-      
-      setTimeout(() => {
-        if (containerRef.current && chartRef.current) {
-          const newWidth = 
-            containerRef.current.clientWidth || 
-            containerRef.current.offsetWidth ||
-            containerRef.current.getBoundingClientRect().width;
-          if (newWidth > 0 && newWidth !== chartWidth) {
-            chartRef.current.applyOptions({ width: newWidth });
-          }
-        }
-      }, 100);
-    } catch (err) {
-      console.error('[PriceChart] Failed to create chart:', err);
-    }
-
-    // Resize handling
-    let resizeTimeout: NodeJS.Timeout;
-    const handleResize = () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(() => {
-        if (containerRef.current && chartRef.current) {
-          const newWidth = 
-            containerRef.current.clientWidth || 
-            containerRef.current.offsetWidth ||
-            containerRef.current.getBoundingClientRect().width;
-          const newHeight = 
-            containerRef.current.clientHeight ||
-            height;
-          if (newWidth > 0 && newHeight > 0) {
-            chartRef.current.applyOptions({
-              width: newWidth,
-              height: newHeight,
-            });
-          }
-        }
-      }, 100);
-    };
-
-    let resizeObserver: ResizeObserver | null = null;
-    if (containerRef.current && typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(handleResize);
-      resizeObserver.observe(containerRef.current);
-    } else {
-      window.addEventListener('resize', handleResize);
-    }
-
-    return () => {
-      clearTimeout(resizeTimeout);
-      if (resizeObserver && containerRef.current) {
-        resizeObserver.unobserve(containerRef.current);
-        resizeObserver.disconnect();
-      } else {
-        window.removeEventListener('resize', handleResize);
-      }
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
-        lineSeriesRef.current = null;
-        positiveAreaSeriesRef.current = null;
-        negativeAreaSeriesRef.current = null;
-        entryPriceLineRef.current = null;
-        liquidationPriceLineRef.current = null;
-      }
-      setIsChartReady(false);
-    };
-  }, []); // Only initialize once
-
-  // Update chart height when it changes
-  useEffect(() => {
-    if (chartRef.current && isChartReady) {
-      chartRef.current.applyOptions({ height });
-    }
-  }, [height, isChartReady]);
-
-  // Update line color when it changes
-  useEffect(() => {
-    if (lineSeriesRef.current && isChartReady) {
-      lineSeriesRef.current.applyOptions({ color: lineColor });
-    }
-  }, [lineColor, isChartReady]);
-
-  // Entry price line
-  useEffect(() => {
-    if (!isChartReady || !lineSeriesRef.current) return;
-
+    // Update entry price line - Lime Green
     if (entryPriceLineRef.current) {
       try {
-        lineSeriesRef.current.removePriceLine(entryPriceLineRef.current);
+        seriesRef.current.removePriceLine(entryPriceLineRef.current);
       } catch (err) {}
       entryPriceLineRef.current = null;
     }
 
     if (entryPrice !== null && entryPrice > 0) {
       try {
-        entryPriceLineRef.current = lineSeriesRef.current.createPriceLine({
+        entryPriceLineRef.current = seriesRef.current.createPriceLine({
           price: entryPrice,
           color: CHART_COLORS.entry,
-          lineWidth: 1,
-          lineStyle: LineStyle.Solid,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: '',
+          title: 'ENTRY',
         });
       } catch (err) {
         console.error('[PriceChart] Error creating entry price line:', err);
       }
     }
-  }, [entryPrice, isChartReady]);
 
-  // Liquidation price line
-  useEffect(() => {
-    if (!isChartReady || !lineSeriesRef.current) return;
-
+    // Update liquidation price line - Hot Pink
     if (liquidationPriceLineRef.current) {
       try {
-        lineSeriesRef.current.removePriceLine(liquidationPriceLineRef.current);
+        seriesRef.current.removePriceLine(liquidationPriceLineRef.current);
       } catch (err) {}
       liquidationPriceLineRef.current = null;
     }
 
-    if (liquidationPrice !== null && liquidationPrice > 0) {
+    if (calculatedLiquidationPrice !== null && calculatedLiquidationPrice > 0) {
       try {
-        liquidationPriceLineRef.current = lineSeriesRef.current.createPriceLine({
-          price: liquidationPrice,
+        liquidationPriceLineRef.current = seriesRef.current.createPriceLine({
+          price: calculatedLiquidationPrice,
           color: CHART_COLORS.liquidation,
-          lineWidth: 1,
+          lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: '',
+          title: 'LIQ',
         });
       } catch (err) {
         console.error('[PriceChart] Error creating liquidation price line:', err);
       }
     }
-  }, [liquidationPrice, isChartReady]);
 
-  const candleCount = dataBufferRef.current.length;
-  const hasHistory = candleCount > VISIBLE_CANDLES;
-  const priceChange = entryPrice && pythPrice 
-    ? ((pythPrice - entryPrice) / entryPrice) * 100 
-    : null;
-  const isPriceUp = priceChange !== null && priceChange > 0;
+    // Update take profit price line - Lime Green (dashed, different style)
+    if (takeProfitPriceLineRef.current) {
+      try {
+        seriesRef.current.removePriceLine(takeProfitPriceLineRef.current);
+      } catch (err) {}
+      takeProfitPriceLineRef.current = null;
+    }
+
+    if (takeProfitPrice !== null && takeProfitPrice > 0) {
+      try {
+        takeProfitPriceLineRef.current = seriesRef.current.createPriceLine({
+          price: takeProfitPrice,
+          color: CHART_COLORS.entry,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: 'TP',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating take profit price line:', err);
+      }
+    }
+  }, [entryPrice, calculatedLiquidationPrice, takeProfitPrice]);
+
+  // Initialize chart only once
+  useEffect(() => {
+    if (!containerRef.current || !assetPair || chartRef.current) return;
+
+    const container = containerRef.current;
+    const containerWidth = container.clientWidth || container.offsetWidth || container.getBoundingClientRect().width || window.innerWidth;
+    const chartWidth = Math.max(containerWidth, 200);
+    const pricePrecision = pythPrice ? getPricePrecision(pythPrice) : 2;
+    const chartHeight = Math.max(height, 80);
+
+    // Create chart - minimal, clean line chart
+    const chart = createChart(container, {
+      width: chartWidth,
+      height: chartHeight,
+      layout: {
+        background: { color: 'transparent' },
+        textColor: CHART_COLORS.text,
+        fontFamily: "'JetBrains Mono', 'Courier New', monospace",
+        fontSize: 14, // Increased from 10 for better readability
+      },
+      grid: {
+        vertLines: { visible: false },
+        horzLines: { visible: false },
+      },
+      crosshair: {
+        mode: CrosshairMode.Hidden, // Hide crosshair for minimal look
+      },
+      leftPriceScale: { visible: false },
+      rightPriceScale: {
+        visible: false, // Hide price scale for minimal look
+      },
+      timeScale: {
+        visible: false, // Hide time scale for minimal look
+        fixLeftEdge: true,
+        fixRightEdge: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: false,
+        mouseWheel: false,
+        pinch: false,
+      },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
+        vertTouchDrag: false,
+      },
+      localization: {
+        priceFormatter: (price: number) => formatPrice(price),
+      },
+    });
+
+    // Add line series - simple, clean line
+    const series = chart.addSeries(LineSeries, {
+      color: chartLineColor,
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      priceFormat: {
+        type: 'price',
+        precision: pricePrecision,
+        minMove: 0.01,
+      },
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = series;
+    chartDimensionsRef.current = { width: chartWidth, height: chartHeight };
+
+    // Handle resize - debounced
+    let resizeTimeout: NodeJS.Timeout | null = null;
+    const handleResize = () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (container && chart && chartRef.current) {
+          const newWidth = container.clientWidth || container.offsetWidth || container.getBoundingClientRect().width;
+          const currentWidth = chartDimensionsRef.current.width;
+          if (Math.abs(newWidth - currentWidth) > 5) {
+            if (newWidth > 0) {
+              chart.applyOptions({ width: newWidth });
+              chartDimensionsRef.current.width = newWidth;
+            }
+          }
+        }
+      }, 150);
+    };
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(handleResize);
+      resizeObserver.observe(container);
+    } else {
+      window.addEventListener('resize', handleResize);
+    }
+
+    // Load initial data
+    const loadData = () => {
+      const candles = getChartData(assetPair, CHART_RESOLUTION);
+      
+      if (candles.length > 0) {
+        const validCandles = candles.filter(candle => 
+          candle && 
+          !isNaN(candle.close) &&
+          candle.close > 0
+        );
+        const visibleCandles = Math.min(30, validCandles.length);
+        const slicedCandles = validCandles.slice(-visibleCandles);
+        const lineData = slicedCandles.map(candle => ({
+          time: candle.time as UTCTimestamp,
+          value: candle.close,
+        }));
+        
+        if (lineData.length > 0) {
+          series.setData(lineData);
+          
+          // Calculate price range that includes all price lines and data
+          const dataPrices = lineData.map(d => d.value);
+          const priceLines = [
+            entryPrice,
+            calculatedLiquidationPrice,
+            takeProfitPrice,
+          ].filter((p): p is number => p !== null && p > 0);
+          
+          const allPrices = [...dataPrices, ...priceLines];
+          
+          requestAnimationFrame(() => {
+            chart.timeScale().fitContent();
+            
+            // Ensure price lines are included in visible range
+            // Add data points at price line levels to force scale to include them
+            if (allPrices.length > 0 && priceLines.length > 0 && lineData.length > 0) {
+              const extendedData = [...lineData];
+              const firstTime = lineData[0].time;
+              const lastTime = lineData[lineData.length - 1].time;
+              
+              // Add data points at price line levels (at start and end times)
+              // These ensure the price scale includes the price lines
+              priceLines.forEach(price => {
+                extendedData.push({
+                  time: firstTime,
+                  value: price,
+                });
+                extendedData.push({
+                  time: lastTime,
+                  value: price,
+                });
+              });
+              
+              // Set data with price line levels included, then restore
+              // This forces the scale to include price lines
+              series.setData(extendedData);
+              requestAnimationFrame(() => {
+                // Restore original data - scale will maintain the range
+                series.setData(lineData);
+              });
+            }
+          });
+        }
+      }
+    };
+
+    loadData();
+    
+    // Update price lines after series is created
+    if (entryPrice !== null && entryPrice > 0) {
+      try {
+        entryPriceLineRef.current = series.createPriceLine({
+          price: entryPrice,
+          color: CHART_COLORS.entry,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'ENTRY',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating entry price line:', err);
+      }
+    }
+
+    if (calculatedLiquidationPrice !== null && calculatedLiquidationPrice > 0) {
+      try {
+        liquidationPriceLineRef.current = series.createPriceLine({
+          price: calculatedLiquidationPrice,
+          color: CHART_COLORS.liquidation,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'LIQ',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating liquidation price line:', err);
+      }
+    }
+
+    if (takeProfitPrice !== null && takeProfitPrice > 0) {
+      try {
+        takeProfitPriceLineRef.current = series.createPriceLine({
+          price: takeProfitPrice,
+          color: CHART_COLORS.entry,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: 'TP',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating take profit price line:', err);
+      }
+    }
+
+    // Periodic sync for real-time updates
+    const syncInterval = setInterval(() => {
+      const candles = getChartData(assetPair, CHART_RESOLUTION);
+      if (candles.length > 0 && series) {
+        const validCandles = candles.filter(candle => 
+          candle && 
+          !isNaN(candle.close) &&
+          candle.close > 0
+        );
+        const visibleCandles = Math.min(30, validCandles.length);
+        const slicedCandles = validCandles.slice(-visibleCandles);
+        const lineData = slicedCandles.map(candle => ({
+          time: candle.time as UTCTimestamp,
+          value: candle.close,
+        }));
+        if (lineData.length > 0) {
+          const latestPoint = lineData[lineData.length - 1];
+          try {
+            series.update(latestPoint);
+          } catch (err) {
+            series.setData(lineData);
+          }
+        }
+      }
+    }, SYNC_INTERVAL_MS);
+
+    // Cleanup
+    return () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      if (resizeObserver) {
+        resizeObserver.unobserve(container);
+        resizeObserver.disconnect();
+      } else {
+        window.removeEventListener('resize', handleResize);
+      }
+      clearInterval(syncInterval);
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      entryPriceLineRef.current = null;
+      liquidationPriceLineRef.current = null;
+      takeProfitPriceLineRef.current = null;
+    };
+    // Only recreate chart when assetPair changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetPair]);
+
+  // Update line color when PnL changes
+  useEffect(() => {
+    if (seriesRef.current) {
+      seriesRef.current.applyOptions({
+        color: chartLineColor,
+      });
+    }
+  }, [chartLineColor]);
+
+  // Update chart height
+  useEffect(() => {
+    if (chartRef.current) {
+      const currentHeight = chartDimensionsRef.current.height;
+      const chartHeight = Math.max(height, 80);
+      if (Math.abs(chartHeight - currentHeight) > 5) {
+        chartRef.current.applyOptions({ height: chartHeight });
+        chartDimensionsRef.current.height = chartHeight;
+      }
+    }
+  }, [height]);
+
+  // Load data when asset changes (separate from chart init)
+  useEffect(() => {
+    if (!chartRef.current || !seriesRef.current || !assetPair) return;
+
+    const candles = getChartData(assetPair, CHART_RESOLUTION);
+    if (candles.length > 0) {
+      const validCandles = candles.filter(candle => 
+        candle && 
+        !isNaN(candle.close) &&
+        candle.close > 0
+      );
+      const visibleCandles = Math.min(30, validCandles.length);
+      const slicedCandles = validCandles.slice(-visibleCandles);
+      const lineData = slicedCandles.map(candle => ({
+        time: candle.time as UTCTimestamp,
+        value: candle.close,
+      }));
+      if (lineData.length > 0) {
+        seriesRef.current.setData(lineData);
+        
+        // Recalculate price range including price lines
+        const dataPrices = lineData.map(d => d.value);
+        const priceLines = [
+          entryPrice,
+          calculatedLiquidationPrice,
+          takeProfitPrice,
+        ].filter((p): p is number => p !== null && p > 0);
+        
+        const allPrices = [...dataPrices, ...priceLines];
+        
+        requestAnimationFrame(() => {
+          if (chartRef.current) {
+            chartRef.current.timeScale().fitContent();
+            // Force price scale update to include price lines
+            if (allPrices.length > 0 && chartRef.current) {
+              chartRef.current.priceScale('right').applyOptions({
+                autoScale: true,
+              });
+            }
+          }
+        });
+      }
+    }
+  }, [assetPair]);
+
+  // Update price lines when entry/liquidation/takeProfit prices change
+  useEffect(() => {
+    if (!seriesRef.current || !chartRef.current) return;
+
+    // Update entry price line
+    if (entryPriceLineRef.current) {
+      try {
+        seriesRef.current.removePriceLine(entryPriceLineRef.current);
+      } catch (err) {}
+      entryPriceLineRef.current = null;
+    }
+    if (entryPrice !== null && entryPrice > 0) {
+      try {
+        entryPriceLineRef.current = seriesRef.current.createPriceLine({
+          price: entryPrice,
+          color: CHART_COLORS.entry,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'ENTRY',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating entry price line:', err);
+      }
+    }
+
+    // Update liquidation price line
+    if (liquidationPriceLineRef.current) {
+      try {
+        seriesRef.current.removePriceLine(liquidationPriceLineRef.current);
+      } catch (err) {}
+      liquidationPriceLineRef.current = null;
+    }
+    if (calculatedLiquidationPrice !== null && calculatedLiquidationPrice > 0) {
+      try {
+        liquidationPriceLineRef.current = seriesRef.current.createPriceLine({
+          price: calculatedLiquidationPrice,
+          color: CHART_COLORS.liquidation,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'LIQ',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating liquidation price line:', err);
+      }
+    }
+
+    // Update take profit price line
+    if (takeProfitPriceLineRef.current) {
+      try {
+        seriesRef.current.removePriceLine(takeProfitPriceLineRef.current);
+      } catch (err) {}
+      takeProfitPriceLineRef.current = null;
+    }
+    if (takeProfitPrice !== null && takeProfitPrice > 0) {
+      try {
+        takeProfitPriceLineRef.current = seriesRef.current.createPriceLine({
+          price: takeProfitPrice,
+          color: CHART_COLORS.entry,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: 'TP',
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error creating take profit price line:', err);
+      }
+    }
+
+    // After creating price lines, ensure they're visible by adjusting price scale
+    // Get current data range
+    const currentData = seriesRef.current.data();
+    if (currentData && currentData.length > 0) {
+      const dataPrices = currentData.map((d: any) => d.value);
+      const priceLines = [
+        entryPrice,
+        calculatedLiquidationPrice,
+        takeProfitPrice,
+      ].filter((p): p is number => p !== null && p > 0);
+      
+      const allPrices = [...dataPrices, ...priceLines];
+      if (allPrices.length > 0) {
+        const minPrice = Math.min(...allPrices);
+        const maxPrice = Math.max(...allPrices);
+        const priceRange = maxPrice - minPrice;
+        const padding = Math.max(priceRange * 0.1, maxPrice * 0.01);
+        
+        // Force price scale to include all prices
+        requestAnimationFrame(() => {
+          if (chartRef.current && seriesRef.current) {
+            // Add invisible data points at price line levels to force scale inclusion
+            const timeScale = chartRef.current.timeScale();
+            const visibleRange = timeScale.getVisibleRange();
+            if (visibleRange) {
+              // Add temporary invisible markers to ensure price lines are in range
+              priceLines.forEach(price => {
+                try {
+                  // The price lines should already be visible, but we ensure scale includes them
+                  chartRef.current?.priceScale('right').applyOptions({
+                    autoScale: true,
+                  });
+                } catch (err) {
+                  // Ignore errors
+                }
+              });
+            }
+          }
+        });
+      }
+    }
+  }, [entryPrice, calculatedLiquidationPrice, takeProfitPrice]);
 
   return (
     <div 
-      className="w-full relative price-chart-container" 
+      className="w-full relative" 
       style={{ 
         width: '100%', 
+        height,
         margin: 0, 
-        padding: '0 4px', // Reduced padding for better mobile fit
+        padding: 0,
         minWidth: 0,
         maxWidth: '100%',
         boxSizing: 'border-box',
+        background: 'transparent',
+        borderRadius: 0,
+        overflow: 'hidden',
       }}
+      role="img"
+      aria-label={`Price chart for ${assetPair || 'asset'}. Entry price: ${entryPrice?.toFixed(2) || 'not set'}. Current trend: ${pnl >= 0 ? 'up' : 'down'}.`}
     >
-      {/* Minimal time range overlay */}
-      {timeRange && candleCount > 0 && (
-        <div 
-          className="absolute top-2 left-2 z-10 px-2 py-1 rounded text-[10px] font-sans"
-          style={{
-            background: 'rgba(19, 23, 34, 0.8)',
-            backdropFilter: 'blur(4px)',
-            WebkitBackdropFilter: 'blur(4px)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            color: CHART_COLORS.text,
-            fontSize: '10px',
-          }}
-        >
-          {timeRange}
-        </div>
-      )}
-      
-      {/* Minimal price change indicator */}
-      {priceChange !== null && (
-        <div 
-          className="absolute bottom-2 right-2 z-10 px-2 py-1 rounded text-[10px] font-sans"
-          style={{
-            background: 'rgba(19, 23, 34, 0.8)',
-            backdropFilter: 'blur(4px)',
-            WebkitBackdropFilter: 'blur(4px)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-            color: isPriceUp ? CHART_COLORS.priceUp : CHART_COLORS.priceDown,
-            fontSize: '10px',
-          }}
-        >
-          {isPriceUp ? '+' : ''}{priceChange.toFixed(2)}%
-        </div>
-      )}
-      
-      {/* Chart container */}
+      {/* Chart Container - Clean, minimal */}
       <div 
         ref={containerRef}
-        className="w-full touch-pan-x chart-touch-container"
+        className="w-full"
         style={{ 
           height,
           width: '100%',

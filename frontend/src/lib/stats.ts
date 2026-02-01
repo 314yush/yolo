@@ -5,6 +5,7 @@ const STORAGE_KEY = 'yolo_stats';
 const DEFAULT_STATS: TradeStats = {
   totalTrades: 0,
   activePositions: 0,
+  totalVolume: 0,
 };
 
 export function loadStats(): TradeStats {
@@ -26,6 +27,9 @@ export function loadStats(): TradeStats {
         : 0,
       activePositions: typeof parsed.activePositions === 'number' && parsed.activePositions >= 0
         ? parsed.activePositions
+        : 0,
+      totalVolume: typeof parsed.totalVolume === 'number' && parsed.totalVolume >= 0
+        ? parsed.totalVolume
         : 0,
     };
   } catch (error) {
@@ -60,6 +64,20 @@ export function updateActivePositions(count: number): void {
   const newStats = {
     ...stats,
     activePositions: count,
+  };
+  saveStats(newStats);
+}
+
+/**
+ * Increment volume when a trade is opened
+ * Volume = position size (collateral * leverage) of the opened trade
+ */
+export function incrementVolume(collateral: number, leverage: number): void {
+  const stats = loadStats();
+  const positionSize = collateral * leverage;
+  const newStats = {
+    ...stats,
+    totalVolume: stats.totalVolume + positionSize,
   };
   saveStats(newStats);
 }
