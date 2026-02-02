@@ -4,6 +4,7 @@ import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constan
 import { loadSettings } from '@/lib/settings';
 import { loadStats, saveStats, incrementVolume } from '@/lib/stats';
 import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
+import { isCommoditiesMarketOpen } from '@/lib/marketHours';
 import type { Toast } from '@/components/Toast';
 import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
 
@@ -51,6 +52,10 @@ interface TradeState {
   setIsLiquidated: (liquidated: boolean) => void;
   lastKnownPnLPercentage: number | null; // Track last PnL % to detect liquidation
   setLastKnownPnLPercentage: (percentage: number | null) => void;
+  
+  // Intentional close flag - prevents false liquidation detection during flip/close
+  isIntentionalClose: boolean;
+  setIsIntentionalClose: (intentional: boolean) => void;
 
   // Trade execution state
   txHash: `0x${string}` | null;
@@ -139,6 +144,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   pnlData: null,
   isLiquidated: false,
   lastKnownPnLPercentage: null,
+  isIntentionalClose: false,
   txHash: null,
   isExecuting: false,
   error: null,
@@ -230,6 +236,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   },
   setIsLiquidated: (isLiquidated) => set({ isLiquidated }),
   setLastKnownPnLPercentage: (lastKnownPnLPercentage) => set({ lastKnownPnLPercentage }),
+  setIsIntentionalClose: (isIntentionalClose) => set({ isIntentionalClose }),
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
   setError: (error) => set({ error }),
@@ -361,22 +368,40 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   // Randomly select asset, leverage, direction
   // Uses weighted random selection for leverage - higher leverage = more likely
+  // Filters out assets with closed markets (e.g., XAU/XAG on weekends)
   randomizeSelection: () => {
-    const asset = ASSETS[Math.floor(Math.random() * ASSETS.length)];
+    // Filter out assets with closed markets (e.g., XAU/XAG on weekends)
+    const marketOpen = isCommoditiesMarketOpen();
+    const availableAssets = ASSETS.filter(asset => {
+      if (asset.hasMarketHours && !marketOpen) {
+        return false; // Skip XAU/XAG when commodities market is closed
+      }
+      return true;
+    });
     
-    // Filter leverages that are compatible with this asset's max leverage
-    const compatibleLeverages = LEVERAGES.filter(l => l.value <= asset.maxLeverage);
+    // Random asset selection from available assets
+    const asset = availableAssets[Math.floor(Math.random() * availableAssets.length)];
     
-    // Weighted random selection for leverage
-    const totalWeight = compatibleLeverages.reduce((sum, l) => sum + l.weight, 0);
-    let random = Math.random() * totalWeight;
-    let leverage = compatibleLeverages[0];
+    let leverage;
     
-    for (const l of compatibleLeverages) {
-      random -= l.weight;
-      if (random <= 0) {
-        leverage = l;
-        break;
+    // Check if asset has fixed leverage (e.g., XAU/XAG always use 250x)
+    if (asset.fixedLeverage) {
+      leverage = LEVERAGES.find(l => l.value === asset.fixedLeverage) || LEVERAGES[0];
+    } else {
+      // Filter leverages that are compatible with this asset's max leverage
+      const compatibleLeverages = LEVERAGES.filter(l => l.value <= asset.maxLeverage);
+      
+      // Weighted random selection for leverage
+      const totalWeight = compatibleLeverages.reduce((sum, l) => sum + l.weight, 0);
+      let random = Math.random() * totalWeight;
+      leverage = compatibleLeverages[0];
+      
+      for (const l of compatibleLeverages) {
+        random -= l.weight;
+        if (random <= 0) {
+          leverage = l;
+          break;
+        }
       }
     }
     
@@ -397,6 +422,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     pnlData: null,
     isLiquidated: false,
     lastKnownPnLPercentage: null,
+    isIntentionalClose: false,
     txHash: null,
     isExecuting: false,
     error: null,

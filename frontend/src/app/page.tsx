@@ -537,11 +537,12 @@ export default function HomePage() {
       return;
     }
 
-    const { currentTrade, pnlData, prebuiltCloseTx, setPrebuiltCloseTx } = useTradeStore.getState();
+    const { currentTrade, pnlData, prebuiltCloseTx, setPrebuiltCloseTx, setIsIntentionalClose } = useTradeStore.getState();
     if (!userAddress || !delegateAddress || !currentTrade) return;
 
     playBoom();
     setIsClosing(true);
+    setIsIntentionalClose(true); // Prevent false liquidation detection
 
     try {
       // Use pre-built tx if available, otherwise build on-demand
@@ -567,6 +568,7 @@ export default function HomePage() {
       setError(err instanceof Error ? err.message : 'Failed to close trade');
     } finally {
       setIsClosing(false);
+      setIsIntentionalClose(false); // Clear flag after close attempt
     }
   }, [userAddress, delegateAddress, signAndWait, setError, reset, playBoom]);
 

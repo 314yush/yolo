@@ -5,6 +5,8 @@ export interface Asset {
   icon: string;
   pairIndex: number;
   maxLeverage: number; // Max leverage for ZFP (PnL mode)
+  fixedLeverage?: number; // If set, always use this leverage (ignores wheel randomization)
+  hasMarketHours?: boolean; // If true, check market open/closed status before allowing trades
 }
 
 // Leverage types

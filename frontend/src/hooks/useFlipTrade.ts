@@ -25,6 +25,7 @@ export function useFlipTrade() {
     removePendingTradeHash, 
     showToast,
     prices,           // Real-time Pyth prices
+    setIsIntentionalClose, // Prevent false liquidation detection
   } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
   const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
@@ -79,6 +80,7 @@ export function useFlipTrade() {
     console.log(`[flipTrade] Closing trade: pairIndex=${trade.pairIndex}, tradeIndex=${trade.tradeIndex}, pair=${pairToUse}, isLong=${trade.isLong}`);
 
     setIsFlipping(true);
+    setIsIntentionalClose(true); // Prevent false liquidation detection
 
     try {
       // Get final PnL before closing
@@ -321,6 +323,7 @@ export function useFlipTrade() {
       throw error;
     } finally {
       setIsFlipping(false);
+      setIsIntentionalClose(false); // Clear intentional close flag
     }
   }, [
     userAddress,
@@ -339,6 +342,7 @@ export function useFlipTrade() {
     showToast,
     prices,
     playFlip,
+    setIsIntentionalClose,
   ]);
 
   return { flipTrade, isFlipping };

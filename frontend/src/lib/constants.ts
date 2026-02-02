@@ -8,6 +8,9 @@ export const ASSETS: Asset[] = [
   { name: 'BTC', color: '#FF9500', icon: '/logos/btc.svg', pairIndex: 1, maxLeverage: 500 },
   { name: 'SOL', color: '#14F195', icon: '/logos/sol.svg', pairIndex: 2, maxLeverage: 500 },
   { name: 'XRP', color: '#00AAE4', icon: '/logos/xrp.svg', pairIndex: 59, maxLeverage: 500 },
+  // Commodities - fixed 250x leverage, market hours restricted (closed on weekends)
+  { name: 'XAU', color: '#FFD700', icon: '/logos/xau.svg', pairIndex: 21, maxLeverage: 250, fixedLeverage: 250, hasMarketHours: true },
+  { name: 'XAG', color: '#C0C0C0', icon: '/logos/xag.svg', pairIndex: 20, maxLeverage: 250, fixedLeverage: 250, hasMarketHours: true },
 ];
 
 // Leverage options (color-coded by risk level)

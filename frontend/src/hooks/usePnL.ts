@@ -13,7 +13,7 @@ interface UsePnLOptions {
 export function usePnL(options: UsePnLOptions = {}) {
   const { enabled = true, interval = 2000 } = options;
   
-  const { userAddress, currentTrade, pnlData, setPnLData, setIsLiquidated, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex } = useTradeStore();
+  const { userAddress, currentTrade, pnlData, setPnLData, setIsLiquidated, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose } = useTradeStore();
   const { getPnL } = useAvantisAPI();
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -34,6 +34,7 @@ export function usePnL(options: UsePnLOptions = {}) {
   const lastKnownPnLPercentageRef = useRef(lastKnownPnLPercentage);
   const rememberedPairIndexRef = useRef(rememberedPairIndex);
   const rememberedTradeIndexRef = useRef(rememberedTradeIndex);
+  const isIntentionalCloseRef = useRef(isIntentionalClose);
   
   // Helper to create a unique key for a trade
   const getTradeKey = useCallback((trade: typeof currentTrade) => {
@@ -53,7 +54,8 @@ export function usePnL(options: UsePnLOptions = {}) {
     lastKnownPnLPercentageRef.current = lastKnownPnLPercentage;
     rememberedPairIndexRef.current = rememberedPairIndex;
     rememberedTradeIndexRef.current = rememberedTradeIndex;
-  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setIsLiquidated, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex]);
+    isIntentionalCloseRef.current = isIntentionalClose;
+  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setIsLiquidated, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose]);
 
   const fetchPnL = useCallback(async (isRetry = false): Promise<void> => {
     const userAddr = userAddressRef.current;
@@ -109,6 +111,13 @@ export function usePnL(options: UsePnLOptions = {}) {
         const currentPrice = currentPnL.currentPrice;
         
         if (trade && liquidationPrice > 0 && currentPrice > 0) {
+          // Skip liquidation detection if this is an intentional close (flip/manual close)
+          if (isIntentionalCloseRef.current) {
+            console.log('[usePnL] Skipping liquidation check - intentional close in progress');
+            setPnLDataRef.current(currentPnL);
+            return;
+          }
+          
           let isLiquidatedByPrice = false;
           
           if (trade.isLong) {
@@ -176,6 +185,12 @@ export function usePnL(options: UsePnLOptions = {}) {
         })));
         
         // Check if this might be a liquidation
+        // Skip if this is an intentional close (flip/manual close)
+        if (isIntentionalCloseRef.current) {
+          console.log('[usePnL] Position not found - intentional close in progress, not marking as liquidated');
+          return;
+        }
+        
         // If we previously had PnL data and it was near -85%, the position was likely liquidated
         const lastPnL = lastKnownPnLPercentageRef.current;
         const lastPnLData = pnlDataRef.current;
