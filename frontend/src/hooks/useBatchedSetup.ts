@@ -225,24 +225,31 @@ export function useBatchedSetup() {
       let batchId: string;
       
       try {
+        const sendCallsParams = {
+          version: '1.0',
+          chainId: '0x2105', // Base chain ID in hex (8453)
+          from: userAddress,
+          calls: calls.map(call => ({
+            to: call.to,
+            data: call.data,
+            value: call.value,
+          })),
+          atomicRequired: false, // Set to false for sequential execution (can still be atomic if wallet supports it)
+        };
+        
         batchId = await provider.request({
           method: 'wallet_sendCalls',
-          params: [
-            {
-              version: '1.0',
-              chainId: '0x2105', // Base chain ID in hex (8453)
-              from: userAddress,
-              calls: calls.map(call => ({
-                to: call.to,
-                data: call.data,
-                value: call.value,
-              })),
-            },
-          ],
+          params: [sendCallsParams],
         }) as string;
       } catch (sendCallsError: any) {
+        // Check error code and message for fallback conditions
+        const errorCode = sendCallsError?.code;
+        const errorMessage = sendCallsError?.message || '';
+        const matchesCode = errorCode === -32601;
+        const matchesMessage = errorMessage.includes('not supported') || errorMessage.includes('Unknown') || errorMessage.includes('doesn\'t has corresponding handler') || errorMessage.includes('doesn\'t have corresponding handler');
+        
         // If wallet_sendCalls is not supported (method not found), fall back to sequential transactions
-        if (sendCallsError?.code === -32601 || sendCallsError?.message?.includes('not supported') || sendCallsError?.message?.includes('Unknown')) {
+        if (matchesCode || matchesMessage) {
           console.warn('wallet_sendCalls not supported, falling back to sequential transactions');
           setSetupStatus('Wallet doesn\'t support batching. Sending transactions sequentially...');
           

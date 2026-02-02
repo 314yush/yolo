@@ -441,7 +441,7 @@ export function buildSetDelegateTx(
   return {
     to: AVANTIS_CONTRACTS.Trading,
     data: calldata,
-    value: '0',  // No value needed
+    value: '0x0',  // No value needed (must be hex string for EIP-5792)
     chainId: 8453,
   };
 }
@@ -481,7 +481,7 @@ export function buildUsdcApprovalTx(
   return {
     to: AVANTIS_CONTRACTS.USDC,
     data: calldata,
-    value: '0',  // No value needed
+    value: '0x0',  // No value needed (must be hex string for EIP-5792)
     chainId: 8453,
   };
 }
