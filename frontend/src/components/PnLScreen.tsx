@@ -9,6 +9,12 @@ import { usePrebuiltFlipTx } from '@/hooks/usePrebuiltFlipTx';
 import { PriceChart } from './PriceChart';
 import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
 
+// Chart colors matching PriceChart component
+const CHART_COLORS = {
+  entry: '#CCFF00',        // Lime Green for entry
+  liquidation: '#FF006E',  // Hot Pink for liquidation
+};
+
 interface PnLScreenProps {
   onClose: () => void;
   onRollAgain: () => void;
@@ -115,6 +121,13 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const liquidationPrice = pnlData?.trade?.liquidationPrice ?? currentTrade?.liquidationPrice ?? null;
   const currentPrice = pythCurrentPrice ?? pnlData?.currentPrice ?? null;
   
+  // Calculate liquidation price if not provided
+  const calculatedLiquidationPrice = liquidationPrice !== null && liquidationPrice > 0
+    ? liquidationPrice
+    : entryPrice !== null && entryPrice > 0
+    ? entryPrice * 0.15
+    : null;
+  
   // Calculate take profit price (200% gain)
   const takeProfitPrice = entryPrice && currentTrade 
     ? currentTrade.isLong 
@@ -135,16 +148,16 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
     <div 
       className="bg-black w-full safe-area-top safe-area-bottom flex flex-col"
       style={{
-        height: '100dvh',
-        maxHeight: '100dvh',
-        width: '100vw',
-        maxWidth: '100vw',
+        height: '100%',
+        maxHeight: '100%',
+        width: '100%',
+        maxWidth: '100%',
         overflow: 'hidden',
       }}
     >
       {/* 1. HERO: PnL Display - Top of screen, largest element */}
       <div 
-        className={`flex flex-col items-center justify-center px-4 pt-safe ${isFlashing ? 'animate-pnl-flash' : ''}`}
+        className={`flex flex-col items-center justify-center px-4 ${isFlashing ? 'animate-pnl-flash' : ''}`}
         style={{
           minHeight: '35vh',
           paddingTop: 'max(env(safe-area-inset-top, 0px), 1rem)',

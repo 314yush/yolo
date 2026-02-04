@@ -20,6 +20,7 @@ import { SetupFlow } from '@/components/SetupFlow';
 import { OnboardingFlow } from '@/components/OnboardingFlow';
 import { ToastContainer } from '@/components/Toast';
 import { AbstractBackground } from '@/components/AbstractBackground';
+import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
 import { hasCompletedOnboarding, clearOnboardingStatus } from '@/lib/onboarding';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { 
@@ -258,6 +259,7 @@ export default function HomePage() {
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
   const [isVerifyingDelegate, setIsVerifyingDelegate] = useState(false);
+  const [showInsufficientFundsModal, setShowInsufficientFundsModal] = useState(false);
   const verifyingRef = useRef<string | null>(null); // Track which address is being verified
 
   // Calculate total PnL for open trades (for warning banner)
@@ -309,6 +311,13 @@ export default function HomePage() {
     const traderAddress = userAddress || (user?.wallet?.address as `0x${string}` | undefined);
     
     if (!traderAddress || !delegateAddress || !currentSelection) return;
+
+    // Check USDC balance before proceeding
+    if (usdcBalance !== null && usdcBalance < collateral) {
+      console.log(`[handleSpinStart] Insufficient funds: balance=${usdcBalance}, required=${collateral}`);
+      setShowInsufficientFundsModal(true);
+      return;
+    }
 
     // Validate minimum position size ($100 minimum)
     const MIN_POSITION_SIZE_USD = 100.0;
@@ -1028,6 +1037,15 @@ export default function HomePage() {
 
 
       {/* Confirmation Modal for Rolling with Open Trades */}
+
+      {/* Insufficient Funds Modal */}
+      <InsufficientFundsModal
+        isOpen={showInsufficientFundsModal}
+        onClose={() => setShowInsufficientFundsModal(false)}
+        currentBalance={usdcBalance ?? 0}
+        requiredAmount={collateral}
+        userAddress={userAddress ?? ''}
+      />
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />

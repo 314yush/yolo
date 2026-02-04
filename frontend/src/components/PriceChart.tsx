@@ -9,7 +9,7 @@ import {
   UTCTimestamp, 
   LineStyle, 
   CrosshairMode, 
-  LineSeries,
+  AreaSeries,
   LineData
 } from 'lightweight-charts';
 import { useTradeStore } from '@/store/tradeStore';
@@ -68,6 +68,14 @@ function getPricePrecision(price: number): number {
   return 6;
 }
 
+// Convert hex color to RGBA with opacity
+function hexToRgba(hex: string, opacity: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
+
 function PriceChartComponent({ 
   assetPair, 
   lineColor = BRAND_COLORS.primary,
@@ -79,7 +87,7 @@ function PriceChartComponent({
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const entryPriceLineRef = useRef<IPriceLine | null>(null);
   const liquidationPriceLineRef = useRef<IPriceLine | null>(null);
   const takeProfitPriceLineRef = useRef<IPriceLine | null>(null);
@@ -136,7 +144,7 @@ function PriceChartComponent({
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'ENTRY',
+          title: `ENTRY: ${formatDisplayPrice(entryPrice)}`,
         });
       } catch (err) {
         console.error('[PriceChart] Error creating entry price line:', err);
@@ -159,7 +167,7 @@ function PriceChartComponent({
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'LIQ',
+          title: `LIQ: ${formatDisplayPrice(calculatedLiquidationPrice)}`,
         });
       } catch (err) {
         console.error('[PriceChart] Error creating liquidation price line:', err);
@@ -181,8 +189,8 @@ function PriceChartComponent({
           color: CHART_COLORS.entry,
           lineWidth: 2,
           lineStyle: LineStyle.Dotted,
-          axisLabelVisible: true,
-          title: 'TP',
+          axisLabelVisible: false, // Hide chart library label to reduce clutter
+          title: '',
         });
       } catch (err) {
         console.error('[PriceChart] Error creating take profit price line:', err);
@@ -217,9 +225,11 @@ function PriceChartComponent({
       crosshair: {
         mode: CrosshairMode.Hidden, // Hide crosshair for minimal look
       },
-      leftPriceScale: { visible: false },
+      leftPriceScale: { 
+        visible: false, // Hide price scale labels, but keep Entry/LIQ labels
+      },
       rightPriceScale: {
-        visible: false, // Hide price scale for minimal look
+        visible: false, // Hide right price scale
       },
       timeScale: {
         visible: false, // Hide time scale for minimal look
@@ -242,10 +252,12 @@ function PriceChartComponent({
       },
     });
 
-    // Add line series - simple, clean line
-    const series = chart.addSeries(LineSeries, {
-      color: chartLineColor,
+    // Add area series with gradient fill - visual richness
+    const series = chart.addSeries(AreaSeries, {
+      lineColor: chartLineColor,
       lineWidth: 2,
+      topColor: hexToRgba(chartLineColor, 0.4), // 40% opacity for more visible gradient
+      bottomColor: hexToRgba(chartLineColor, 0.05), // 5% opacity at bottom for subtle fade
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
@@ -286,7 +298,7 @@ function PriceChartComponent({
       window.addEventListener('resize', handleResize);
     }
 
-    // Load initial data
+    // Load initial data - optimized for faster rendering
     const loadData = () => {
       const candles = getChartData(assetPair, CHART_RESOLUTION);
       
@@ -296,8 +308,10 @@ function PriceChartComponent({
           !isNaN(candle.close) &&
           candle.close > 0
         );
-        const visibleCandles = Math.min(30, validCandles.length);
-        const slicedCandles = validCandles.slice(-visibleCandles);
+        
+        // Use fewer points for initial render (faster), then update with more
+        const initialPoints = Math.min(10, validCandles.length); // Start with 10 points
+        const slicedCandles = validCandles.slice(-initialPoints);
         const lineData = slicedCandles.map(candle => ({
           time: candle.time as UTCTimestamp,
           value: candle.close,
@@ -306,13 +320,32 @@ function PriceChartComponent({
         if (lineData.length > 0) {
           series.setData(lineData);
           
-          requestAnimationFrame(() => {
-            chart.timeScale().fitContent();
-          });
+          // Fit content immediately for faster initial render
+          chart.timeScale().fitContent();
+          
+          // Then update with more data points in next frame (progressive enhancement)
+          if (validCandles.length > initialPoints) {
+            requestAnimationFrame(() => {
+              const fullCandles = Math.min(30, validCandles.length);
+              const fullSlicedCandles = validCandles.slice(-fullCandles);
+              const fullLineData = fullSlicedCandles.map(candle => ({
+                time: candle.time as UTCTimestamp,
+                value: candle.close,
+              }));
+              if (fullLineData.length > lineData.length) {
+                series.setData(fullLineData);
+                chart.timeScale().fitContent();
+              }
+            });
+          }
         }
+      } else {
+        // Show empty chart immediately - don't wait for data
+        series.setData([]);
       }
     };
 
+    // Load data immediately (don't wait)
     loadData();
     
     // Update price lines after series is created
@@ -324,7 +357,7 @@ function PriceChartComponent({
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'ENTRY',
+          title: `ENTRY: ${formatDisplayPrice(entryPrice)}`,
         });
       } catch (err) {
         console.error('[PriceChart] Error creating entry price line:', err);
@@ -339,7 +372,7 @@ function PriceChartComponent({
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'LIQ',
+          title: `LIQ: ${formatDisplayPrice(calculatedLiquidationPrice)}`,
         });
       } catch (err) {
         console.error('[PriceChart] Error creating liquidation price line:', err);
@@ -353,8 +386,8 @@ function PriceChartComponent({
           color: CHART_COLORS.entry,
           lineWidth: 2,
           lineStyle: LineStyle.Dotted,
-          axisLabelVisible: true,
-          title: 'TP',
+          axisLabelVisible: false, // Hide chart library label to reduce clutter
+          title: '',
         });
       } catch (err) {
         console.error('[PriceChart] Error creating take profit price line:', err);
@@ -408,11 +441,13 @@ function PriceChartComponent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assetPair]);
 
-  // Update line color when PnL changes
+  // Update line color and gradient when PnL changes
   useEffect(() => {
     if (seriesRef.current) {
       seriesRef.current.applyOptions({
-        color: chartLineColor,
+        lineColor: chartLineColor,
+        topColor: hexToRgba(chartLineColor, 0.4), // 40% opacity for more visible gradient
+        bottomColor: hexToRgba(chartLineColor, 0.05), // 5% opacity at bottom for subtle fade
       });
     }
   }, [chartLineColor]);
@@ -429,7 +464,7 @@ function PriceChartComponent({
     }
   }, [height]);
 
-  // Load data when asset changes (separate from chart init)
+  // Load data when asset changes (separate from chart init) - optimized
   useEffect(() => {
     if (!chartRef.current || !seriesRef.current || !assetPair) return;
 
@@ -440,31 +475,26 @@ function PriceChartComponent({
         !isNaN(candle.close) &&
         candle.close > 0
       );
+      
+      // Use fewer points for faster updates
       const visibleCandles = Math.min(30, validCandles.length);
       const slicedCandles = validCandles.slice(-visibleCandles);
       const lineData = slicedCandles.map(candle => ({
         time: candle.time as UTCTimestamp,
         value: candle.close,
       }));
+      
       if (lineData.length > 0) {
         seriesRef.current.setData(lineData);
         
-        // Recalculate price range including price lines
-        const dataPrices = lineData.map(d => d.value);
-        const priceLines = [
-          entryPrice,
-          calculatedLiquidationPrice,
-          takeProfitPrice,
-        ].filter((p): p is number => p !== null && p > 0);
-        
-        const allPrices = [...dataPrices, ...priceLines];
-        
-        requestAnimationFrame(() => {
-          if (chartRef.current) {
-            chartRef.current.timeScale().fitContent();
-          }
-        });
+        // Fit content immediately (no requestAnimationFrame delay)
+        if (chartRef.current) {
+          chartRef.current.timeScale().fitContent();
+        }
       }
+    } else {
+      // Show empty chart immediately
+      seriesRef.current.setData([]);
     }
   }, [assetPair]);
 
@@ -487,7 +517,7 @@ function PriceChartComponent({
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'ENTRY',
+          title: `ENTRY: ${formatDisplayPrice(entryPrice)}`,
         });
       } catch (err) {
         console.error('[PriceChart] Error creating entry price line:', err);
@@ -509,7 +539,7 @@ function PriceChartComponent({
           lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'LIQ',
+          title: `LIQ: ${formatDisplayPrice(calculatedLiquidationPrice)}`,
         });
       } catch (err) {
         console.error('[PriceChart] Error creating liquidation price line:', err);
@@ -530,8 +560,8 @@ function PriceChartComponent({
           color: CHART_COLORS.entry,
           lineWidth: 2,
           lineStyle: LineStyle.Dotted,
-          axisLabelVisible: true,
-          title: 'TP',
+          axisLabelVisible: false, // Hide chart library label to reduce clutter
+          title: '',
         });
       } catch (err) {
         console.error('[PriceChart] Error creating take profit price line:', err);
@@ -539,6 +569,15 @@ function PriceChartComponent({
     }
 
   }, [entryPrice, calculatedLiquidationPrice, takeProfitPrice]);
+
+  // Format price for display
+  const formatDisplayPrice = (price: number | null): string => {
+    if (price === null || price === 0) return '';
+    if (price >= 10000) return price.toFixed(2);
+    if (price >= 100) return price.toFixed(2);
+    if (price >= 1) return price.toFixed(4);
+    return price.toFixed(6);
+  };
 
   return (
     <div 

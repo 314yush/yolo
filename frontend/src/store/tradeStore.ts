@@ -157,7 +157,13 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       usdcApproved: false,
     };
   })(),
-  collateral: DEFAULT_COLLATERAL,
+  collateral: (() => {
+    // Load collateral from settings to stay in sync
+    if (typeof window !== 'undefined') {
+      return loadSettings().collateral;
+    }
+    return DEFAULT_COLLATERAL;
+  })(),
   userAddress: null,
   openTrades: [],
   pendingTradeHashes: (() => {

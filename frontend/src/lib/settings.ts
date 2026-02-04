@@ -24,7 +24,7 @@ export function loadSettings(): Settings {
     // Validate and merge with defaults
     return {
       collateral: typeof parsed.collateral === 'number' 
-        ? Math.max(5, Math.min(1000, parsed.collateral)) 
+        ? Math.max(2, Math.min(1000, parsed.collateral)) 
         : DEFAULT_COLLATERAL,
       audioEnabled: typeof parsed.audioEnabled === 'boolean' ? parsed.audioEnabled : true,
       musicEnabled: typeof parsed.musicEnabled === 'boolean' ? parsed.musicEnabled : true, // Default to true for new users

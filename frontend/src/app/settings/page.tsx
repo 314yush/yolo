@@ -9,12 +9,16 @@ import { AvantisFooter } from '@/components/AvantisFooter';
 import type { Settings } from '@/types';
 
 const COLLATERAL_PRESETS = [5, 10, 25, 50, 100, 250, 500, 1000];
+const MIN_COLLATERAL = 2;
+const MAX_COLLATERAL = 1000;
 
 export default function SettingsPage() {
   const router = useRouter();
   const { setSettings, setCollateral, setTradeStats } = useTradeStore();
   // Use lazy initialization to avoid setState in effect
   const [localSettings, setLocalSettings] = useState<Settings>(() => loadSettings());
+  const [customInputValue, setCustomInputValue] = useState<string>('');
+  const [customInputError, setCustomInputError] = useState<string | null>(null);
 
   useEffect(() => {
     // Sync loaded settings to store (localSettings already initialized)
@@ -47,6 +51,49 @@ export default function SettingsPage() {
     setSettings(newSettings);
     saveSettings(newSettings);
   };
+
+  const handleCustomCollateralInput = (value: string) => {
+    setCustomInputValue(value);
+    setCustomInputError(null);
+
+    // Allow empty input (user clearing the field)
+    if (value === '') {
+      return;
+    }
+
+    // Check for non-numeric characters
+    if (!/^\d+$/.test(value)) {
+      setCustomInputError('Whole numbers only');
+      return;
+    }
+
+    const num = parseInt(value, 10);
+
+    // Validate range
+    if (num < MIN_COLLATERAL) {
+      setCustomInputError(`Minimum $${MIN_COLLATERAL}`);
+      return;
+    }
+
+    if (num > MAX_COLLATERAL) {
+      setCustomInputError(`Maximum $${MAX_COLLATERAL}`);
+      return;
+    }
+
+    // Valid input - apply it
+    handleCollateralChange(num);
+  };
+
+  const handleCustomCollateralBlur = () => {
+    // On blur, if the input is empty or invalid, reset to current collateral
+    if (customInputValue === '' || customInputError) {
+      setCustomInputValue('');
+      setCustomInputError(null);
+    }
+  };
+
+  // Check if current collateral matches a preset
+  const isCustomValue = !COLLATERAL_PRESETS.includes(localSettings.collateral);
 
   return (
     <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full">
@@ -93,7 +140,11 @@ export default function SettingsPage() {
               return (
                 <button
                   key={preset}
-                  onClick={() => handleCollateralChange(preset)}
+                  onClick={() => {
+                    handleCollateralChange(preset);
+                    setCustomInputValue('');
+                    setCustomInputError(null);
+                  }}
                   className={`
                     py-3 sm:py-4 text-sm sm:text-base font-black touch-manipulation min-h-[56px] sm:min-h-[64px]
                     border-4 border-black transition-all font-mono
@@ -110,6 +161,57 @@ export default function SettingsPage() {
                 </button>
               );
             })}
+          </div>
+
+          {/* Custom Collateral Input */}
+          <div className="mt-4 sm:mt-5">
+            <label className="block text-white/70 text-xs sm:text-sm font-bold uppercase tracking-wide mb-2">
+              Custom Amount
+            </label>
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/50 font-black text-lg">$</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={customInputValue}
+                  onChange={(e) => handleCustomCollateralInput(e.target.value)}
+                  onBlur={handleCustomCollateralBlur}
+                  placeholder={isCustomValue ? String(localSettings.collateral) : 'Enter amount'}
+                  className={`
+                    w-full py-3 sm:py-4 pl-9 pr-4 text-lg sm:text-xl font-black font-mono
+                    bg-[#1a1a1a] text-white placeholder-white/30
+                    border-4 transition-all
+                    focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black
+                    ${customInputError 
+                      ? 'border-[#FF006E]' 
+                      : isCustomValue 
+                        ? 'border-[#CCFF00]' 
+                        : 'border-[#333]'
+                    }
+                  `}
+                  style={{ 
+                    boxShadow: customInputError 
+                      ? '4px 4px 0px 0px rgba(255, 0, 110, 0.5)'
+                      : isCustomValue
+                        ? '4px 4px 0px 0px rgba(204, 255, 0, 0.5)'
+                        : '4px 4px 0px 0px rgba(0, 0, 0, 1)'
+                  }}
+                  aria-label="Enter custom collateral amount"
+                  aria-describedby={customInputError ? 'collateral-error' : 'collateral-hint'}
+                />
+              </div>
+            </div>
+            {customInputError ? (
+              <p id="collateral-error" className="mt-2 text-[#FF006E] text-xs sm:text-sm font-bold" role="alert">
+                {customInputError}
+              </p>
+            ) : (
+              <p id="collateral-hint" className="mt-2 text-white/40 text-xs sm:text-sm">
+                Min ${MIN_COLLATERAL}, max ${MAX_COLLATERAL}, whole numbers only
+              </p>
+            )}
           </div>
         </section>
 
