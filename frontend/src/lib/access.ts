@@ -54,6 +54,33 @@ export interface RedeemCodeResponse {
 }
 
 /**
+ * Check if backend is reachable. Call this to diagnose connection issues.
+ */
+export async function checkBackendConnection(): Promise<{
+  ok: boolean;
+  status?: number;
+  error?: string;
+  url?: string;
+}> {
+  const url = `${API_URL}/health`;
+  try {
+    const response = await fetch(url);
+    return {
+      ok: response.ok,
+      status: response.status,
+      url: API_URL,
+    };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      error: errMsg,
+      url: API_URL,
+    };
+  }
+}
+
+/**
  * Check if a wallet address has access (from backend DB)
  */
 export async function checkWalletAccess(walletAddress: string): Promise<boolean> {
@@ -83,8 +110,9 @@ export async function redeemAccessCode(
   code: string,
   walletAddress: string
 ): Promise<RedeemCodeResponse> {
+  const url = `${API_URL}/access/redeem`;
   try {
-    const response = await fetch(`${API_URL}/access/redeem`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -92,15 +120,33 @@ export async function redeemAccessCode(
         wallet_address: walletAddress.toLowerCase(),
       }),
     });
-    
-    const data: RedeemCodeResponse = await response.json();
+
+    const text = await response.text();
+    let data: RedeemCodeResponse;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      // Backend returned non-JSON (e.g. 502/503 HTML from Railway)
+      console.error('Redeem code: backend returned non-JSON', response.status, url);
+      return {
+        success: false,
+        error: 'network_error',
+        message: `Backend error (${response.status}). Your API may be down or restarting.`,
+      };
+    }
+
+    if (!response.ok) {
+      console.error('Redeem code: backend error', response.status, data);
+    }
     return data;
   } catch (error) {
-    console.error('Redeem code error:', error);
+    // fetch threw: network failure, CORS, connection refused, etc.
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error('Redeem code error:', errMsg, 'URL:', url);
     return {
       success: false,
       error: 'network_error',
-      message: 'Connection failed. Please try again.',
+      message: 'Connection failed. Check NEXT_PUBLIC_API_URL in Vercel env vars matches your Railway backend URL.',
     };
   }
 }

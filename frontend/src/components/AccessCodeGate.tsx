@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
-import { redeemAccessCode, getErrorMessage } from '@/lib/access';
+import React, { useState, useCallback, useEffect } from 'react';
+import { redeemAccessCode, getErrorMessage, checkBackendConnection } from '@/lib/access';
 
 interface AccessCodeGateProps {
   walletAddress: string;
@@ -13,6 +13,16 @@ export function AccessCodeGate({ walletAddress, onAccessGranted }: AccessCodeGat
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [backendReachable, setBackendReachable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    checkBackendConnection().then((result) => {
+      setBackendReachable(result.ok);
+      if (!result.ok && result.error) {
+        console.error('[AccessCodeGate] Backend unreachable:', result.error, 'URL:', result.url);
+      }
+    });
+  }, []);
 
   // Format code as user types (auto-add hyphens for YOLO-WORD-WORD format)
   const handleCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -186,6 +196,13 @@ export function AccessCodeGate({ walletAddress, onAccessGranted }: AccessCodeGat
                   'ENTER'
                 )}
               </button>
+
+              {/* Backend status - only show when we know it's unreachable */}
+              {backendReachable === false && (
+                <p className="text-[#FF006E] text-xs text-center font-bold">
+                  Backend unreachable. Check browser console for URL and CORS.
+                </p>
+              )}
 
               {/* Help text */}
               <p className="text-white/70 text-sm text-center font-bold">

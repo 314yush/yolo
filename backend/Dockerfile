@@ -19,8 +19,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port
+# Railway injects PORT; default to 8000 for local
+ENV PORT=8000
+
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application - Railway sets PORT at runtime
+CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"
