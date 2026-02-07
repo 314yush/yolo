@@ -6,6 +6,7 @@ import { useAvantisAPI } from './useAvantisAPI';
 import { useDelegateWallet } from './useDelegateWallet';
 import { buildUsdcApprovalTx } from '@/lib/avantisEncoder';
 import type { UnsignedTx } from '@/types';
+import { debug } from '@/lib/debug';
 
 // USDC approval limit: 10,000 USDC (in 6 decimals)
 const USDC_APPROVAL_LIMIT = 10_000n * 10n ** 6n; // 10,000,000,000 (10k USDC)
@@ -200,13 +201,13 @@ export function useBatchedSetup() {
 
       // Update status message based on what's needed
       if (hasExistingDelegate && needsUsdcApproval) {
-        setSetupStatus('Replacing existing delegate and approving USDC...');
+        setSetupStatus('Step 1/2: Removing old delegate...');
       } else if (hasExistingDelegate && !needsUsdcApproval) {
-        setSetupStatus('Replacing existing delegate (USDC already approved)...');
+        setSetupStatus('Step 1/1: Removing old delegate...');
       } else if (!hasExistingDelegate && needsUsdcApproval) {
-        setSetupStatus('Setting up delegate wallet and approving USDC...');
+        setSetupStatus('Step 1/2: Creating delegate wallet...');
       } else {
-        setSetupStatus('Setting up delegate wallet (USDC already approved)...');
+        setSetupStatus('Step 1/1: Creating delegate wallet...');
       }
 
       // Use EIP-5792 sendCalls (wallet-level batching) which preserves msg.sender
@@ -214,9 +215,9 @@ export function useBatchedSetup() {
       // while maintaining the correct msg.sender context for setDelegate
       
       if (calls.length === 1) {
-        setSetupStatus('Ready to sign. Setting up delegate wallet...');
+        setSetupStatus('Step 1/1: Ready to sign. Setting up delegate wallet...');
       } else {
-        setSetupStatus('Ready to sign. You\'ll sign once for both operations...');
+        setSetupStatus('Step 1/2: Ready to sign. Creating delegate wallet...');
       }
       
       // Call EIP-5792 wallet_sendCalls directly through the wallet provider
@@ -246,7 +247,7 @@ export function useBatchedSetup() {
         const errorCode = sendCallsError?.code;
         const errorMessage = sendCallsError?.message || '';
         const matchesCode = errorCode === -32601;
-        const matchesMessage = errorMessage.includes('not supported') || errorMessage.includes('Unknown') || errorMessage.includes('doesn\'t has corresponding handler') || errorMessage.includes('doesn\'t have corresponding handler');
+        const matchesMessage = errorMessage.includes('not supported') || errorMessage.includes('Unsupported') || errorMessage.includes('wallet_sendCalls') || errorMessage.includes('Unknown') || errorMessage.includes('doesn\'t has corresponding handler') || errorMessage.includes('doesn\'t have corresponding handler');
         
         // If wallet_sendCalls is not supported (method not found), fall back to sequential transactions
         if (matchesCode || matchesMessage) {
@@ -254,7 +255,7 @@ export function useBatchedSetup() {
           setSetupStatus('Wallet doesn\'t support batching. Sending transactions sequentially...');
           
           // Send setDelegate first
-          setSetupStatus('Setting delegate wallet...');
+          setSetupStatus(needsUsdcApproval ? 'Step 1/2: Creating delegate wallet...' : 'Step 1/1: Creating delegate wallet...');
           const delegateHash = await sendTransaction(provider, delegateTx, userAddress);
           
           const txHashes: string[] = [delegateHash];
@@ -262,13 +263,13 @@ export function useBatchedSetup() {
           // Only send USDC approval if needed
           if (needsUsdcApproval) {
             const approvalTxEncoded = buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
-            setSetupStatus('Approving USDC spending...');
+            setSetupStatus('Step 2/2: Approving USDC spending...');
             const approvalHash = await sendTransaction(provider, approvalTxEncoded, userAddress);
             txHashes.push(approvalHash);
-            console.log('✅ Sequential transactions sent! Hashes:', delegateHash, approvalHash);
+            debug('✅ Sequential transactions sent! Hashes:', delegateHash, approvalHash);
             setSetupStatus('Both transactions sent! Waiting for confirmation...');
           } else {
-            console.log('✅ Delegate transaction sent! Hash:', delegateHash);
+            debug('✅ Delegate transaction sent! Hash:', delegateHash);
             setSetupStatus('Transaction sent! Waiting for confirmation...');
           }
           
@@ -287,11 +288,11 @@ export function useBatchedSetup() {
       // Note: Some wallets may batch into a single transaction, others may create multiple
       // The wallet handles this internally and preserves msg.sender for each call
       
-      console.log('✅ Batched calls sent! Batch ID:', batchId);
+      debug('✅ Batched calls sent! Batch ID:', batchId);
       if (calls.length > 1) {
-        console.log('🎉 User only needed to sign ONCE for both setDelegate and approve USDC!');
+        debug('🎉 User only needed to sign ONCE for both setDelegate and approve USDC!');
       } else {
-        console.log('🎉 User only needed to sign ONCE for setDelegate (USDC already approved)!');
+        debug('🎉 User only needed to sign ONCE for setDelegate (USDC already approved)!');
       }
       setSetupStatus('Transaction sent! Waiting for confirmation...');
 

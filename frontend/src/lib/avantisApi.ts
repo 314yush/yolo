@@ -1,15 +1,15 @@
 /**
- * Direct Avantis API Client
- * 
- * Bypasses our backend entirely for reading trades and PnL.
- * Uses Avantis's public API which returns positions with fees already calculated.
+ * Avantis API Client
+ *
+ * Uses backend proxy to avoid CORS when frontend runs on localhost or non-whitelisted origins.
+ * tradeyolo.fun is whitelisted by Avantis; proxy allows dev and other deployments to work.
  */
 
 import { ASSETS } from './constants';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
-const AVANTIS_API_BASE = 'https://core.avantisfi.com';
-const AVANTIS_HISTORY_API_BASE = 'https://api.avantisfi.com/v2/history/portfolio/history';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const AVANTIS_PROXY_BASE = `${API_BASE}/avantis`;
 
 // Decimal conversions
 const USDC_DECIMALS = 1e6;
@@ -128,10 +128,10 @@ async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise
 }
 
 /**
- * Fetch user's open trades from Avantis API
+ * Fetch user's open trades from Avantis API (via backend proxy)
  */
 export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
-  const url = `${AVANTIS_API_BASE}/user-data?trader=${traderAddress}`;
+  const url = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
   
   const response = await fetchWithTimeout(url, 10000); // 10 second timeout
   if (!response.ok) {
@@ -153,7 +153,7 @@ export async function fetchPnL(
   traderAddress: string,
   prices: Record<string, { price: number; timestamp: number }>
 ): Promise<PnLData[]> {
-  const url = `${AVANTIS_API_BASE}/user-data?trader=${traderAddress}`;
+  const url = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
   
   const response = await fetchWithTimeout(url, 10000); // 10 second timeout
   if (!response.ok) {
@@ -231,7 +231,7 @@ export async function fetchClosedTrades(
   traderAddress: string,
   pageNumber: number = 1
 ): Promise<ClosedTrade[]> {
-  const url = `${AVANTIS_HISTORY_API_BASE}/${traderAddress}/${pageNumber}`;
+  const url = `${AVANTIS_PROXY_BASE}/history/portfolio/history/${traderAddress}/${pageNumber}`;
   
   try {
     const response = await fetchWithTimeout(url, 10000); // 10 second timeout
@@ -286,5 +286,24 @@ export async function fetchClosedTrades(
     console.error('[fetchClosedTrades] Failed to fetch closed trades:', error);
     // Return empty array on error (don't break the app)
     return [];
+  }
+}
+
+/**
+ * Fetch total historic volume from Avantis (all open + closed positions).
+ * Volume = sum of position sizes (collateral * leverage) across entire history.
+ */
+export async function fetchTotalVolume(traderAddress: string): Promise<number> {
+  const url = `${AVANTIS_PROXY_BASE}/volume/${traderAddress}`;
+  try {
+    const response = await fetchWithTimeout(url, 15000);
+    if (!response.ok) {
+      return 0;
+    }
+    const data = await response.json();
+    return typeof data.totalVolume === 'number' ? data.totalVolume : 0;
+  } catch (error) {
+    console.error('[fetchTotalVolume] Failed to fetch volume:', error);
+    return 0;
   }
 }

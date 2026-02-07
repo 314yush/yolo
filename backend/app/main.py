@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.models.schemas import HealthResponse
-from app.routers import delegate, trades, prices
+from app.routers import delegate, trades, prices, access, admin, avantis_proxy
 
 
 settings = get_settings()
@@ -52,6 +52,9 @@ app.include_router(delegate.router)
 app.include_router(trades.router)
 app.include_router(trades.trades_router)
 app.include_router(prices.router)
+app.include_router(access.router)
+app.include_router(admin.router)
+app.include_router(avantis_proxy.router)
 
 
 # Startup event
@@ -62,6 +65,17 @@ async def startup_event():
     print(f"   Chain: Base (ID: {settings.chain_id})")
     print(f"   RPC: {settings.base_rpc_url}")
     print(f"   Debug: {settings.debug}")
+    
+    # Initialize database if configured
+    if settings.database_url:
+        from app.core.database import init_db, check_db_connection
+        if await check_db_connection():
+            await init_db()
+            print("   Database: Connected ✅")
+        else:
+            print("   Database: Not connected ⚠️")
+    else:
+        print("   Database: Not configured (access codes disabled)")
 
 
 # Shutdown event

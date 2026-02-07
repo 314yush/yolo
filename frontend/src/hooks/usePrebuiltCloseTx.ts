@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from './useDelegateWallet';
 import { buildCloseTradeTx } from '@/lib/avantisEncoder';
+import { debug } from '@/lib/debug';
 
 const REBUILD_DEBOUNCE_MS = 100;
 
@@ -45,7 +46,7 @@ export function usePrebuiltCloseTx() {
 
     // Validate trade has required fields
     if (currentTrade.pairIndex === undefined || currentTrade.tradeIndex === undefined) {
-      console.log('[PrebuiltCloseTx] Missing pairIndex or tradeIndex, skipping build');
+      debug('[PrebuiltCloseTx] Missing pairIndex or tradeIndex, skipping build');
       setPrebuiltCloseTx(null);
       return;
     }

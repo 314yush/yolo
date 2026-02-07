@@ -5,6 +5,7 @@ import { loadSettings } from '@/lib/settings';
 import { loadStats, saveStats, incrementVolume } from '@/lib/stats';
 import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
 import { isCommoditiesMarketOpen } from '@/lib/marketHours';
+import { debug } from '@/lib/debug';
 import type { Toast } from '@/components/Toast';
 import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
 
@@ -103,7 +104,7 @@ interface TradeState {
 
   // Toast notifications
   toasts: Toast[];
-  showToast: (message: string, type?: 'success' | 'error' | 'info', duration?: number) => void;
+  showToast: (message: string, type?: 'success' | 'error' | 'info', duration?: number, action?: { label: string; onClick: () => void }) => void;
   removeToast: (id: string) => void;
 
   // Real-time prices from Pyth
@@ -198,22 +199,11 @@ export const useTradeStore = create<TradeState>((set, get) => ({
       musicEnabled: true, // Music plays by default
     };
   })(),
-  tradeStats: (() => {
-    // Load stats from localStorage on store init
-    if (typeof window !== 'undefined') {
-      const loaded = loadStats();
-      return {
-        totalTrades: loaded.totalTrades ?? 0,
-        activePositions: loaded.activePositions ?? 0,
-        totalVolume: loaded.totalVolume ?? 0,
-      };
-    }
-    return {
-      totalTrades: 0,
-      activePositions: 0,
-      totalVolume: 0,
-    };
-  })(),
+  tradeStats: {
+    totalTrades: 0,
+    activePositions: 0,
+    totalVolume: 0,
+  },
 
   // Setters
   setStage: (stage) => set({ stage }),
@@ -270,7 +260,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     // Load from localStorage
     const cached = loadDelegateStatus(userAddress);
     if (cached) {
-      console.log('📦 Loaded cached delegate status:', cached);
+      debug('📦 Loaded cached delegate status:', cached);
       set({ delegateStatus: cached });
     } else {
       // No cached status, start with defaults
@@ -284,7 +274,28 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
   },
   setCollateral: (collateral) => set({ collateral }),
-  setUserAddress: (userAddress) => set({ userAddress }),
+  setUserAddress: (userAddress) => {
+    set({ userAddress });
+    // Load trade stats for this user when address changes
+    if (userAddress) {
+      const loaded = loadStats(userAddress);
+      set({
+        tradeStats: {
+          totalTrades: loaded.totalTrades ?? 0,
+          activePositions: loaded.activePositions ?? 0,
+          totalVolume: loaded.totalVolume ?? 0,
+        },
+      });
+    } else {
+      set({
+        tradeStats: {
+          totalTrades: 0,
+          activePositions: 0,
+          totalVolume: 0,
+        },
+      });
+    }
+  },
   setOpenTrades: (openTrades) => set({ openTrades }),
   addPendingTradeHash: (hash) => set((state) => {
     const newSet = new Set(state.pendingTradeHashes);
@@ -308,9 +319,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         ...state.tradeStats,
         totalTrades: state.tradeStats.totalTrades + 1,
       };
-      // Save to localStorage
-      if (typeof window !== 'undefined') {
-        saveStats(newStats);
+      if (typeof window !== 'undefined' && state.userAddress) {
+        saveStats(state.userAddress, newStats);
       }
       return { tradeStats: newStats };
     });
@@ -322,9 +332,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         ...state.tradeStats,
         totalVolume: state.tradeStats.totalVolume + positionSize,
       };
-      // Save to localStorage
-      if (typeof window !== 'undefined') {
-        saveStats(newStats);
+      if (typeof window !== 'undefined' && state.userAddress) {
+        saveStats(state.userAddress, newStats);
       }
       return { tradeStats: newStats };
     });
@@ -335,9 +344,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         ...state.tradeStats,
         activePositions: count,
       };
-      // Save to localStorage
-      if (typeof window !== 'undefined') {
-        saveStats(newStats);
+      if (typeof window !== 'undefined' && state.userAddress) {
+        saveStats(state.userAddress, newStats);
       }
       return { tradeStats: newStats };
     });
@@ -345,9 +353,9 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   // Toast notifications
   toasts: [],
-  showToast: (message, type = 'info', duration = 5000) => {
+  showToast: (message, type = 'info', duration = 5000, action) => {
     const id = `${Date.now()}-${Math.random()}`;
-    const toast: Toast = { id, message, type, duration };
+    const toast: Toast = { id, message, type, duration, action };
     set((state) => ({
       toasts: [...state.toasts, toast],
     }));

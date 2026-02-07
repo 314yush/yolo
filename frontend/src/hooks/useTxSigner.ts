@@ -6,6 +6,7 @@ import { isDelegateDelegated } from '@/lib/tachyonRelay';
 import { AVANTIS_CONTRACTS } from '@/lib/avantisEncoder';
 import { relayService } from '@/lib/relayService';
 import type { UnsignedTx } from '@/types';
+import { debug } from '@/lib/debug';
 
 const LOG_PREFIX = '[useTxSigner]';
 
@@ -26,7 +27,7 @@ export function useTxSigner() {
    * This function is kept for backward compatibility but always returns true.
    */
   const checkDelegateBalance = useCallback(async (): Promise<{ hasEnough: boolean; balance: bigint }> => {
-    console.log(LOG_PREFIX, '✅ Gas check: Tachyon sponsors gas, delegate needs no ETH');
+    debug(LOG_PREFIX, '✅ Gas check: Tachyon sponsors gas, delegate needs no ETH');
     // With Tachyon gas sponsorship, delegate doesn't need ETH
     // Always return true - gas is paid by Tachyon
     return { hasEnough: true, balance: BigInt(0) };
@@ -37,29 +38,29 @@ export function useTxSigner() {
    */
   const signAndBroadcast = useCallback(
     async (unsignedTx: UnsignedTx): Promise<`0x${string}`> => {
-      console.log(LOG_PREFIX, '═══════════════════════════════════════');
-      console.log(LOG_PREFIX, '🎯 Sign and broadcast requested');
-      console.log(LOG_PREFIX, '═══════════════════════════════════════');
+      debug(LOG_PREFIX, '═══════════════════════════════════════');
+      debug(LOG_PREFIX, '🎯 Sign and broadcast requested');
+      debug(LOG_PREFIX, '═══════════════════════════════════════');
       
       setIsPending(true);
       
       try {
         // Get delegate wallet
-        console.log(LOG_PREFIX, '🔑 Getting delegate wallet...');
+        debug(LOG_PREFIX, '🔑 Getting delegate wallet...');
         const wallet = getOrCreateDelegateWallet();
-        console.log(LOG_PREFIX, '  Delegate address:', wallet.address);
-        console.log(LOG_PREFIX, '  Already delegated (EIP-7702):', isDelegateDelegated());
+        debug(LOG_PREFIX, '  Delegate address:', wallet.address);
+        debug(LOG_PREFIX, '  Already delegated (EIP-7702):', isDelegateDelegated());
         
         // Log transaction details
-        console.log(LOG_PREFIX, '📋 Transaction:');
-        console.log(LOG_PREFIX, '  To:', unsignedTx.to);
-        console.log(LOG_PREFIX, '  Data length:', unsignedTx.data?.length || 0, 'chars');
-        console.log(LOG_PREFIX, '  Value:', unsignedTx.value || '0');
+        debug(LOG_PREFIX, '📋 Transaction:');
+        debug(LOG_PREFIX, '  To:', unsignedTx.to);
+        debug(LOG_PREFIX, '  Data length:', unsignedTx.data?.length || 0, 'chars');
+        debug(LOG_PREFIX, '  Value:', unsignedTx.value || '0');
         
         // Validate this is a trade transaction (to Avantis Trading contract)
         const isTradeTx = unsignedTx.to.toLowerCase() === AVANTIS_CONTRACTS.Trading.toLowerCase();
-        console.log(LOG_PREFIX, '  Is Avantis trade:', isTradeTx);
-        console.log(LOG_PREFIX, '  Expected:', AVANTIS_CONTRACTS.Trading);
+        debug(LOG_PREFIX, '  Is Avantis trade:', isTradeTx);
+        debug(LOG_PREFIX, '  Expected:', AVANTIS_CONTRACTS.Trading);
         
         if (!isTradeTx) {
           const error = new Error(
@@ -71,12 +72,12 @@ export function useTxSigner() {
         }
 
         const currentProvider = relayService.getCurrentProviderType();
-        console.log(LOG_PREFIX, `🚀 Relaying trade via ${currentProvider}...`);
+        debug(LOG_PREFIX, `🚀 Relaying trade via ${currentProvider}...`);
         const startTime = Date.now();
         
         // Parse value from unsignedTx (if present)
         const txValue = unsignedTx.value ? BigInt(unsignedTx.value) : BigInt(0);
-        console.log(LOG_PREFIX, '  Parsed value:', txValue.toString(), 'wei (', Number(txValue) / 1e18, 'ETH)');
+        debug(LOG_PREFIX, '  Parsed value:', txValue.toString(), 'wei (', Number(txValue) / 1e18, 'ETH)');
         
         // Check Avantis delegate status before trading
         // This is critical - if delegate is not registered in Avantis, delegatedAction will revert
@@ -98,7 +99,7 @@ export function useTxSigner() {
           });
           const delegateCheckTime = Date.now() - delegateCheckStart;
           if (delegateCheckTime > 100) {
-            console.log(LOG_PREFIX, `⏱️  Avantis delegate check took ${delegateCheckTime}ms`);
+            debug(LOG_PREFIX, `⏱️  Avantis delegate check took ${delegateCheckTime}ms`);
           }
           const isDelegateRegistered = registeredDelegate?.toString().toLowerCase() === wallet.address.toLowerCase();
           
@@ -113,7 +114,7 @@ export function useTxSigner() {
             throw error;
           }
           
-          console.log(LOG_PREFIX, '✅ Avantis delegate verified:', wallet.address);
+          debug(LOG_PREFIX, '✅ Avantis delegate verified:', wallet.address);
         } catch (e: any) {
           // If it's our own error about delegate not registered, re-throw it
           if (e.message?.includes('Avantis delegate not set up')) {
@@ -134,10 +135,10 @@ export function useTxSigner() {
         const txHash = result.txHash;
 
         const elapsed = Date.now() - startTime;
-        console.log(LOG_PREFIX, '🎉 Transaction confirmed!');
-        console.log(LOG_PREFIX, '  TX Hash:', txHash);
-        console.log(LOG_PREFIX, '  Time:', elapsed, 'ms');
-        console.log(LOG_PREFIX, '═══════════════════════════════════════');
+        debug(LOG_PREFIX, '🎉 Transaction confirmed!');
+        debug(LOG_PREFIX, '  TX Hash:', txHash);
+        debug(LOG_PREFIX, '  Time:', elapsed, 'ms');
+        debug(LOG_PREFIX, '═══════════════════════════════════════');
         
         return txHash;
       } catch (error) {
@@ -157,11 +158,11 @@ export function useTxSigner() {
    */
   const signAndWait = useCallback(
     async (unsignedTx: UnsignedTx) => {
-      console.log(LOG_PREFIX, '📨 signAndWait called');
+      debug(LOG_PREFIX, '📨 signAndWait called');
       const hash = await signAndBroadcast(unsignedTx);
       // Tachyon already waits for execution, so hash is the confirmed tx hash
       // Receipt is not available from Tachyon, return null
-      console.log(LOG_PREFIX, '✅ signAndWait complete, hash:', hash);
+      debug(LOG_PREFIX, '✅ signAndWait complete, hash:', hash);
       return { hash, receipt: null };
     },
     [signAndBroadcast]

@@ -11,6 +11,7 @@ import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as build
 import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
 import { publicClient } from '@/lib/viemClient';
+import { debug } from '@/lib/debug';
 
 export function useFlipTrade() {
   const { 
@@ -77,7 +78,7 @@ export function useFlipTrade() {
     // Ensure we're using the matching trade's pair (which matches the pairIndex)
     const pairToUse = matchingTrade.pair; // Use the verified trade's pair
     
-    console.log(`[flipTrade] Closing trade: pairIndex=${trade.pairIndex}, tradeIndex=${trade.tradeIndex}, pair=${pairToUse}, isLong=${trade.isLong}`);
+    debug(`[flipTrade] Closing trade: pairIndex=${trade.pairIndex}, tradeIndex=${trade.tradeIndex}, pair=${pairToUse}, isLong=${trade.isLong}`);
 
     setIsFlipping(true);
     setIsIntentionalClose(true); // Prevent false liquidation detection
@@ -115,8 +116,8 @@ export function useFlipTrade() {
       });
 
       // Close position first
-      await signAndWait(closeTx);
-      saveClosedTrade(userAddress, trade, finalPnL);
+      const { hash: closeTxHash } = await signAndWait(closeTx);
+      saveClosedTrade(userAddress, trade, finalPnL, { closeTxHash });
 
       // Wait a moment for the close to settle
       await new Promise(resolve => setTimeout(resolve, 2000));

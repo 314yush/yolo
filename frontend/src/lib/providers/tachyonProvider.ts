@@ -7,6 +7,7 @@
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
 import type { IRelayProvider, RelayTradeParams, RelayResult } from '../relayProvider';
+import { debug } from '../debug';
 import { 
   tachyon, 
   isTachyonConfigured,
@@ -55,9 +56,9 @@ export class TachyonRelayProvider implements IRelayProvider {
   async relayTrade(params: RelayTradeParams): Promise<RelayResult> {
     const { delegatePrivateKey, targetContract, calldata, value = BigInt(0), forceAuthorization } = params;
 
-    console.log(LOG_PREFIX, '═══════════════════════════════════════');
-    console.log(LOG_PREFIX, '🚀 Starting Tachyon relay...');
-    console.log(LOG_PREFIX, '═══════════════════════════════════════');
+    debug(LOG_PREFIX, '═══════════════════════════════════════');
+    debug(LOG_PREFIX, '🚀 Starting Tachyon relay...');
+    debug(LOG_PREFIX, '═══════════════════════════════════════');
 
     if (!this.isConfigured()) {
       const error = new Error('Tachyon not configured - missing API key. Set NEXT_PUBLIC_TACHYON_API_KEY in .env.local');
@@ -68,23 +69,23 @@ export class TachyonRelayProvider implements IRelayProvider {
     const delegateAccount = privateKeyToAccount(delegatePrivateKey);
     const delegateAddress = delegateAccount.address;
 
-    console.log(LOG_PREFIX, '📋 Transaction details:');
-    console.log(LOG_PREFIX, '  Delegate:', delegateAddress);
-    console.log(LOG_PREFIX, '  Target contract:', targetContract);
-    console.log(LOG_PREFIX, '  Calldata length:', calldata.length, 'chars');
-    console.log(LOG_PREFIX, '  Value:', value.toString(), 'wei');
+    debug(LOG_PREFIX, '📋 Transaction details:');
+    debug(LOG_PREFIX, '  Delegate:', delegateAddress);
+    debug(LOG_PREFIX, '  Target contract:', targetContract);
+    debug(LOG_PREFIX, '  Calldata length:', calldata.length, 'chars');
+    debug(LOG_PREFIX, '  Value:', value.toString(), 'wei');
 
     // Check if this is the first trade (needs EIP-7702 authorization)
     const delegatedStatus = isDelegateDelegated();
     const needsAuthorization = forceAuthorization || !delegatedStatus;
-    console.log(LOG_PREFIX, '  Needs EIP-7702 auth:', needsAuthorization);
+    debug(LOG_PREFIX, '  Needs EIP-7702 auth:', needsAuthorization);
 
     // Get nonce from EntryPoint
     const nonceStart = Date.now();
     const nonce = await getDelegateNonce(delegateAddress);
     const nonceTime = Date.now() - nonceStart;
     if (nonceTime > 100) {
-      console.log(LOG_PREFIX, `⏱️  Getting nonce took ${nonceTime}ms`);
+      debug(LOG_PREFIX, `⏱️  Getting nonce took ${nonceTime}ms`);
     }
 
     // Build execute callData - wraps the trade call in ERC-7579 execute format
@@ -99,7 +100,7 @@ export class TachyonRelayProvider implements IRelayProvider {
     });
     const buildOpTime = Date.now() - buildOpStart;
     if (buildOpTime > 50) {
-      console.log(LOG_PREFIX, `⏱️  Building UserOp took ${buildOpTime}ms`);
+      debug(LOG_PREFIX, `⏱️  Building UserOp took ${buildOpTime}ms`);
     }
 
     // Sign UserOp hash
@@ -126,11 +127,11 @@ export class TachyonRelayProvider implements IRelayProvider {
     }> | undefined;
 
     if (needsAuthorization) {
-      console.log(LOG_PREFIX, '🔐 Signing EIP-7702 authorization...');
+      debug(LOG_PREFIX, '🔐 Signing EIP-7702 authorization...');
       const authorization = await signEIP7702Authorization(delegatePrivateKey);
       authorizationList = [authorization];
     } else {
-      console.log(LOG_PREFIX, '⏭️  Skipping EIP-7702 auth (already delegated)');
+      debug(LOG_PREFIX, '⏭️  Skipping EIP-7702 auth (already delegated)');
     }
 
     // Build relay parameters
@@ -148,30 +149,30 @@ export class TachyonRelayProvider implements IRelayProvider {
         : { transactionType: 'flash-blocks' as const }), // Future: flash-blocks (sub-50ms!)
     };
 
-    console.log(LOG_PREFIX, '📤 Relaying UserOperation...');
-    console.log(LOG_PREFIX, '    to:', relayParams.to);
-    console.log(LOG_PREFIX, '    gasLimit:', relayParams.gasLimit);
-    console.log(LOG_PREFIX, '    transactionType:', authorizationList ? 'standard (EIP-7702)' : 'flash-blocks');
+    debug(LOG_PREFIX, '📤 Relaying UserOperation...');
+    debug(LOG_PREFIX, '    to:', relayParams.to);
+    debug(LOG_PREFIX, '    gasLimit:', relayParams.gasLimit);
+    debug(LOG_PREFIX, '    transactionType:', authorizationList ? 'standard (EIP-7702)' : 'flash-blocks');
 
     // Relay via Tachyon
     const relayStart = Date.now();
     let taskId: string;
     try {
       taskId = await tachyon.relay(relayParams);
-      console.log(LOG_PREFIX, '✅ Relay submitted successfully');
-      console.log(LOG_PREFIX, '  Task ID:', taskId);
+      debug(LOG_PREFIX, '✅ Relay submitted successfully');
+      debug(LOG_PREFIX, '  Task ID:', taskId);
     } catch (error) {
       console.error(LOG_PREFIX, '❌ Relay submission failed:', error);
       throw error;
     }
 
     // Wait for execution
-    console.log(LOG_PREFIX, '⏳ Waiting for execution (timeout: 30s)...');
+    debug(LOG_PREFIX, '⏳ Waiting for execution (timeout: 30s)...');
     const relayTime = Date.now() - relayStart;
     let result;
     try {
       result = await tachyon.waitForExecutionHash(taskId, 30_000);
-      console.log(LOG_PREFIX, `✅ Execution completed in ${relayTime}ms`);
+      debug(LOG_PREFIX, `✅ Execution completed in ${relayTime}ms`);
       
       // Extract the transaction hash from the result
       // The result can be either a string (tx hash) or an object with executionTxHash property
@@ -181,8 +182,8 @@ export class TachyonRelayProvider implements IRelayProvider {
           || (result as { txHash?: string }).txHash 
           || String(result);
 
-      console.log(LOG_PREFIX, '  TX Hash:', txHash);
-      console.log(LOG_PREFIX, '═══════════════════════════════════════');
+      debug(LOG_PREFIX, '  TX Hash:', txHash);
+      debug(LOG_PREFIX, '═══════════════════════════════════════');
 
       // Mark delegation as complete after successful first trade
       if (needsAuthorization) {

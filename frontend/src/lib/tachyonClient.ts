@@ -8,6 +8,7 @@
 
 import { Tachyon } from '@rathfi/tachyon';
 import { TACHYON_API_KEY } from './constants';
+import { debug } from './debug';
 
 // Validate API key on initialization
 const apiKey = TACHYON_API_KEY;
@@ -16,7 +17,7 @@ if (!apiKey) {
   console.error('[Tachyon] Set NEXT_PUBLIC_TACHYON_API_KEY in your .env.local file');
   console.error('[Tachyon] Get your API key from https://rath.fi');
 } else {
-  console.log('[Tachyon] ✅ API key configured (length:', apiKey.length, ')');
+  debug('[Tachyon] ✅ API key configured (length:', apiKey.length, ')');
 }
 
 // Initialize Tachyon SDK

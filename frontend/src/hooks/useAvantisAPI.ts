@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { fetchTrades, fetchPnL, fetchClosedTrades } from '@/lib/avantisApi';
+import { fetchTrades, fetchPnL, fetchClosedTrades, fetchTotalVolume } from '@/lib/avantisApi';
 import { publicClient } from '@/lib/viemClient';
 import {
   buildSetDelegateTx,
@@ -141,6 +141,16 @@ export function useAvantisAPI() {
     }
   }, []);
 
+  // Get total historic volume from Avantis (open + closed positions)
+  const getTotalVolume = useCallback(async (address: string) => {
+    try {
+      return await fetchTotalVolume(address);
+    } catch (error) {
+      console.error('[useAvantisAPI] Failed to fetch total volume:', error);
+      return 0;
+    }
+  }, []);
+
   return {
     // Setup operations - Direct encoding (no backend!)
     buildDelegateSetupTx,
@@ -151,5 +161,6 @@ export function useAvantisAPI() {
     getTrades,
     getPnL,
     getClosedTrades,
+    getTotalVolume,
   };
 }

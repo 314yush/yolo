@@ -6,6 +6,9 @@ import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { useTxSigner } from '@/hooks/useTxSigner';
+import { useSound } from '@/hooks/useSound';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { vibrateMedium } from '@/lib/haptics';
 import { TradeCard } from '@/components/TradeCard';
 import { ToastContainer } from '@/components/Toast';
 import { AvantisFooter } from '@/components/AvantisFooter';
@@ -15,10 +18,12 @@ import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 export default function ActivityPage() {
   const router = useRouter();
-  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast, tradeStats, setTradeStats } = useTradeStore();
+  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast, tradeStats, setTradeStats, showToast, setIsIntentionalClose } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
-  const { getTrades, getPnL, getClosedTrades } = useAvantisAPI();  // Only need read operations now
+  const { getTrades, getPnL, getClosedTrades, getTotalVolume } = useAvantisAPI();
   const { signAndWait, signAndBroadcast } = useTxSigner();
+  const { playWin, playLose, playFlip } = useSound();
+  const { isOnline } = useNetworkStatus();
   const { prices } = useTradeStore();  // Real-time Pyth prices
   
   const [tradesWithPnL, setTradesWithPnL] = useState<Array<{ trade: Trade; pnlData?: PnLData }>>([]);
@@ -28,12 +33,38 @@ export default function ActivityPage() {
   const [closingTradeIndex, setClosingTradeIndex] = useState<number | null>(null);
   const [mounted, setMounted] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [isLoadingTrades, setIsLoadingTrades] = useState(true);
   const [displayedClosedTradesCount, setDisplayedClosedTradesCount] = useState(12); // Default to 12 trades
+  const [historicVolume, setHistoricVolume] = useState<number | null>(null);
 
   // Prevent hydration mismatch by only rendering stats after mount
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Reset loading when user logs out
+  useEffect(() => {
+    if (!userAddress) {
+      setIsLoadingTrades(false);
+      setHistoricVolume(null);
+    }
+  }, [userAddress]);
+
+  // Fetch historic volume from Avantis (all open + closed positions)
+  useEffect(() => {
+    if (!userAddress) return;
+
+    const loadVolume = async () => {
+      try {
+        const vol = await getTotalVolume(userAddress);
+        setHistoricVolume(vol);
+      } catch (error) {
+        console.error('[ActivityPage] Failed to fetch historic volume:', error);
+      }
+    };
+
+    loadVolume();
+  }, [userAddress, getTotalVolume]);
 
   // Calculate aggregate stats
   const aggregateStats = React.useMemo(() => {
@@ -119,15 +150,20 @@ export default function ActivityPage() {
     let isMounted = true;
     let intervalId: NodeJS.Timeout | null = null;
 
+    let hasLoadedOnce = false;
     const loadTrades = async () => {
       if (!isMounted || !userAddress) return;
 
+      if (!hasLoadedOnce) {
+        setIsLoadingTrades(true);
+      }
       try {
         // Fetch PnL which includes trades
         const positions = await getPnL(userAddress);
 
         if (!isMounted) return;
 
+        hasLoadedOnce = true;
         // PnL response includes trades, so we can use it directly
         const combined = positions.map((pos) => ({
           trade: pos.trade,
@@ -136,6 +172,7 @@ export default function ActivityPage() {
 
         setTradesWithPnL(combined);
         updateActivePositions(positions.length);
+        setIsLoadingTrades(false);
         
         // If we have pending trades and found new trades, clear pending hashes
         if (pendingTradeHashes.size > 0 && positions.length > 0) {
@@ -143,6 +180,7 @@ export default function ActivityPage() {
         }
       } catch (error) {
         console.error('[TradesPage] Failed to load trades:', error);
+        setIsLoadingTrades(false);
         // Don't stop polling on error - keep trying
       }
     };
@@ -183,7 +221,7 @@ export default function ActivityPage() {
   const handleFlip = async (trade: Trade) => {
     // CRITICAL: Prevent trading if setup is not complete
     if (!delegateStatus.isSetup) {
-      alert('Please complete setup before trading. Enable trading in the setup flow first.');
+      showToast('Please complete setup before trading. Enable trading in the setup flow first.', 'error');
       return;
     }
 
@@ -195,7 +233,7 @@ export default function ActivityPage() {
     );
     
     if (!tradeWithPnL) {
-      alert('Trade not found. Please refresh and try again.');
+      showToast('Trade not found. Please refresh and try again.', 'error');
       return;
     }
 
@@ -205,6 +243,9 @@ export default function ActivityPage() {
       t.trade.pairIndex === verifiedTrade.pairIndex && t.trade.tradeIndex === verifiedTrade.tradeIndex
     );
     setFlippingTradeIndex(tradeIndex);
+    setIsIntentionalClose(true);
+    vibrateMedium();
+    playFlip();
 
     try {
       // Get final PnL before closing
@@ -239,11 +280,11 @@ export default function ActivityPage() {
       });
 
       // Close position first
-      await signAndWait(closeTx);
+      const { hash: closeTxHash } = await signAndWait(closeTx);
 
       // Save closed trade
       if (userAddress) {
-        saveClosedTrade(userAddress, verifiedTrade, finalPnL);
+        saveClosedTrade(userAddress, verifiedTrade, finalPnL, { closeTxHash });
         const updatedClosed = loadClosedTrades(userAddress);
         setClosedTrades(updatedClosed);
       }
@@ -302,16 +343,22 @@ export default function ActivityPage() {
       }, 2000);
     } catch (error) {
       console.error('Flip trade error:', error);
-      alert(error instanceof Error ? error.message : 'Failed to flip trade');
+      showToast(
+        error instanceof Error ? error.message : 'Failed to flip trade',
+        'error',
+        undefined,
+        { label: 'RETRY', onClick: () => handleFlip(trade) }
+      );
     } finally {
       setFlippingTradeIndex(null);
+      setIsIntentionalClose(false);
     }
   };
 
   const handleClose = async (trade: Trade) => {
     // CRITICAL: Prevent closing trades if setup is not complete (defensive check)
     if (!delegateStatus.isSetup) {
-      alert('Please complete setup before closing trades. Enable trading in the setup flow first.');
+      showToast('Please complete setup before closing trades. Enable trading in the setup flow first.', 'error');
       return;
     }
 
@@ -321,6 +368,8 @@ export default function ActivityPage() {
       t.trade.pairIndex === trade.pairIndex && t.trade.tradeIndex === trade.tradeIndex
     );
     setClosingTradeIndex(tradeIndex);
+    setIsIntentionalClose(true);
+    vibrateMedium();
 
     try {
       // Get final PnL before closing
@@ -341,15 +390,27 @@ export default function ActivityPage() {
         collateralToClose: trade.collateral,
       });
 
-      await signAndWait(closeTx);
+      const { hash: closeTxHash } = await signAndWait(closeTx);
+
+      const pnlPct = finalPnL?.pnlPercentage ?? 0;
+      if (pnlPct >= 0) {
+        playWin();
+      } else {
+        playLose();
+      }
 
       // Save closed trade
       if (userAddress) {
-        saveClosedTrade(userAddress, trade, finalPnL);
+        saveClosedTrade(userAddress, trade, finalPnL, { closeTxHash });
         // Reload closed trades
         const updatedClosed = loadClosedTrades(userAddress);
         setClosedTrades(updatedClosed);
       }
+
+      // Show success toast with PnL
+      const pnl = finalPnL?.pnl ?? 0;
+      const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+      showToast(`Closed! PnL: ${pnlStr}`, 'success');
 
       // Refresh trades after a delay
       setTimeout(() => {
@@ -379,9 +440,15 @@ export default function ActivityPage() {
       }, 1000);
     } catch (error) {
       console.error('Close trade error:', error);
-      alert(error instanceof Error ? error.message : 'Failed to close trade');
+      showToast(
+        error instanceof Error ? error.message : 'Failed to close trade',
+        'error',
+        undefined,
+        { label: 'RETRY', onClick: () => handleClose(trade) }
+      );
     } finally {
       setClosingTradeIndex(null);
+      setIsIntentionalClose(false);
     }
   };
 
@@ -475,7 +542,9 @@ export default function ActivityPage() {
             <div className="text-center shrink-0">
               <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Volume</div>
               <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
-                {mounted ? `$${tradeStats.totalVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '$0'}
+                {mounted
+                  ? `$${(historicVolume ?? tradeStats.totalVolume).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                  : '$0'}
               </div>
             </div>
           </div>
@@ -564,7 +633,25 @@ export default function ActivityPage() {
           )
         ) : (
           // Show open trades
-          tradesWithPnL.length === 0 ? (
+          isLoadingTrades ? (
+            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-6">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="brutal-card p-3 sm:p-4 min-w-0 border-4 border-white/20"
+                  aria-hidden="true"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="chart-loading-skeleton h-4 w-16 rounded" />
+                    <div className="chart-loading-skeleton h-4 w-12 rounded" />
+                  </div>
+                  <div className="chart-loading-skeleton h-10 w-24 mb-3 rounded" />
+                  <div className="chart-loading-skeleton h-4 w-full mb-2 rounded" />
+                  <div className="chart-loading-skeleton h-4 w-3/4 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : tradesWithPnL.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
               <div className="mb-6">
                 <svg
@@ -587,8 +674,9 @@ export default function ActivityPage() {
               </div>
               <button
                 onClick={() => router.push('/')}
-                className="px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
-                aria-label="Go to main page to roll"
+                disabled={!isOnline}
+                className="px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base font-bold brutal-button bg-[#CCFF00] text-black min-h-[48px] touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label={isOnline ? 'Go to main page to roll' : 'You are offline. Reconnect to trade'}
               >
                 ROLL NOW
               </button>
@@ -604,6 +692,7 @@ export default function ActivityPage() {
                   onClose={handleClose}
                   isFlipping={flippingTradeIndex === index}
                   isClosing={closingTradeIndex === index}
+                  actionsDisabled={!isOnline}
                 />
               ))}
             </div>

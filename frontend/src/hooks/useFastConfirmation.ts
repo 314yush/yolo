@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore, type ConfirmationStage } from '@/store/tradeStore';
 import { usePusherEvents } from './usePusherEvents';
+import { debug } from '@/lib/debug';
 import { publicClient } from '@/lib/viemClient';
 
 const POLLING_INTERVAL_MS = 50; // 50ms polling (10x faster than before)
@@ -109,7 +110,7 @@ export function useFastConfirmation(
     setConfirmationStage('submitted');
     setConfirmationTimestamp(Date.now());
     
-    console.log(`[FastConfirmation] Starting confirmation for ${txHash}`);
+    debug(`[FastConfirmation] Starting confirmation for ${txHash}`);
     
     // Set timeout
     timeoutRef.current = setTimeout(() => {
@@ -136,7 +137,7 @@ export function useFastConfirmation(
           const elapsed = Date.now() - (confirmationTimestamp || Date.now());
           
           if (receipt.status === 'success') {
-            console.log(`[FastConfirmation] Receipt confirmed (polling) in ${elapsed}ms`);
+            debug(`[FastConfirmation] Receipt confirmed (polling) in ${elapsed}ms`);
             // Only update if Pusher hasn't already confirmed
             if (confirmationStage !== 'confirmed') {
               setConfirmationStage('confirmed');
@@ -174,21 +175,21 @@ export function useFastConfirmation(
     
     // Order picked up
     if (pusher.hasPickedUp && confirmationStage === 'submitted') {
-      console.log(`[FastConfirmation] Order picked up (Pusher) in ${elapsed}ms`);
+      debug(`[FastConfirmation] Order picked up (Pusher) in ${elapsed}ms`);
       setConfirmationStage('picked_up');
       onPickedUp?.();
     }
     
     // Flashblock preconfirmation
     if (pusher.hasPreconfirmed && ['submitted', 'picked_up'].includes(confirmationStage)) {
-      console.log(`[FastConfirmation] Preconfirmed (Pusher) in ${elapsed}ms`);
+      debug(`[FastConfirmation] Preconfirmed (Pusher) in ${elapsed}ms`);
       setConfirmationStage('preconfirmed');
       onPreconfirmed?.();
     }
     
     // Order filled
     if (pusher.hasFilled && confirmationStage !== 'confirmed' && confirmationStage !== 'failed') {
-      console.log(`[FastConfirmation] Confirmed (Pusher) in ${elapsed}ms`);
+      debug(`[FastConfirmation] Confirmed (Pusher) in ${elapsed}ms`);
       setConfirmationStage('confirmed');
       onConfirmed?.(elapsed);
       cleanup();
@@ -196,7 +197,7 @@ export function useFastConfirmation(
     
     // Order canceled
     if (pusher.hasCanceled && confirmationStage !== 'confirmed' && confirmationStage !== 'failed') {
-      console.log(`[FastConfirmation] Failed/Canceled (Pusher) in ${elapsed}ms`);
+      debug(`[FastConfirmation] Failed/Canceled (Pusher) in ${elapsed}ms`);
       setConfirmationStage('failed');
       onFailed?.('Order canceled');
       cleanup();

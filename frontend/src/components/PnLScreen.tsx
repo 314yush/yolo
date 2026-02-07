@@ -1,11 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { usePnL } from '@/hooks/usePnL';
 import { useFlipTrade } from '@/hooks/useFlipTrade';
 import { usePrebuiltCloseTx } from '@/hooks/usePrebuiltCloseTx';
 import { usePrebuiltFlipTx } from '@/hooks/usePrebuiltFlipTx';
+import { useSound } from '@/hooks/useSound';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { vibrateMedium } from '@/lib/haptics';
+import confetti from 'canvas-confetti';
 import { PriceChart } from './PriceChart';
 import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
 
@@ -40,12 +44,20 @@ function getGamificationMessage(pnlPercentage: number, isConfirming: boolean, is
 }
 
 export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
-  const { selection, pnlData, currentTrade, prices, confirmationStage, txHash, isLiquidated, lastKnownPnLPercentage } = useTradeStore();
+  const { selection, pnlData, currentTrade, prices, confirmationStage, txHash, isLiquidated, lastKnownPnLPercentage, showToast } = useTradeStore();
   const { flipTrade, isFlipping } = useFlipTrade();
+  const { playFlip } = useSound();
+  const { isOnline } = useNetworkStatus();
   const [prevPnl, setPrevPnl] = useState<number | null>(null);
   const [isFlashing, setIsFlashing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  
+  const hasTriggeredConfettiRef = useRef(false);
+
+  // Reset confetti ref when trade changes
+  useEffect(() => {
+    hasTriggeredConfettiRef.current = false;
+  }, [currentTrade?.pairIndex, currentTrade?.tradeIndex]);
+
   // Check if trade is still confirming
   const isConfirming = confirmationStage !== 'none' && confirmationStage !== 'confirmed' && confirmationStage !== 'failed';
   
@@ -59,6 +71,20 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   // Get real-time Pyth price for the current asset
   const assetPair = pnlData?.trade?.pair ?? currentTrade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
   const pythCurrentPrice = assetPair ? prices[assetPair]?.price ?? null : null;
+
+  // Confetti when PnL first crosses 100%
+  useEffect(() => {
+    const pct = pnlData?.pnlPercentage ?? 0;
+    if (pct >= 100 && !hasTriggeredConfettiRef.current && !isLiquidated) {
+      hasTriggeredConfettiRef.current = true;
+      confetti({
+        particleCount: 80,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#CCFF00', '#FF006E'],
+      });
+    }
+  }, [pnlData?.pnlPercentage, isLiquidated]);
 
   // Flash animation on PnL change
   useEffect(() => {
@@ -80,11 +106,18 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
 
   const handleFlip = async () => {
     if (!currentTrade) return;
+    vibrateMedium();
+    playFlip();
     try {
       await flipTrade(currentTrade);
     } catch (error) {
       console.error('Failed to flip trade:', error);
-      alert(error instanceof Error ? error.message : 'Failed to flip trade');
+      showToast(
+        error instanceof Error ? error.message : 'Failed to flip trade',
+        'error',
+        undefined,
+        { label: 'RETRY', onClick: () => handleFlip() }
+      );
     }
   };
 
@@ -437,8 +470,11 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
           <div className="flex gap-3 mb-3">
             {/* Close button */}
             <button
-              onClick={onClose}
-              disabled={isClosing || isFlipping}
+              onClick={() => {
+                vibrateMedium();
+                onClose();
+              }}
+              disabled={isClosing || isFlipping || !isOnline}
               aria-label={isClosing ? 'Closing trade...' : 'Close and take profit/loss'}
               aria-busy={isClosing}
               className="brutal-button brutal-button-danger flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
@@ -482,7 +518,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
             {/* Flip button */}
             <button
               onClick={handleFlip}
-              disabled={isFlipping || isClosing}
+              disabled={isFlipping || isClosing || !isOnline}
               aria-label={isFlipping ? 'Flipping...' : `Flip to ${currentTrade?.isLong ? 'SHORT' : 'LONG'}`}
               aria-busy={isFlipping}
               className="brutal-button brutal-button-secondary flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
@@ -528,7 +564,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         {/* Primary CTA: Roll Again - BIG */}
         <button
           onClick={onRollAgain}
-          disabled={isClosing || isFlipping}
+          disabled={isClosing || isFlipping || !isOnline}
           aria-label="Start a new trade"
           className="w-full brutal-button font-black font-mono uppercase bg-[#CCFF00] text-black disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation flex items-center justify-center gap-3 focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
           style={{

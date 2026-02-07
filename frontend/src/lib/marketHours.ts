@@ -10,17 +10,44 @@
  * - Sunday: 18:00-24:00 only
  */
 
+const WEEKDAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+/**
+ * Get current day (0=Sun..6=Sat) and hour (0-23) in America/New_York.
+ * Uses Intl.DateTimeFormat for robust, locale-independent parsing.
+ */
+function getETParts(now: Date): { day: number; hour: number } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    hour12: false,
+    weekday: 'short',
+  });
+  const parts = fmt.formatToParts(now);
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? 'Sun';
+  const day = WEEKDAY_ORDER.indexOf(weekday as (typeof WEEKDAY_ORDER)[number]);
+  return { day: day >= 0 ? day : 0, hour };
+}
+
+/** Asset names that have market hours (XAU/XAG) - when commodities market is closed, these are unavailable */
+export const COMMODITIES_ASSETS = ['XAU', 'XAG'] as const;
+
+/**
+ * Get list of asset names that are currently closed (market hours).
+ * Returns empty array when commodities market is open.
+ */
+export function getMarketClosedAssets(): string[] {
+  return isCommoditiesMarketOpen() ? [] : [...COMMODITIES_ASSETS];
+}
+
 /**
  * Check if the commodities market (XAU/XAG) is currently open.
  * Returns true if trading is allowed, false if market is closed.
  */
 export function isCommoditiesMarketOpen(): boolean {
   const now = new Date();
-  
-  // Get current time in ET (Eastern Time)
-  const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = etTime.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  const hour = etTime.getHours();
+  const { day, hour } = getETParts(now);
   
   // Saturday - fully closed
   if (day === 6) {
@@ -45,11 +72,37 @@ export function isCommoditiesMarketOpen(): boolean {
  * Get the next time the commodities market will open.
  * Useful for displaying "Market opens in X hours" messages.
  */
+/**
+ * Get ET date parts (year, month, day) for constructing dates.
+ */
+function getETDateParts(now: Date): { year: number; month: number; day: number } {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = fmt.formatToParts(now);
+  const year = parseInt(parts.find((p) => p.type === 'year')?.value ?? '0', 10);
+  const month = parseInt(parts.find((p) => p.type === 'month')?.value ?? '1', 10);
+  const day = parseInt(parts.find((p) => p.type === 'day')?.value ?? '1', 10);
+  return { year, month, day };
+}
+
+/**
+ * Create a Date for a given ET date and hour. Uses UTC offset for ET (EST=-5, EDT=-4).
+ * Approximates EDT as -4 for Mar-Nov; EST as -5 otherwise.
+ */
+function createETDate(year: number, month: number, day: number, hour: number): Date {
+  const isDST = month >= 3 && month <= 10;
+  const offset = isDST ? 4 : 5;
+  return new Date(Date.UTC(year, month - 1, day, hour + offset, 0, 0));
+}
+
 export function getNextMarketOpen(): Date | null {
   const now = new Date();
-  const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = etTime.getDay();
-  const hour = etTime.getHours();
+  const { day, hour } = getETParts(now);
+  const { year, month, day: dayNum } = getETDateParts(now);
   
   // If market is open, return null
   if (isCommoditiesMarketOpen()) {
@@ -58,32 +111,26 @@ export function getNextMarketOpen(): Date | null {
   
   // Saturday -> Sunday 6pm ET
   if (day === 6) {
-    const sunday = new Date(etTime);
-    sunday.setDate(sunday.getDate() + 1);
-    sunday.setHours(18, 0, 0, 0);
-    return sunday;
+    const nextDay = new Date(year, month - 1, dayNum);
+    nextDay.setDate(nextDay.getDate() + 1);
+    return createETDate(nextDay.getFullYear(), nextDay.getMonth() + 1, nextDay.getDate(), 18);
   }
   
   // Sunday before 6pm -> Sunday 6pm ET
   if (day === 0 && hour < 18) {
-    const later = new Date(etTime);
-    later.setHours(18, 0, 0, 0);
-    return later;
+    return createETDate(year, month, dayNum, 18);
   }
   
   // Friday after 5pm -> Sunday 6pm ET
   if (day === 5 && hour >= 17) {
-    const sunday = new Date(etTime);
-    sunday.setDate(sunday.getDate() + 2);
-    sunday.setHours(18, 0, 0, 0);
-    return sunday;
+    const twoDaysLater = new Date(year, month - 1, dayNum);
+    twoDaysLater.setDate(twoDaysLater.getDate() + 2);
+    return createETDate(twoDaysLater.getFullYear(), twoDaysLater.getMonth() + 1, twoDaysLater.getDate(), 18);
   }
   
   // Mon-Thu during 5pm-6pm break -> same day 6pm ET
   if (day >= 1 && day <= 4 && hour === 17) {
-    const later = new Date(etTime);
-    later.setHours(18, 0, 0, 0);
-    return later;
+    return createETDate(year, month, dayNum, 18);
   }
   
   return null;

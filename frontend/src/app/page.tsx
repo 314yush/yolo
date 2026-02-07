@@ -13,7 +13,10 @@ import { useFastConfirmation } from '@/hooks/useFastConfirmation';
 import { usePythPricesSync } from '@/hooks/usePythPrices';
 import { useChartDataCollector } from '@/hooks/useChartDataCollector';
 import { usePrebuiltTx } from '@/hooks/usePrebuiltTx';
+import { useAccessCheck } from '@/hooks/useAccessCheck';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { PickerWheel } from '@/components/PickerWheel';
+import { AccessCodeGate } from '@/components/AccessCodeGate';
 import { PnLScreen } from '@/components/PnLScreen';
 import { LoginButton } from '@/components/LoginButton';
 import { SetupFlow } from '@/components/SetupFlow';
@@ -22,6 +25,8 @@ import { ToastContainer } from '@/components/Toast';
 import { AbstractBackground } from '@/components/AbstractBackground';
 import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
 import { hasCompletedOnboarding, clearOnboardingStatus } from '@/lib/onboarding';
+import { clearLocalAccess } from '@/lib/access';
+import { vibrateDouble } from '@/lib/haptics';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { 
   buildCloseTradeTx as buildCloseTradeTxDirect,
@@ -32,6 +37,7 @@ import Link from 'next/link';
 import type { Trade } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DEFAULT_COLLATERAL } from '@/lib/constants';
+import { debug } from '@/lib/debug';
 
 export default function HomePage() {
   const { authenticated, ready, user } = usePrivy();
@@ -53,10 +59,12 @@ export default function HomePage() {
     reset,
     toasts,
     removeToast,
+    showToast,
     prices,
   } = useTradeStore();
   
   const { delegateAddress } = useDelegateWallet();
+  const { isOnline } = useNetworkStatus();
   const { getPnL, checkDelegateStatus } = useAvantisAPI();  // Only read operations from backend
   
   // Ensure userAddress is set when user is authenticated
@@ -139,9 +147,10 @@ export default function HomePage() {
           setIsVerifyingDelegate(false);
         }
       } else if (!authenticated) {
-        // Clear delegate status and onboarding status when logged out
+        // Clear delegate status, onboarding status, and access cache when logged out
         if (userAddress) {
           clearOnboardingStatus(userAddress);
+          clearLocalAccess(userAddress);
         }
         loadDelegateStatusForUser(null);
         setIsOnboardingComplete(false);
@@ -151,8 +160,12 @@ export default function HomePage() {
     verifyDelegateStatus();
   }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
-  const { playBoom } = useSound();
+  const { playWin, playLose } = useSound();
   const { balance: usdcBalance } = useUsdcBalance();
+  
+  // Access code check (for gating app access)
+  const walletAddress = authenticated ? user?.wallet?.address || null : null;
+  const { hasAccess, isChecking: isCheckingAccess, grantAccess } = useAccessCheck(walletAddress);
   
   // Start fetching open trades + PnL immediately when user logs in
   useOpenTrades();
@@ -244,9 +257,11 @@ export default function HomePage() {
       timingRef.current.txConfirmed = txConfirmedTime;
       const elapsedFromSpinStart = timingRef.current.spinStart ? txConfirmedTime - timingRef.current.spinStart : 0;
       const elapsedFromTxSent = timingRef.current.txSent ? txConfirmedTime - timingRef.current.txSent : null;
-      console.log(`✅ [Trade Timing] Transaction confirmed (${elapsedFromSpinStart}ms from spin start${elapsedFromTxSent ? `, ${elapsedFromTxSent}ms from tx sent` : ''})`);
+      debug(`✅ [Trade Timing] Transaction confirmed (${elapsedFromSpinStart}ms from spin start${elapsedFromTxSent ? `, ${elapsedFromTxSent}ms from tx sent` : ''})`);
       tradeConfirmedRef.current = true;
       confirmationLatencyRef.current = latency;
+      vibrateDouble();
+      useTradeStore.getState().showToast('Trade opened!', 'success');
     },
     onFailed: (reason) => {
       setError(reason || 'Trade failed');
@@ -295,7 +310,7 @@ export default function HomePage() {
       tradeFound: null,
       pnlStageSet: null,
     };
-    console.log('🚀 [Trade Timing] Spin started');
+    debug('🚀 [Trade Timing] Spin started');
     // Reset confirmation tracking
     tradeConfirmedRef.current = false;
     confirmationLatencyRef.current = null;
@@ -314,7 +329,8 @@ export default function HomePage() {
 
     // Check USDC balance before proceeding
     if (usdcBalance !== null && usdcBalance < collateral) {
-      console.log(`[handleSpinStart] Insufficient funds: balance=${usdcBalance}, required=${collateral}`);
+      debug(`[handleSpinStart] Insufficient funds: balance=${usdcBalance}, required=${collateral}`);
+      useTradeStore.getState().showToast('Insufficient USDC balance', 'error');
       setShowInsufficientFundsModal(true);
       return;
     }
@@ -349,7 +365,7 @@ export default function HomePage() {
       });
       const txEncodeTime = Date.now() - txBuildStart;
       if (txEncodeTime > 10) {
-        console.log(`⏱️  [Trade Timing] TX encoding took ${txEncodeTime}ms`);
+        debug(`⏱️  [Trade Timing] TX encoding took ${txEncodeTime}ms`);
       }
 
       if (!unsignedTx) {
@@ -370,8 +386,8 @@ export default function HomePage() {
       const signAndRelayTime = txSentTime - signStart;
       timingRef.current.txSent = txSentTime;
       const elapsedFromSpinStart = timingRef.current.spinStart ? txSentTime - timingRef.current.spinStart : 0;
-      console.log(`📤 [Trade Timing] Transaction sent (${elapsedFromSpinStart}ms from spin start)`);
-      console.log(`   ⏱️  Breakdown: Encoding=${txEncodeTime}ms, Sign+Relay=${signAndRelayTime}ms`);
+      debug(`📤 [Trade Timing] Transaction sent (${elapsedFromSpinStart}ms from spin start)`);
+      debug(`   ⏱️  Breakdown: Encoding=${txEncodeTime}ms, Sign+Relay=${signAndRelayTime}ms`);
       setTxHash(hash);
       
       // Clear the pre-built tx (it's been used)
@@ -528,14 +544,17 @@ export default function HomePage() {
       const pnlRenderDelay = timing.tradeFound ? pnlRenderTime - timing.tradeFound : null;
       
       // Console log summary
-      console.log('📊 [Trade Timing] PnL Screen Rendered - Summary:');
-      console.log(`   Total time: ${elapsedFromSpinStart ? (elapsedFromSpinStart / 1000).toFixed(2) : 'N/A'}s`);
-      if (txBuildTime) console.log(`   ⏱️  TX Build: ${txBuildTime}ms`);
-      if (txConfirmTime) console.log(`   ⏱️  TX Confirm: ${txConfirmTime}ms`);
-      if (tradeDiscoveryTime) console.log(`   ⏱️  Trade Discovery: ${tradeDiscoveryTime}ms`);
-      if (pnlRenderDelay) console.log(`   ⏱️  PnL Render Delay: ${pnlRenderDelay}ms`);
+      debug('📊 [Trade Timing] PnL Screen Rendered - Summary:');
+      debug(`   Total time: ${elapsedFromSpinStart ? (elapsedFromSpinStart / 1000).toFixed(2) : 'N/A'}s`);
+      if (txBuildTime) debug(`   ⏱️  TX Build: ${txBuildTime}ms`);
+      if (txConfirmTime) debug(`   ⏱️  TX Confirm: ${txConfirmTime}ms`);
+      if (tradeDiscoveryTime) debug(`   ⏱️  Trade Discovery: ${tradeDiscoveryTime}ms`);
+      if (pnlRenderDelay) debug(`   ⏱️  PnL Render Delay: ${pnlRenderDelay}ms`);
     }
   }, [stage]);
+
+  // Ref for retry handler to avoid stale closure in toast
+  const handleCloseTradeRef = useRef<(() => Promise<void>) | null>(null);
 
   // Handle close trade - uses pre-built tx or direct encoding (no SDK)
   const handleCloseTrade = useCallback(async () => {
@@ -549,9 +568,9 @@ export default function HomePage() {
     const { currentTrade, pnlData, prebuiltCloseTx, setPrebuiltCloseTx, setIsIntentionalClose } = useTradeStore.getState();
     if (!userAddress || !delegateAddress || !currentTrade) return;
 
-    playBoom();
+    // Set BEFORE any await - prevents PnL poll from false liquidation during close
+    setIsIntentionalClose(true);
     setIsClosing(true);
-    setIsIntentionalClose(true); // Prevent false liquidation detection
 
     try {
       // Use pre-built tx if available, otherwise build on-demand
@@ -564,22 +583,39 @@ export default function HomePage() {
             collateralToClose: currentTrade.collateral,
           });
 
-      await signAndWait(closeTx);
+      const { hash: closeTxHash } = await signAndWait(closeTx);
+
+      // Play win/loss sound based on PnL
+      const pnlPct = pnlData?.pnlPercentage ?? 0;
+      if (pnlPct >= 0) {
+        playWin();
+      } else {
+        playLose();
+      }
       
       // Save closed trade with current PnL data
       if (userAddress && currentTrade) {
-        saveClosedTrade(userAddress, currentTrade, pnlData);
+        saveClosedTrade(userAddress, currentTrade, pnlData, { closeTxHash });
       }
+      
+      // Show success toast with PnL
+      const pnl = pnlData?.pnl ?? 0;
+      const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+      showToast(`Closed! PnL: ${pnlStr}`, 'success');
       
       // Reset and go back to idle
       reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to close trade');
+      const msg = err instanceof Error ? err.message : 'Failed to close trade';
+      setError(msg);
+      showToast(msg, 'error', undefined, { label: 'RETRY', onClick: () => handleCloseTradeRef.current?.() });
     } finally {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, delegateAddress, signAndWait, setError, reset, playBoom]);
+  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast]);
+
+  handleCloseTradeRef.current = handleCloseTrade;
 
   // Handle roll again
   const handleRollAgain = useCallback(() => {
@@ -609,6 +645,34 @@ export default function HomePage() {
           </p>
         </header>
         <LoginButton />
+      </div>
+    );
+  }
+
+  // Checking access status
+  if (isCheckingAccess) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
+        <div className="text-xl sm:text-2xl font-bold text-[#CCFF00] mb-4 animate-pulse">CHECKING ACCESS...</div>
+        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // No access - show access code gate
+  if (!hasAccess) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
+        <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
+          <h1 className="text-[#CCFF00] text-2xl sm:text-3xl font-black font-mono tracking-tighter">YOLO</h1>
+          <LoginButton />
+        </header>
+        <main className="flex-1 flex items-center justify-center px-4" id="main-content">
+          <AccessCodeGate 
+            walletAddress={walletAddress!} 
+            onAccessGranted={() => grantAccess(walletAddress!)} 
+          />
+        </main>
       </div>
     );
   }
@@ -858,9 +922,11 @@ export default function HomePage() {
                     setTimeout(() => setShouldSpin(false), 100);
                   }
                 }}
-                disabled={stage !== 'idle' || !delegateStatus.isSetup}
+                disabled={stage !== 'idle' || !delegateStatus.isSetup || !isOnline}
                 aria-label={
-                  !delegateStatus.isSetup 
+                  !isOnline
+                    ? 'You are offline. Reconnect to trade'
+                    : !delegateStatus.isSetup 
                     ? 'Please complete setup before trading'
                     : stage === 'idle' 
                     ? 'Spin the wheel to select trade parameters' 

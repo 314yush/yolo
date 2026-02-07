@@ -6,6 +6,7 @@
  */
 
 import type { IRelayProvider, RelayTradeParams, RelayResult } from '../relayProvider';
+import { debug } from '../debug';
 
 const LOG_PREFIX = '[GelatoProvider]';
 
@@ -37,9 +38,9 @@ export class GelatoRelayProvider implements IRelayProvider {
   }
 
   async relayTrade(params: RelayTradeParams): Promise<RelayResult> {
-    console.log(LOG_PREFIX, '═══════════════════════════════════════');
-    console.log(LOG_PREFIX, '🚀 Starting Gelato relay...');
-    console.log(LOG_PREFIX, '═══════════════════════════════════════');
+    debug(LOG_PREFIX, '═══════════════════════════════════════');
+    debug(LOG_PREFIX, '🚀 Starting Gelato relay...');
+    debug(LOG_PREFIX, '═══════════════════════════════════════');
 
     if (!this.isConfigured()) {
       throw new Error('Gelato not configured - implementation pending');

@@ -62,11 +62,17 @@ export function saveClosedTrade(
     };
 
     const existing = loadClosedTrades(address);
-    
-    // Check if this trade is already saved (by pairIndex + tradeIndex)
-    const existingIndex = existing.findIndex(
-      (t) => t.pairIndex === trade.pairIndex && t.tradeIndex === trade.tradeIndex
-    );
+    const closeTxHash = options?.closeTxHash;
+
+    const existingIndex = existing.findIndex((t) => {
+      if (closeTxHash && t.closeTxHash) {
+        return t.closeTxHash.toLowerCase() === closeTxHash.toLowerCase();
+      }
+      return (
+        t.pairIndex === trade.pairIndex &&
+        t.tradeIndex === trade.tradeIndex
+      );
+    });
 
     if (existingIndex >= 0) {
       // Update existing closed trade

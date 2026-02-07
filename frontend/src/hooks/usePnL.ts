@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useAvantisAPI } from './useAvantisAPI';
 import { saveClosedTrade } from '@/lib/closedTrades';
+import { debug } from '@/lib/debug';
 
 interface UsePnLOptions {
   enabled?: boolean;
@@ -23,6 +24,8 @@ export function usePnL(options: UsePnLOptions = {}) {
   const lastErrorRef = useRef<Error | null>(null);
   const lastTradeKeyRef = useRef<string | null>(null);
   const pnlDataRef = useRef(pnlData);
+  const positionDisappearedAtRef = useRef<number | null>(null);
+  const LIQUIDATION_GRACE_MS = 3000;
   
   // Store latest values in refs to avoid dependency issues
   const userAddressRef = useRef(userAddress);
@@ -64,7 +67,7 @@ export function usePnL(options: UsePnLOptions = {}) {
     const rememberedTradeIdx = rememberedTradeIndexRef.current;
     
     if (!userAddr || (!trade && (rememberedPairIdx === null || rememberedTradeIdx === null))) {
-      console.log('[usePnL] Skipping fetch - missing userAddress or currentTrade/remembered indices', { 
+      debug('[usePnL] Skipping fetch - missing userAddress or currentTrade/remembered indices', { 
         userAddress: userAddr, 
         currentTrade: trade,
         rememberedPairIndex: rememberedPairIdx,
@@ -80,7 +83,7 @@ export function usePnL(options: UsePnLOptions = {}) {
     
     try {
       const positions = await getPnLRef.current(userAddr);
-      console.log('[usePnL] Fetched positions:', positions.length, 'Current trade:', { 
+      debug('[usePnL] Fetched positions:', positions.length, 'Current trade:', { 
         pairIndex: trade?.pairIndex, 
         tradeIndex: trade?.tradeIndex,
         rememberedPairIndex: rememberedPairIdx,
@@ -103,7 +106,8 @@ export function usePnL(options: UsePnLOptions = {}) {
       );
       
       if (currentPnL) {
-        console.log('[usePnL] Found matching PnL:', currentPnL);
+        positionDisappearedAtRef.current = null;
+        debug('[usePnL] Found matching PnL:', currentPnL);
         
         // Check if position has been liquidated by comparing current price to liquidation price
         const trade = currentTradeRef.current;
@@ -113,7 +117,7 @@ export function usePnL(options: UsePnLOptions = {}) {
         if (trade && liquidationPrice > 0 && currentPrice > 0) {
           // Skip liquidation detection if this is an intentional close (flip/manual close)
           if (isIntentionalCloseRef.current) {
-            console.log('[usePnL] Skipping liquidation check - intentional close in progress');
+            debug('[usePnL] Skipping liquidation check - intentional close in progress');
             setPnLDataRef.current(currentPnL);
             return;
           }
@@ -132,7 +136,7 @@ export function usePnL(options: UsePnLOptions = {}) {
           const isLiquidatedByPnL = currentPnL.pnlPercentage <= -85;
           
           if (isLiquidatedByPrice || isLiquidatedByPnL) {
-            console.log('[usePnL] Position liquidated detected:', {
+            debug('[usePnL] Position liquidated detected:', {
               isLiquidatedByPrice,
               isLiquidatedByPnL,
               currentPrice,
@@ -187,28 +191,35 @@ export function usePnL(options: UsePnLOptions = {}) {
         // Check if this might be a liquidation
         // Skip if this is an intentional close (flip/manual close)
         if (isIntentionalCloseRef.current) {
-          console.log('[usePnL] Position not found - intentional close in progress, not marking as liquidated');
+          positionDisappearedAtRef.current = null;
+          debug('[usePnL] Position not found - intentional close in progress, not marking as liquidated');
           return;
         }
         
         // If we previously had PnL data and it was near -85%, the position was likely liquidated
+        // Add 3s grace period to avoid false liquidation when user clicks Close (race with poll)
         const lastPnL = lastKnownPnLPercentageRef.current;
         const lastPnLData = pnlDataRef.current;
         const userAddr = userAddressRef.current;
         const trade = currentTradeRef.current;
         
         if (lastPnL !== null && lastPnL <= -84 && lastPnLData && userAddr && trade) {
-          // Position disappeared and was near liquidation threshold - mark as liquidated
-          console.log('[usePnL] Position disappeared near liquidation threshold. Last PnL:', lastPnL, '- Marking as liquidated');
-          setIsLiquidatedRef.current(true);
-          
-          // Save liquidated trade
-          try {
-            saveClosedTrade(userAddr, trade, lastPnLData, {
-              isLiquidated: true,
-            });
-          } catch (error) {
-            console.error('[usePnL] Failed to save liquidated trade:', error);
+          const now = Date.now();
+          if (positionDisappearedAtRef.current === null) {
+            positionDisappearedAtRef.current = now;
+          }
+          const elapsed = now - positionDisappearedAtRef.current;
+          if (elapsed >= LIQUIDATION_GRACE_MS) {
+            debug('[usePnL] Position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL, '- Marking as liquidated');
+            setIsLiquidatedRef.current(true);
+            
+            try {
+              saveClosedTrade(userAddr, trade, lastPnLData, {
+                isLiquidated: true,
+              });
+            } catch (error) {
+              console.error('[usePnL] Failed to save liquidated trade:', error);
+            }
           }
         }
         // Trade might have been closed manually or liquidated - don't treat as error, just log
@@ -222,7 +233,7 @@ export function usePnL(options: UsePnLOptions = {}) {
       if (retryCountRef.current < 4) {
         retryCountRef.current += 1;
         const retryDelay = Math.min(1000 * Math.pow(2, retryCountRef.current - 1), 8000);
-        console.log(`[usePnL] Retrying in ${retryDelay}ms (attempt ${retryCountRef.current}/4)`);
+        debug(`[usePnL] Retrying in ${retryDelay}ms (attempt ${retryCountRef.current}/4)`);
         
         // Clear any existing timeout
         if (timeoutRef.current) {
@@ -247,7 +258,7 @@ export function usePnL(options: UsePnLOptions = {}) {
     const handleVisibilityChange = () => {
       if (!document.hidden && isPollingRef.current) {
         // Tab became visible - fetch immediately and resume polling
-        console.log('[usePnL] Tab visible - refreshing PnL');
+        debug('[usePnL] Tab visible - refreshing PnL');
         fetchPnL();
       }
     };
@@ -284,8 +295,9 @@ export function usePnL(options: UsePnLOptions = {}) {
         // Update trade key
         lastTradeKeyRef.current = currentTradeKey;
         isPollingRef.current = true;
-        retryCountRef.current = 0; // Reset retry count for new trade
-        setIsLiquidatedRef.current(false); // Reset liquidation state for new trade
+        retryCountRef.current = 0;
+        positionDisappearedAtRef.current = null;
+        setIsLiquidatedRef.current(false);
         
         // Fetch immediately
         fetchPnL();
@@ -298,7 +310,7 @@ export function usePnL(options: UsePnLOptions = {}) {
           }
         }, interval);
         
-        console.log('[usePnL] Started polling with interval:', interval, 'Trade:', currentTradeKey);
+        debug('[usePnL] Started polling with interval:', interval, 'Trade:', currentTradeKey);
       }
     } else {
       // Stop polling if conditions no longer met
@@ -321,7 +333,7 @@ export function usePnL(options: UsePnLOptions = {}) {
         // Reset retry count
         retryCountRef.current = 0;
         
-        console.log('[usePnL] Stopped polling');
+        debug('[usePnL] Stopped polling');
       }
     }
     

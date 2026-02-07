@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Pusher, { Channel } from 'pusher-js';
 import { useTradeStore } from '@/store/tradeStore';
+import { debug } from '@/lib/debug';
 
 // Avantis Pusher credentials (public)
 const PUSHER_APP_KEY = 'f86bc7e9919fc938694a';
@@ -45,10 +46,14 @@ export interface UsePusherEventsReturn {
  * 
  * @param walletAddress - The wallet address to subscribe to (user's Privy wallet, not delegate)
  */
+const EVENTS_CAP = 50;
+
 export function usePusherEvents(walletAddress?: string | null): UsePusherEventsReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionState, setConnectionState] = useState('disconnected');
   const [events, setEvents] = useState<PusherEvent[]>([]);
+  const stage = useTradeStore((s) => s.stage);
+  const prevStageRef = useRef<string>('idle');
   
   const pusherRef = useRef<Pusher | null>(null);
   const channelRef = useRef<Channel | null>(null);
@@ -60,14 +65,22 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
       data,
       timestamp: Date.now(),
     };
-    console.log(`[Pusher] Event received: ${type}`, data);
-    setEvents(prev => [...prev, event]);
+    debug(`[Pusher] Event received: ${type}`, data);
+    setEvents((prev) => [...prev, event].slice(-50));
   }, []);
 
   // Clear events (call before starting a new trade)
   const clearEvents = useCallback(() => {
     setEvents([]);
   }, []);
+
+  // Clear events when stage transitions from pnl → idle
+  useEffect(() => {
+    if (prevStageRef.current === 'pnl' && stage === 'idle') {
+      setEvents([]);
+    }
+    prevStageRef.current = stage;
+  }, [stage]);
 
   // Connect to Pusher and subscribe to wallet channel
   useEffect(() => {
@@ -88,13 +101,13 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
 
     // Connection state handlers
     pusher.connection.bind('connected', () => {
-      console.log('[Pusher] Connected');
+      debug('[Pusher] Connected');
       setIsConnected(true);
       setConnectionState('connected');
     });
 
     pusher.connection.bind('disconnected', () => {
-      console.log('[Pusher] Disconnected');
+      debug('[Pusher] Disconnected');
       setIsConnected(false);
       setConnectionState('disconnected');
     });
@@ -105,7 +118,7 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
     });
 
     pusher.connection.bind('state_change', (states: { current: string; previous: string }) => {
-      console.log(`[Pusher] State change: ${states.previous} -> ${states.current}`);
+      debug(`[Pusher] State change: ${states.previous} -> ${states.current}`);
       setConnectionState(states.current);
     });
 
@@ -113,12 +126,12 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
     // IMPORTANT: This should be the USER's wallet address (Privy), not the delegate
     // Avantis sends events to events-{traderAddress} where trader is who the trade is for
     const channelName = `events-${walletAddress}`;
-    console.log(`[Pusher] Subscribing to channel: ${channelName}`);
+    debug(`[Pusher] Subscribing to channel: ${channelName}`);
     
     const channel = pusher.subscribe(channelName);
 
     channel.bind('pusher:subscription_succeeded', () => {
-      console.log(`[Pusher] Successfully subscribed to ${channelName}`);
+      debug(`[Pusher] Successfully subscribed to ${channelName}`);
     });
 
     channel.bind('pusher:subscription_error', (err: Error) => {
@@ -147,7 +160,7 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
 
     // Cleanup
     return () => {
-      console.log(`[Pusher] Cleaning up, unsubscribing from ${channelName}`);
+      debug(`[Pusher] Cleaning up, unsubscribing from ${channelName}`);
       channel.unbind_all();
       pusher.unsubscribe(channelName);
       pusher.disconnect();

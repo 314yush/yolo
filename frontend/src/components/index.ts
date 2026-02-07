@@ -1,3 +1,4 @@
+export { AccessCodeGate } from './AccessCodeGate';
 export { PickerWheel } from './PickerWheel';
 export { PnLScreen } from './PnLScreen';
 export { PriceChart } from './PriceChart';

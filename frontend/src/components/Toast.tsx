@@ -7,6 +7,7 @@ export interface Toast {
   message: string;
   type: 'success' | 'error' | 'info';
   duration?: number;
+  action?: { label: string; onClick: () => void };
 }
 
 interface ToastProps {
@@ -81,19 +82,36 @@ function ToastItem({ toast, onClose }: ToastProps) {
             {toast.message}
           </p>
         </div>
-        <button
-          onClick={() => onClose(toast.id)}
-          className="flex-shrink-0 w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center border-2 border-black hover:opacity-80 transition-opacity touch-manipulation font-black"
-          style={{ 
-            backgroundColor: '#000000',
-            color: '#FFFFFF',
-            minWidth: '32px',
-            minHeight: '32px',
-          }}
-          aria-label="Close notification"
-        >
-          <span className="text-lg sm:text-xl leading-none">×</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {toast.action ? (
+            <button
+              onClick={() => {
+                toast.action?.onClick();
+                onClose(toast.id);
+              }}
+              className="px-3 py-1.5 text-xs font-bold border-2 border-black hover:opacity-80 transition-opacity touch-manipulation"
+              style={{
+                backgroundColor: '#FFFFFF',
+                color: '#000000',
+              }}
+            >
+              {toast.action.label}
+            </button>
+          ) : null}
+          <button
+            onClick={() => onClose(toast.id)}
+            className="shrink-0 w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center border-2 border-black hover:opacity-80 transition-opacity touch-manipulation font-black"
+            style={{
+              backgroundColor: '#000000',
+              color: '#FFFFFF',
+              minWidth: '32px',
+              minHeight: '32px',
+            }}
+            aria-label="Close notification"
+          >
+            <span className="text-lg sm:text-xl leading-none">×</span>
+          </button>
+        </div>
       </div>
     </div>
   );

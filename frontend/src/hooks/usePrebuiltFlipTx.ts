@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from './useDelegateWallet';
 import { buildFlipTradeTxs } from '@/lib/avantisEncoder';
+import { debug } from '@/lib/debug';
 
 const REBUILD_DEBOUNCE_MS = 100;
 const PRICE_TOLERANCE_PERCENT = 0.5;
@@ -51,7 +52,7 @@ export function usePrebuiltFlipTx() {
 
     // Validate trade has required fields
     if (currentTrade.pairIndex === undefined || currentTrade.tradeIndex === undefined) {
-      console.log('[PrebuiltFlipTx] Missing pairIndex or tradeIndex, skipping build');
+      debug('[PrebuiltFlipTx] Missing pairIndex or tradeIndex, skipping build');
       setPrebuiltFlipTxs(null);
       return;
     }

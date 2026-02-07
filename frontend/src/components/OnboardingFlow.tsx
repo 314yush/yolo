@@ -75,6 +75,7 @@ const screens: OnboardingScreen[] = [
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const { user } = usePrivy();
   const [currentStep, setCurrentStep] = useState<OnboardingStep>(0);
+  const [showSkipConfirm, setShowSkipConfirm] = useState(false);
   const userAddress = user?.wallet?.address as `0x${string}` | undefined;
 
   const handleNext = () => {
@@ -92,8 +93,17 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     onComplete();
   };
 
-  const handleSkip = () => {
+  const handleSkipClick = () => {
+    setShowSkipConfirm(true);
+  };
+
+  const handleSkipConfirm = () => {
+    setShowSkipConfirm(false);
     handleComplete();
+  };
+
+  const handleSkipCancel = () => {
+    setShowSkipConfirm(false);
   };
 
   const currentScreen = screens[currentStep];
@@ -103,12 +113,45 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     <div className="relative flex flex-col items-center justify-center p-6 sm:p-8 text-center max-w-md mx-auto w-full min-h-[60vh]">
       {/* Skip button - top right */}
       <button
-        onClick={handleSkip}
+        onClick={handleSkipClick}
         className="absolute top-4 right-4 text-white/60 text-sm font-bold hover:text-white/80 transition-colors touch-manipulation min-h-[44px] px-3"
         aria-label="Skip onboarding"
       >
         SKIP
       </button>
+
+      {/* Skip confirmation modal */}
+      {showSkipConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="skip-confirm-title"
+        >
+          <div className="bg-black border-4 border-[#CCFF00] p-6 max-w-sm w-full">
+            <h3 id="skip-confirm-title" className="text-[#CCFF00] font-black text-lg mb-4">
+              SKIP TUTORIAL?
+            </h3>
+            <p className="text-white/80 text-sm mb-6">
+              You&apos;ll figure it out, but FYI — there&apos;s a one-time setup step.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleSkipCancel}
+                className="flex-1 py-3 font-bold border-4 border-white bg-black text-white hover:bg-white/10 transition-colors touch-manipulation"
+              >
+                GO BACK
+              </button>
+              <button
+                onClick={handleSkipConfirm}
+                className="flex-1 py-3 font-bold brutal-button bg-[#CCFF00] text-black touch-manipulation"
+              >
+                SKIP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Icon */}
       <div className="mb-6 sm:mb-8 flex items-center justify-center">

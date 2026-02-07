@@ -4,6 +4,8 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { ASSETS, LEVERAGES, DIRECTIONS, WHEEL_TIMINGS } from '@/lib/constants';
 import { useSound } from '@/hooks/useSound';
+import { vibrateShort } from '@/lib/haptics';
+import { getMarketClosedAssets } from '@/lib/marketHours';
 
 interface PickerWheelProps {
   onSpinComplete: () => void;
@@ -61,6 +63,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
 
     setStage('spinning');
     onSpinStart();
+    vibrateShort();
     startSpin();
 
     const startTime = Date.now();
@@ -150,6 +153,8 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     spinWheels();
   };
 
+  const marketClosedAssets = getMarketClosedAssets();
+
   // Render a ring segment with responsive sizing
   const renderRingSegment = (
     index: number,
@@ -159,7 +164,8 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     color: string,
     label: string,
     baseFontSize: number,
-    isImage: boolean = false
+    isImage: boolean = false,
+    assetName?: string
   ) => {
     const segmentAngle = 360 / total;
     const startAngle = ((index * segmentAngle - 90) * Math.PI) / 180;
@@ -225,6 +231,31 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           >
             {label}
           </text>
+        )}
+        {assetName && marketClosedAssets.includes(assetName) && (
+          <g transform={`rotate(${textAngle}, ${textX}, ${textY})`}>
+            <rect
+              x={textX - 22}
+              y={textY - 14}
+              width={44}
+              height={12}
+              rx={2}
+              fill="#FF006E"
+              stroke="#000"
+              strokeWidth="1"
+            />
+            <text
+              x={textX}
+              y={textY - 8}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="#fff"
+              fontSize="8"
+              fontWeight="bold"
+            >
+              CLOSED
+            </text>
+          </g>
         )}
       </g>
     );
@@ -353,7 +384,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             }}
           >
             {ASSETS.map((asset, i) =>
-              renderRingSegment(i, ASSETS.length, 130, 190, asset.color, asset.icon, 28, true)
+              renderRingSegment(i, ASSETS.length, 130, 190, asset.color, asset.icon, 28, true, asset.name)
             )}
           </g>
 

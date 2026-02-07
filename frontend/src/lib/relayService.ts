@@ -8,6 +8,7 @@
 import type { IRelayProvider, RelayTradeParams, RelayResult, RelayProviderType } from './relayProvider';
 import { TachyonRelayProvider } from './providers/tachyonProvider';
 import { GelatoRelayProvider } from './providers/gelatoProvider';
+import { debug } from './debug';
 
 const LOG_PREFIX = '[RelayService]';
 
@@ -57,7 +58,7 @@ class RelayService {
 
     const previousProvider = this.currentProvider;
     this.currentProvider = providerType;
-    console.log(LOG_PREFIX, `🔄 Switched from ${previousProvider} to ${providerType}`);
+    debug(LOG_PREFIX, `🔄 Switched from ${previousProvider} to ${providerType}`);
   }
 
   /**
@@ -102,14 +103,14 @@ class RelayService {
     const providerName = provider.name;
     const startTime = Date.now();
 
-    console.log(LOG_PREFIX, `📤 Relaying via ${providerName}...`);
+    debug(LOG_PREFIX, `📤 Relaying via ${providerName}...`);
 
     try {
       const result = await provider.relayTrade(params);
       const elapsed = Date.now() - startTime;
       
-      console.log(LOG_PREFIX, `✅ ${providerName} relay completed in ${elapsed}ms`);
-      console.log(LOG_PREFIX, `   TX Hash: ${result.txHash}`);
+      debug(LOG_PREFIX, `✅ ${providerName} relay completed in ${elapsed}ms`);
+      debug(LOG_PREFIX, `   TX Hash: ${result.txHash}`);
 
       return {
         ...result,

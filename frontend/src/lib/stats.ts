@@ -1,6 +1,8 @@
 import type { TradeStats } from '@/types';
 
-const STORAGE_KEY = 'yolo_stats';
+function getStorageKey(address: string): string {
+  return `yolo_stats_${address.toLowerCase()}`;
+}
 
 const DEFAULT_STATS: TradeStats = {
   totalTrades: 0,
@@ -8,13 +10,14 @@ const DEFAULT_STATS: TradeStats = {
   totalVolume: 0,
 };
 
-export function loadStats(): TradeStats {
-  if (typeof window === 'undefined') {
+export function loadStats(address: string | null | undefined): TradeStats {
+  if (typeof window === 'undefined' || !address) {
     return DEFAULT_STATS;
   }
 
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const key = getStorageKey(address);
+    const stored = localStorage.getItem(key);
     if (!stored) {
       return DEFAULT_STATS;
     }
@@ -38,46 +41,51 @@ export function loadStats(): TradeStats {
   }
 }
 
-export function saveStats(stats: TradeStats): void {
-  if (typeof window === 'undefined') {
+export function saveStats(address: string | null | undefined, stats: TradeStats): void {
+  if (typeof window === 'undefined' || !address) {
     return;
   }
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
+    const key = getStorageKey(address);
+    localStorage.setItem(key, JSON.stringify(stats));
   } catch (error) {
     console.error('Failed to save stats:', error);
   }
 }
 
-export function incrementTotalTrades(): void {
-  const stats = loadStats();
+export function incrementTotalTrades(address: string | null | undefined): void {
+  const stats = loadStats(address);
   const newStats = {
     ...stats,
     totalTrades: stats.totalTrades + 1,
   };
-  saveStats(newStats);
+  saveStats(address, newStats);
 }
 
-export function updateActivePositions(count: number): void {
-  const stats = loadStats();
+export function updateActivePositions(address: string | null | undefined, count: number): void {
+  const stats = loadStats(address);
   const newStats = {
     ...stats,
     activePositions: count,
   };
-  saveStats(newStats);
+  saveStats(address, newStats);
 }
 
 /**
  * Increment volume when a trade is opened
  * Volume = position size (collateral * leverage) of the opened trade
  */
-export function incrementVolume(collateral: number, leverage: number): void {
-  const stats = loadStats();
+export function incrementVolume(
+  address: string | null | undefined,
+  collateral: number,
+  leverage: number
+): void {
+  const stats = loadStats(address);
   const positionSize = collateral * leverage;
   const newStats = {
     ...stats,
     totalVolume: stats.totalVolume + positionSize,
   };
-  saveStats(newStats);
+  saveStats(address, newStats);
 }

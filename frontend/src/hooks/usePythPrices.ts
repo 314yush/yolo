@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
+import { debug } from '@/lib/debug';
 
 // Pyth Hermes WebSocket endpoint
 const PYTH_WS_URL = 'wss://hermes.pyth.network/ws';
@@ -136,12 +137,12 @@ export function usePythPrices(): UsePythPricesReturn {
 
     isConnectingRef.current = true;
     setConnectionState('connecting');
-    console.log('[PythPrices] Connecting to Pyth Hermes...');
+    debug('[PythPrices] Connecting to Pyth Hermes...');
 
     const ws = new WebSocket(PYTH_WS_URL);
 
     ws.onopen = () => {
-      console.log('[PythPrices] Connected to Pyth Hermes');
+      debug('[PythPrices] Connected to Pyth Hermes');
       isConnectingRef.current = false;
       setIsConnected(true);
       setConnectionState('connected');
@@ -154,7 +155,7 @@ export function usePythPrices(): UsePythPricesReturn {
         ids: feedIds,
       };
       
-      console.log('[PythPrices] Subscribing to feeds:', Object.keys(PYTH_FEED_IDS));
+      debug('[PythPrices] Subscribing to feeds:', Object.keys(PYTH_FEED_IDS));
       try {
         ws.send(JSON.stringify(subscribeMsg));
       } catch (err) {
@@ -203,7 +204,7 @@ export function usePythPrices(): UsePythPricesReturn {
     };
 
     ws.onclose = (event) => {
-      console.log('[PythPrices] WebSocket closed:', event.code, event.reason);
+      debug('[PythPrices] WebSocket closed:', event.code, event.reason);
       isConnectingRef.current = false;
       setIsConnected(false);
       setConnectionState('disconnected');
@@ -221,7 +222,7 @@ export function usePythPrices(): UsePythPricesReturn {
         // Attempt to reconnect with exponential backoff (only if no timeout already scheduled)
         if (!reconnectTimeoutRef.current && reconnectAttempts.current < maxReconnectAttempts) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-          console.log(`[PythPrices] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+          debug(`[PythPrices] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
           
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current++;
@@ -274,7 +275,7 @@ export function usePythPrices(): UsePythPricesReturn {
         // Reconnect if: not connected, stale connection, or WebSocket is not actually open
         // But only if we're not already connecting
         if ((!isActuallyConnected || isStale || (!isConnected && connectionState !== 'connecting')) && !isConnectingRef.current) {
-          console.log('[PythPrices] Tab visible, reconnecting...', { 
+          debug('[PythPrices] Tab visible, reconnecting...', { 
             isActuallyConnected, 
             isStale, 
             connectionState,

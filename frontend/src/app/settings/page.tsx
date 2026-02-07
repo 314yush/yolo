@@ -14,7 +14,7 @@ const MAX_COLLATERAL = 1000;
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { setSettings, setCollateral, setTradeStats } = useTradeStore();
+  const { userAddress, setSettings, setCollateral, setTradeStats } = useTradeStore();
   // Use lazy initialization to avoid setState in effect
   const [localSettings, setLocalSettings] = useState<Settings>(() => loadSettings());
   const [customInputValue, setCustomInputValue] = useState<string>('');
@@ -26,9 +26,9 @@ export default function SettingsPage() {
     setSettings(loadedSettings);
     setCollateral(loadedSettings.collateral);
     
-    const loadedStats = loadStats();
+    const loadedStats = loadStats(userAddress ?? undefined);
     setTradeStats(loadedStats);
-  }, [setSettings, setCollateral, setTradeStats]);
+  }, [userAddress, setSettings, setCollateral, setTradeStats]);
 
   const handleCollateralChange = (value: number) => {
     const newSettings = { ...localSettings, collateral: value };

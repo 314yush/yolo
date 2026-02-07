@@ -8,6 +8,7 @@ import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { useBatchedSetup } from '@/hooks/useBatchedSetup';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { CONTRACTS, CHAIN_CONFIG } from '@/lib/constants';
+import { debug } from '@/lib/debug';
 
 interface SetupFlowProps {
   onSetupComplete: () => void;
@@ -42,7 +43,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   const getUserWallet = useCallback(() => {
     if (!wallets || wallets.length === 0) return null;
     
-    console.log('Available wallets:', wallets.map(w => ({
+    debug('Available wallets:', wallets.map(w => ({
       address: w.address,
       walletClientType: w.walletClientType,
       connectorType: w.connectorType,
@@ -100,7 +101,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       
       // Fallback: Try to use window.ethereum if available
       if (typeof window !== 'undefined' && (window as any).ethereum) {
-        console.log('Using window.ethereum as fallback provider');
+        debug('Using window.ethereum as fallback provider');
         return (window as any).ethereum;
       }
       
@@ -165,7 +166,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
       // CRITICAL FIX: Always verify on-chain before trusting cache
       const { delegateStatus: cachedStatus } = useTradeStore.getState();
       if (cachedStatus.isSetup && cachedStatus.usdcApproved && cachedStatus.delegateAddress) {
-        console.log('📦 Found cached setup status, verifying on-chain...');
+        debug('📦 Found cached setup status, verifying on-chain...');
         
         // Verify on-chain FIRST before proceeding
         // Don't trust cache - always verify!
@@ -189,7 +190,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         // Step 1: Ensure we have a delegate wallet locally (instant - localStorage check)
         // This is fast and doesn't require any network calls
         const wallet = ensureDelegateWallet();
-        console.log('Local delegate wallet:', wallet.address);
+        debug('Local delegate wallet:', wallet.address);
         
         // Step 2: Check USDC allowance FIRST (checking if EOA is connected with TradingStorage)
         // If USDC is already approved, user doesn't need to sign approval again
@@ -198,7 +199,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           return { hasSufficient: false, allowance: 0 };
         });
         
-        console.log('USDC allowance check:', allowanceCheck);
+        debug('USDC allowance check:', allowanceCheck);
         const hasUsdcApproved = allowanceCheck.hasSufficient;
         
         // Step 3: Check if delegation is set up on-chain (API call - can be slow)
@@ -209,7 +210,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         });
         
         const status = await Promise.race([statusPromise, timeoutPromise]);
-        console.log('Delegation status:', status);
+        debug('Delegation status:', status);
         
         setHasCheckedStatus(true);
         
@@ -233,11 +234,11 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             // MISMATCH: On-chain delegate doesn't match our local delegate
             // If USDC is already approved, user only needs to set up new delegate (no approval needed)
             // If USDC is not approved, user needs both delegate setup and approval
-            console.log('Delegate mismatch detected! On-chain:', onChainDelegate, 'Local:', localDelegate);
+            debug('Delegate mismatch detected! On-chain:', onChainDelegate, 'Local:', localDelegate);
             if (hasUsdcApproved) {
-              console.log('✅ USDC already approved - user only needs to set up new delegate');
+              debug('✅ USDC already approved - user only needs to set up new delegate');
             } else {
-              console.log('⚠️ USDC not approved - user needs both delegate setup and approval');
+              debug('⚠️ USDC not approved - user needs both delegate setup and approval');
             }
             // Proceed to setup step - batched setup will handle this intelligently
             setHasCheckedStatus(true);
@@ -246,7 +247,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             return;
           }
           
-          console.log('Delegation already set up with:', wallet.address);
+          debug('Delegation already set up with:', wallet.address);
           
           // Both delegate and USDC approval are set up correctly
           if (hasUsdcApproved) {
@@ -256,7 +257,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
               usdcApproved: true,
             };
             setDelegateStatus(newStatus);
-            console.log('✅ Setup verified and cached:', newStatus);
+            debug('✅ Setup verified and cached:', newStatus);
             setHasCheckedStatus(true);
             setStep('complete');
             setIsCheckingStatus(false);
@@ -264,7 +265,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             return;
           } else {
             // Delegate is set up but USDC approval is missing
-            console.log('⚠️ Delegate set up but USDC approval missing - need to approve');
+            debug('⚠️ Delegate set up but USDC approval missing - need to approve');
             setHasCheckedStatus(true);
             setStep('setup');
             setIsCheckingStatus(false);
@@ -275,9 +276,9 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           // If USDC is already approved, user only needs to set up delegate (no approval needed)
           // If USDC is not approved, user needs both delegate setup and approval
           if (hasUsdcApproved) {
-            console.log('✅ USDC already approved to TradingStorage - user only needs to set up delegate');
+            debug('✅ USDC already approved to TradingStorage - user only needs to set up delegate');
           } else {
-            console.log('⚠️ Need both delegate setup and USDC approval');
+            debug('⚠️ Need both delegate setup and USDC approval');
           }
           setHasCheckedStatus(true);
           setStep('setup');
@@ -472,7 +473,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             This is a one-time setup on Base network. Your funds remain in your wallet. USDC approval is set to 10,000 USDC.
             {delegateStatus.delegateAddress && delegateStatus.delegateAddress.toLowerCase() !== delegateAddress?.toLowerCase() && (
               <div className="mt-3 p-3 bg-[#FFD60A]/10 border-2 border-[#FFD60A]/30 text-[#FFD60A] text-xs rounded-lg">
-                ⚠️ Existing delegate detected. Setup will replace it with the new delegate automatically.
+                Found an old trading session. Setup will replace it automatically.
               </div>
             )}
           </div>
@@ -488,6 +489,26 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           {setupStatus && (
             <div className="mb-4 p-3 bg-[#CCFF00]/10 border-2 border-[#CCFF00]/30 text-[#CCFF00] text-sm font-mono rounded-lg">
               {setupStatus}
+            </div>
+          )}
+
+          {/* Progress bar - thick black border, lime fill */}
+          {(isProcessing || isBatching) && (
+            <div className="w-full mb-4 h-3 border-4 border-black bg-black rounded overflow-hidden">
+              <div
+                className="h-full bg-[#CCFF00] transition-all duration-300 ease-out"
+                style={{
+                  width: (() => {
+                    const match = setupStatus?.match(/Step (\d)\/(\d)/);
+                    if (match) {
+                      const [, current, total] = match;
+                      return `${(parseInt(current, 10) / parseInt(total, 10)) * 100}%`;
+                    }
+                    // No step in status (e.g. verifying) = full
+                    return '100%';
+                  })(),
+                }}
+              />
             </div>
           )}
 

@@ -6,6 +6,7 @@ Builds unsigned transactions for frontend signing.
 import ssl
 import certifi
 import logging
+import asyncio
 
 # Fix SSL certificate issue on macOS
 # Create a proper SSL context with certifi's CA bundle
@@ -161,14 +162,6 @@ class AvantisService:
         3. USDC is transferred from trader's wallet (not delegate)
         """
         import time
-        import json
-        start_time = time.time()
-        request_id = f"{int(time.time()*1000)}-{id(self)}"
-        
-        # #region agent log
-        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"location":"avantis.py:140","message":"build_open_trade_tx_delegate started","data":{"requestId":request_id,"pair":pair,"pairIndex":pair_index},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        # #endregion
         
         trader = to_checksum_address(trader)
         
@@ -186,7 +179,6 @@ class AvantisService:
         
         # Calculate TP - for high leverage, use a conservative target
         tp = self.calculate_take_profit(open_price, is_long, leverage)
-        # Log only in debug mode
         logger.debug(f"TP calculation: price={open_price}, is_long={is_long}, leverage={leverage}, tp={tp}")
         logger.debug(f"Position size: ${position_size_usd:.2f} (collateral: ${collateral:.2f} × leverage: {leverage}x)")
 
@@ -202,16 +194,7 @@ class AvantisService:
             sl=0,
         )
 
-        # Step 1: Build the inner openTrade transaction (this gives us the calldata)
         # Try SDK method first, but it may hang on gas estimation
-        # If it hangs, we'll manually encode similar to close trade
-        import asyncio
-        sdk_start = time.time()
-        # #region agent log
-        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"location":"avantis.py:196","message":"SDK build_trade_open_tx started","data":{"requestId":request_id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        # #endregion
-        
         try:
             inner_tx = await asyncio.wait_for(
                 self.client.trade.build_trade_open_tx(
@@ -219,57 +202,28 @@ class AvantisService:
                     TradeInputOrderType.MARKET_ZERO_FEE,
                     slippage_percentage=1,
                 ),
-                timeout=15.0  # 15 second timeout (SDK can take 8-10s for trade building)
+                timeout=15.0  # 15 second timeout
             )
-            
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:205","message":"SDK build_trade_open_tx completed","data":{"requestId":request_id,"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
             
             inner_calldata = inner_tx.get("data")
             execution_fee = inner_tx.get("value", 0)
-            # Ensure execution_fee is an integer
             if isinstance(execution_fee, str):
                 execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
             execution_fee = int(execution_fee)
         except asyncio.TimeoutError:
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:212","message":"SDK build_trade_open_tx timeout","data":{"requestId":request_id,"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
             logger.warning("build_trade_open_tx timed out, manually encoding...")
             
-            # Manual encoding fallback - use TradeInput object directly
-            # Get execution fee separately
-            fee_start = time.time()
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:218","message":"SDK get_trade_execution_fee started","data":{"requestId":request_id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
-            
+            # Manual encoding fallback
             try:
                 execution_fee = await asyncio.wait_for(
                     self.client.trade.get_trade_execution_fee(),
-                    timeout=12.0  # 12 second timeout (SDK calls can be slow)
+                    timeout=12.0
                 )
-                
-                # #region agent log
-                with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"location":"avantis.py:225","message":"SDK get_trade_execution_fee completed","data":{"requestId":request_id,"elapsedMs":int((time.time()-fee_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-                # #endregion
-                # Ensure execution_fee is an integer
                 if isinstance(execution_fee, str):
                     execution_fee = int(execution_fee, 16) if execution_fee.startswith('0x') else int(execution_fee)
                 execution_fee = int(execution_fee)
-            except asyncio.TimeoutError:
-                logger.warning("Execution fee call timed out, using default")
-                # Updated based on successful tx analysis: ~0.00007 ETH needed
-                execution_fee = 100000000000000  # 0.0001 ETH with safety buffer
-            except Exception as fee_error:
+            except (asyncio.TimeoutError, Exception) as fee_error:
                 logger.warning(f"Failed to get execution fee: {fee_error}, using default")
-                # Updated based on successful tx analysis: ~0.00007 ETH needed
-                # Using 0.0001 ETH (100000000000000 wei) with safety buffer
                 execution_fee = 100000000000000  # 0.0001 ETH
             
             # Get Trading contract
@@ -277,75 +231,48 @@ class AvantisService:
             if Trading is None:
                 raise ValueError("Trading contract not found")
             
-            # Manual encoding: Convert TradeInput to tuple format expected by contract
-            # The SDK's TradeInput struct fields need to be converted to the contract's tuple format
-            # Based on SDK TradeInput: (trader, open_price, pair_index, collateral_in_trade, is_long, leverage, index, tp, sl)
-            # Contract expects struct with these fields in order
-            
-            # Price scaling: Avantis uses 8 decimals for prices (like Chainlink/Pyth)
+            # Price scaling: Avantis uses 8 decimals for prices
             PRICE_DECIMALS = 10**8
             open_price_scaled = int(open_price * PRICE_DECIMALS)
             tp_scaled = int(tp * PRICE_DECIMALS)
             
             # Collateral scaling: USDC has 6 decimals
             COLLATERAL_DECIMALS = 10**6
-            collateral_scaled = int(collateral * COLLATERAL_DECIMALS)
-            
-            # Convert TradeInput to tuple matching contract struct
-            # Contract struct order from ABI: trader, pairIndex, index, initialPosToken, positionSizeUSDC, openPrice, buy, leverage, tp, sl, timestamp
-            import time
-            position_size_usdc = int(collateral * leverage * COLLATERAL_DECIMALS)  # positionSizeUSDC = collateral * leverage (scaled by 10^6)
+            position_size_usdc = int(collateral * leverage * COLLATERAL_DECIMALS)
             
             trade_input_tuple = (
-                trader,  # address - trader
-                pair_index,  # uint256 - pairIndex
-                0,  # uint256 - index
-                0,  # uint256 - initialPosToken (0 for USDC)
-                position_size_usdc,  # uint256 - positionSizeUSDC (collateral * leverage, scaled by 10^6)
-                open_price_scaled,  # uint256 - openPrice (scaled by 10^8)
-                is_long,  # bool - buy (isLong)
-                leverage,  # uint256 - leverage
-                tp_scaled,  # uint256 - tp (scaled by 10^8)
-                0,  # uint256 - sl (stop loss, 0 for market orders)
-                int(time.time()),  # uint256 - timestamp
+                trader,
+                pair_index,
+                0,  # index
+                0,  # initialPosToken
+                position_size_usdc,
+                open_price_scaled,
+                is_long,
+                leverage,
+                tp_scaled,
+                0,  # sl
+                int(time.time()),
             )
             
             inner_calldata = Trading.functions.openTrade(
                 trade_input_tuple,
-                TradeInputOrderType.MARKET_ZERO_FEE.value,  # uint8 order type
-                1,  # uint256 - slippage_percentage (1 = 1%)
+                TradeInputOrderType.MARKET_ZERO_FEE.value,
+                1,  # slippage_percentage
             )._encode_transaction_data()
-            
-            logger.debug(f"Manually encoded inner calldata length: {len(inner_calldata)} bytes")
-            logger.debug(f"TradeInput tuple: trader={trader[:10]}..., price={open_price_scaled}, pair={pair_index}, collateral={collateral_scaled}, long={is_long}, lev={leverage}, tp={tp_scaled}")
         
         logger.debug(f"Inner calldata length: {len(inner_calldata)}")
         logger.debug(f"Execution fee: {execution_fee} wei")
 
-        # Step 2: Wrap in delegatedAction(trader, innerCalldata)
-        # We manually encode the call instead of using build_transaction
-        # to avoid simulation (which would fail without the delegate's private key)
-        delegate_start = time.time()
-        # #region agent log
-        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"location":"avantis.py:285","message":"Building delegate tx started","data":{"requestId":request_id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        # #endregion
-        
+        # Wrap in delegatedAction(trader, innerCalldata)
         Trading = self.client.contracts.get("Trading")
         
-        # Encode the delegatedAction call
         delegate_calldata = Trading.functions.delegatedAction(
             trader,
             inner_calldata
         )._encode_transaction_data()
         
         trading_address = Trading.address
-        logger.debug(f"Delegate tx built: to={trading_address}, calldata length: {len(delegate_calldata)} bytes, fee: {execution_fee / 1e18:.6f} ETH")
-
-        # #region agent log
-        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"location":"avantis.py:338","message":"build_open_trade_tx_delegate completed","data":{"requestId":request_id,"delegateElapsedMs":int((time.time()-delegate_start)*1000),"totalElapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        # #endregion
+        logger.debug(f"Delegate tx built: to={trading_address}, calldata length: {len(delegate_calldata)} bytes")
 
         return UnsignedTx(
             to=trading_address,
@@ -363,19 +290,8 @@ class AvantisService:
     ) -> UnsignedTx:
         """
         Build unsigned close trade transaction for delegate signing.
-        
-        Uses SDK's build_trade_close_tx_delegate method (same as SDK example).
+        Uses manual encoding for speed (SDK consistently times out).
         """
-        import time
-        import json
-        start_time = time.time()
-        request_id = f"{int(time.time()*1000)}-{id(self)}"
-        
-        # #region agent log
-        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"location":"avantis.py:350","message":"build_close_trade_tx_delegate started","data":{"requestId":request_id,"trader":trader,"pairIndex":pair_index,"tradeIndex":trade_index,"collateralToClose":collateral_to_close},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C,D,E"})+"\n")
-        # #endregion
-        
         try:
             trader = to_checksum_address(trader)
             logger.debug(f"Building close tx: trader={trader}, pair_index={pair_index}, trade_index={trade_index}, collateral={collateral_to_close}")
@@ -388,23 +304,11 @@ class AvantisService:
             if collateral_to_close <= 0:
                 raise ValueError(f"Invalid collateral_to_close: {collateral_to_close}. Must be > 0")
             
-            # Use manual encoding directly for speed (SDK consistently times out after 30s)
-            # Manual encoding completes in ~1-2 seconds vs SDK which takes 30+ seconds
-            # This matches the pattern used for open trades when SDK times out
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:388","message":"Manual encoding started (skipping SDK for speed)","data":{"requestId":request_id},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
-            
             # Convert collateral to USDC units (6 decimals)
             collateral_usdc = int(collateral_to_close * 10**6)
-            logger.debug(f"Collateral in USDC units: {collateral_usdc}")
             
-            # Use default execution fee immediately (skip slow RPC call)
-            # The execution fee is relatively stable, so using default is safe and fast
-            # Updated based on successful tx analysis: ~0.00007 ETH needed
-            execution_fee = 100000000000000  # 0.0001 ETH with safety buffer
-            logger.debug(f"Execution fee (using default): {execution_fee} wei")
+            # Use default execution fee (skip slow RPC call)
+            execution_fee = 100000000000000  # 0.0001 ETH
             
             # Get Trading contract
             Trading = self.client.contracts.get("Trading")
@@ -417,7 +321,6 @@ class AvantisService:
                 int(trade_index),
                 int(collateral_usdc),
             )._encode_transaction_data()
-            logger.debug(f"Inner close calldata length: {len(inner_calldata)}")
             
             # Wrap in delegatedAction(trader, innerCalldata)
             delegate_calldata = Trading.functions.delegatedAction(
@@ -425,31 +328,16 @@ class AvantisService:
                 inner_calldata
             )._encode_transaction_data()
             trading_address = Trading.address
-            logger.debug(f"Delegate close tx built: to={trading_address}, calldata length: {len(delegate_calldata)} bytes")
             
-            tx = UnsignedTx(
+            return UnsignedTx(
                 to=trading_address,
                 data=delegate_calldata,
                 value=hex(execution_fee),
                 chain_id=self.settings.chain_id,
             )
-            
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:420","message":"build_close_trade_tx_delegate completed (manual encoding)","data":{"requestId":request_id,"to":tx.to,"dataLength":len(tx.data),"value":tx.value,"totalElapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
-            
-            logger.debug("UnsignedTx created successfully using manual encoding")
-            return tx
                 
         except Exception as e:
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:445","message":"build_close_trade_tx_delegate error","data":{"requestId":request_id,"error":str(e),"errorType":type(e).__name__,"elapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A,B,C,D,E"})+"\n")
-            # #endregion
             logger.error(f"Error in build_close_trade_tx_delegate: {type(e).__name__}: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()
             raise
 
     async def build_update_tpsl_tx_delegate(
@@ -474,31 +362,13 @@ class AvantisService:
 
     async def get_trades(self, trader: str) -> list[Trade]:
         """Get open trades for a trader (includes confirmed trades only)."""
-        import time
-        import json
-        start_time = time.time()
-        request_id = f"{int(time.time()*1000)}-{id(self)}"
-        
-        # #region agent log
-        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"location":"avantis.py:452","message":"get_trades started","data":{"requestId":request_id,"trader":trader},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        # #endregion
-        
         try:
             trader = to_checksum_address(trader)
-            sdk_start = time.time()
             trades, pending = await self.client.trade.get_trades(trader)
             
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:456","message":"SDK get_trades completed","data":{"requestId":request_id,"tradeCount":len(trades),"pendingCount":len(pending),"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
-            
             result = []
-            pair_cache_start = time.time()
             for t in trades:
                 trade_data = t.trade
-                # Get pair name from SDK
                 pair_name = await self.client.pairs_cache.get_pair_name_from_index(trade_data.pair_index)
                 result.append(Trade(
                     trade_index=trade_data.trade_index,
@@ -513,20 +383,9 @@ class AvantisService:
                     opened_at=0,
                 ))
             
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:475","message":"get_trades completed","data":{"requestId":request_id,"resultCount":len(result),"pairCacheElapsedMs":int((time.time()-pair_cache_start)*1000),"totalElapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
-            
             return result
         except Exception as e:
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:477","message":"get_trades error","data":{"requestId":request_id,"trader":trader,"error":str(e),"elapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
             logger.error(f"Error fetching trades: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()
             return []
     
     async def get_all_trades(self, trader: str) -> tuple[list[Trade], list[Trade]]:
@@ -552,44 +411,21 @@ class AvantisService:
                     opened_at=0,
                 ))
             
-            # Convert pending limit orders to Trade objects if needed
             pending_trades = []
-            # Note: pending might be limit orders, not trades - handle accordingly
-            # For now, return empty list for pending trades
-            
             return confirmed, pending_trades
         except Exception as e:
             logger.error(f"Error fetching all trades: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()
             return [], []
     
     async def get_trades_with_pnl(self, trader: str) -> list[dict]:
         """Get open trades with gross PnL calculated from SDK trade data."""
-        import time
-        import json
-        start_time = time.time()
-        request_id = f"{int(time.time()*1000)}-{id(self)}"
-        
-        # #region agent log
-        with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"location":"avantis.py:518","message":"get_trades_with_pnl started","data":{"requestId":request_id,"trader":trader},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        # #endregion
-        
         try:
             trader = to_checksum_address(trader)
-            sdk_start = time.time()
             trades, pending = await self.client.trade.get_trades(trader)
-            
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:522","message":"SDK get_trades completed (with_pnl)","data":{"requestId":request_id,"tradeCount":len(trades),"pendingCount":len(pending),"elapsedMs":int((time.time()-sdk_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
             
             # Get current prices for all pairs
             pair_indices = list(set(t.trade.pair_index for t in trades))
             pair_names = []
-            pair_cache_start = time.time()
             for pair_index in pair_indices:
                 try:
                     pair_name = await self.client.pairs_cache.get_pair_name_from_index(pair_index)
@@ -597,20 +433,9 @@ class AvantisService:
                 except Exception:
                     pass
             
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:536","message":"Pair cache lookups completed","data":{"requestId":request_id,"pairCount":len(pair_names),"elapsedMs":int((time.time()-pair_cache_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
-            
             # Fetch prices
             from app.services.price_feed import price_feed_service
-            prices_start = time.time()
             prices = await price_feed_service.get_prices(pair_names) if pair_names else {}
-            
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:536","message":"Price fetch completed (with_pnl)","data":{"requestId":request_id,"pairCount":len(pair_names),"elapsedMs":int((time.time()-prices_start)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
             
             result = []
             for extended_trade in trades:
@@ -619,28 +444,24 @@ class AvantisService:
                 # Get pair name from SDK
                 sdk_pair_name = await self.client.pairs_cache.get_pair_name_from_index(trade_data.pair_index)
                 
-                # CORRECTION: SDK's pair_index mapping may be incorrect. Use open_price to verify/correct.
-                # Price ranges: BTC ~$60k-$100k, ETH ~$2k-$4k, SOL ~$100-$200, XRP ~$0.5-$2
+                # Correct pair name based on price range
                 open_price = float(trade_data.open_price)
-                if open_price > 50000:  # BTC range
+                if open_price > 50000:
                     correct_pair = "BTC/USD"
-                elif 1000 < open_price < 5000:  # ETH range
+                elif 1000 < open_price < 5000:
                     correct_pair = "ETH/USD"
-                elif 50 < open_price < 500:  # SOL range
+                elif 50 < open_price < 500:
                     correct_pair = "SOL/USD"
-                elif 0.1 < open_price < 5:  # XRP range
+                elif 0.1 < open_price < 5:
                     correct_pair = "XRP/USD"
                 else:
-                    correct_pair = sdk_pair_name  # Fallback to SDK's answer
+                    correct_pair = sdk_pair_name
                 
-                # Use corrected pair name
                 pair_name = correct_pair
                 
-                # Get current price - fetch if not already fetched for corrected pair
+                # Get current price
                 price_data = prices.get(pair_name)
                 if not price_data and pair_name not in pair_names:
-                    # Fetch price for corrected pair
-                    from app.services.price_feed import price_feed_service
                     corrected_prices = await price_feed_service.get_prices([pair_name])
                     if corrected_prices:
                         prices.update(corrected_prices)
@@ -648,9 +469,8 @@ class AvantisService:
                 
                 current_price = price_data[0] if price_data else open_price
                 
-                # Calculate gross PnL (simple price movement, no fees)
+                # Calculate gross PnL
                 position_size = float(trade_data.open_collateral) * int(trade_data.leverage)
-                # open_price already defined above
                 
                 if trade_data.is_long:
                     price_change_pct = (current_price - open_price) / open_price
@@ -677,48 +497,25 @@ class AvantisService:
                     'gross_pnl_percentage': gross_pnl_percentage,
                 })
             
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:657","message":"get_trades_with_pnl completed","data":{"requestId":request_id,"resultCount":len(result),"totalElapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
-            
             return result
         except Exception as e:
-            # #region agent log
-            with open('/Users/piyush/yolo/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"location":"avantis.py:659","message":"get_trades_with_pnl error","data":{"requestId":request_id,"trader":trader,"error":str(e),"elapsedMs":int((time.time()-start_time)*1000)},"timestamp":int(time.time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-            # #endregion
             logger.error(f"Error fetching trades with PnL: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()
             return []
 
     def calculate_pnl(
         self, trade: Trade, current_price: float, position_size_usdc: float = None, margin_fee: float = 0
     ) -> tuple[float, float]:
-        """
-        Calculate PnL for a trade using Avantis SDK methodology.
-        
-        Uses positionSizeUSDC from SDK if provided, otherwise calculates it.
-        Accounts for margin fees that accrue over time.
-        """
-        # Use SDK's positionSizeUSDC if provided, otherwise calculate
+        """Calculate PnL for a trade using Avantis SDK methodology."""
         if position_size_usdc is None:
             position_size_usdc = trade.collateral * trade.leverage
         
-        # Calculate price change percentage
         if trade.is_long:
             price_change_pct = (current_price - trade.open_price) / trade.open_price
         else:
             price_change_pct = (trade.open_price - current_price) / trade.open_price
         
-        # Gross PnL (before fees)
         gross_pnl = position_size_usdc * price_change_pct
-        
-        # Net PnL (after margin fees)
         net_pnl = gross_pnl - margin_fee
-        
-        # PnL percentage based on collateral
         pnl_percentage = (net_pnl / trade.collateral) * 100
         
         return net_pnl, pnl_percentage
@@ -735,10 +532,7 @@ class AvantisService:
         return "0x8a311D7048c35985aa31C131B9A13e03a5f7422d"
 
     async def get_trading_contract_address(self) -> str:
-        """
-        Get the Avantis Trading contract address.
-        This is the contract that needs USDC approval for executing trades.
-        """
+        """Get the Avantis Trading contract address."""
         try:
             contracts = self.client.load_contracts()
             trading = contracts.get("Trading")
@@ -746,16 +540,10 @@ class AvantisService:
                 return trading.address
         except Exception as e:
             logger.error(f"Error getting trading contract address: {e}", exc_info=True)
-        # Fallback to known Avantis Trading contract address on Base
         return "0x44914408af82bC9983bbb330e3578E1105e11d4e"
 
     def build_usdc_approval_tx(self, spender: str) -> UnsignedTx:
-        """
-        Build unsigned USDC approval transaction.
-        Approves max amount to the specified spender.
-        """
-        # Build approve calldata: approve(address spender, uint256 amount)
-        # selector (4 bytes) + address padded to 32 bytes + amount (32 bytes)
+        """Build unsigned USDC approval transaction."""
         spender_padded = spender.lower().replace("0x", "").zfill(64)
         data = f"{APPROVE_SELECTOR}{spender_padded}{MAX_UINT256}"
         

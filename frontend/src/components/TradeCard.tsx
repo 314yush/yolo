@@ -12,6 +12,7 @@ interface TradeCardProps {
   isFlipping?: boolean;
   isClosing?: boolean;
   isClosed?: boolean; // New prop to indicate closed trade
+  actionsDisabled?: boolean; // e.g. when offline
 }
 
 /**
@@ -58,7 +59,7 @@ function formatRelativeTime(timestampMs: number | null | undefined): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
 }
 
-export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosing, isClosed = false }: TradeCardProps) {
+export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosing, isClosed = false, actionsDisabled = false }: TradeCardProps) {
   const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   
@@ -230,7 +231,7 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
         <div className="flex gap-2">
           <button
             onClick={() => onFlip(trade)}
-            disabled={isFlipping || isClosing}
+            disabled={isFlipping || isClosing || actionsDisabled}
             aria-label={isFlipping ? 'Flipping trade...' : `Flip to ${trade.isLong ? 'SHORT' : 'LONG'}`}
             aria-busy={isFlipping}
             className="flex-1 py-2.5 px-3 text-xs sm:text-sm font-bold brutal-button bg-[#CCFF00] text-black disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation min-h-[44px] flex items-center justify-center gap-1.5 focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black relative"
@@ -266,7 +267,7 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
           </button>
           <button
             onClick={() => onClose(trade)}
-            disabled={isFlipping || isClosing}
+            disabled={isFlipping || isClosing || actionsDisabled}
             aria-label={isClosing ? 'Closing trade...' : 'Close trade'}
             aria-busy={isClosing}
             className="px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-bold brutal-button-danger disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation min-h-[44px] flex items-center justify-center gap-1.5 focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black relative"

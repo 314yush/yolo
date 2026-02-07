@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
+import { useTradeStore } from '@/store/tradeStore';
 import { publicClient } from '@/lib/viemClient';
 import { CONTRACTS } from '@/lib/constants';
 import { formatUnits } from 'viem';
@@ -17,11 +18,15 @@ const ERC20_ABI = [
   },
 ] as const;
 
+const BALANCE_POLL_INTERVAL_MS = 3000;
+
 export function useUsdcBalance() {
   const { authenticated, user } = usePrivy();
+  const txHash = useTradeStore((s) => s.txHash);
   const [balance, setBalance] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const prevTxHashRef = useRef<`0x${string}` | null>(null);
 
   const fetchBalance = useCallback(async () => {
     const userAddress = user?.wallet?.address as `0x${string}` | undefined;
@@ -54,16 +59,35 @@ export function useUsdcBalance() {
     }
   }, [authenticated, user]);
 
-  // Fetch balance on mount and when user/authentication changes
+  // Refetch immediately when txHash changes (trade/close submitted)
+  useEffect(() => {
+    if (txHash && txHash !== prevTxHashRef.current) {
+      prevTxHashRef.current = txHash;
+      fetchBalance();
+    }
+  }, [txHash, fetchBalance]);
+
+  // Fetch balance on mount and poll (pause when tab hidden)
   useEffect(() => {
     fetchBalance();
-    
-    // Poll balance every 10 seconds
-    const interval = setInterval(() => {
-      fetchBalance();
-    }, 10000);
 
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchBalance();
+      }
+    }, BALANCE_POLL_INTERVAL_MS);
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchBalance();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [fetchBalance]);
 
   return {

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useState, type ReactNode } from 'react';
+import { OfflineBanner } from '@/components/OfflineBanner';
 
 // Wagmi config for Base
 const wagmiConfig = createConfig({
@@ -59,6 +60,7 @@ export function Providers({ children }: ProvidersProps) {
     >
       <QueryClientProvider client={queryClient}>
         <WagmiProvider config={wagmiConfig}>
+          <OfflineBanner />
           {children}
         </WagmiProvider>
       </QueryClientProvider>
