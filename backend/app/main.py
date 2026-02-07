@@ -52,8 +52,13 @@ app.include_router(delegate.router)
 app.include_router(trades.router)
 app.include_router(trades.trades_router)
 app.include_router(prices.router)
-app.include_router(access.router)
-app.include_router(admin.router)
+# Access codes require DATABASE_URL; when missing, use bypass (open access for dev)
+if settings.database_url:
+    app.include_router(access.router)
+    app.include_router(admin.router)
+else:
+    from app.routers.access_bypass import router as access_bypass_router
+    app.include_router(access_bypass_router)
 app.include_router(avantis_proxy.router)
 
 
@@ -71,11 +76,11 @@ async def startup_event():
         from app.core.database import init_db, check_db_connection
         if await check_db_connection():
             await init_db()
-            print("   Database: Connected ✅")
+            print("   Database: Connected ✅ (access codes enabled)")
         else:
-            print("   Database: Not connected ⚠️")
+            print("   Database: Not connected ⚠️ — access routes will 500")
     else:
-        print("   Database: Not configured (access codes disabled)")
+        print("   Database: Not configured (access gate bypassed — open access)")
 
 
 # Shutdown event
