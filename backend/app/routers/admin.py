@@ -101,6 +101,20 @@ class ListCodesResponse(BaseModel):
     pages: int
 
 
+@router.get("/db-check")
+async def db_check(_: bool = Depends(verify_admin_key)):
+    """Debug: test DB connection and return any error."""
+    try:
+        from app.core.database import _get_async_engine
+        from sqlalchemy import text
+        engine = _get_async_engine()
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"status": "ok", "message": "Database connected"}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "type": type(e).__name__}
+
+
 @router.post("/codes/generate", response_model=GenerateCodesResponse)
 async def generate_codes(
     request: GenerateCodesRequest,
