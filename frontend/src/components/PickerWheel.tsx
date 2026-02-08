@@ -100,10 +100,10 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
       if (progress3 >= 1) {
         stopSpin();
         playTick();
-        // Animation complete
+        // Animation complete - 600ms delay (500ms + 100ms) before PnL transition for smoother UX
         setTimeout(() => {
           onSpinComplete();
-        }, 500);
+        }, 600);
       } else {
         animationRef.current = requestAnimationFrame(animate);
       }

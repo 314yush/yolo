@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     base_rpc_url: str  # Required: must be set via BASE_RPC_URL env var
     chain_id: int = 8453
     
-    # Database - PostgreSQL connection string
+    # Database - PostgreSQL connection string (must start with postgres:// or postgresql://)
+    # Invalid values (e.g. bare hostname) are treated as unset → bypass mode for local dev
     database_url: Optional[str] = None
     
     # Admin API key for code generation
@@ -38,6 +39,17 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore"  # Ignore extra environment variables (like CORS_ORIGINS which is handled as a property)
     )
+    
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def validate_database_url(cls, v: object) -> Optional[str]:
+        """Treat invalid DATABASE_URL (e.g. bare hostname) as unset → bypass mode."""
+        if v is None or v == "":
+            return None
+        s = str(v).strip()
+        if not s.startswith("postgres://") and not s.startswith("postgresql://"):
+            return None  # Invalid format; use bypass mode
+        return s
     
     @property
     def cors_origins(self) -> list[str]:
