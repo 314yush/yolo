@@ -4,8 +4,9 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { debug } from '@/lib/debug';
 
-// Pyth Hermes WebSocket endpoint
-const PYTH_WS_URL = 'wss://hermes.pyth.network/ws';
+// Pyth Hermes SSE streaming endpoint (WebSocket at /ws is NOT part of Hermes API)
+const PYTH_HERMES_BASE = 'https://hermes.pyth.network';
+const PYTH_SSE_PATH = '/v2/updates/price/stream';
 
 // Pyth price feed IDs for supported assets (mainnet)
 // These are the canonical feed IDs from Pyth
@@ -19,9 +20,9 @@ const PYTH_FEED_IDS: Record<string, string> = {
   'XAG/USD': '0xf2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e',
 };
 
-// Reverse mapping for quick lookup
+// Reverse mapping for quick lookup (strip 0x for matching - Hermes returns id without 0x)
 const FEED_ID_TO_PAIR: Record<string, string> = Object.fromEntries(
-  Object.entries(PYTH_FEED_IDS).map(([pair, id]) => [id, pair])
+  Object.entries(PYTH_FEED_IDS).map(([pair, id]) => [id.toLowerCase().replace(/^0x/, ''), pair])
 );
 
 export interface PythPrice {
@@ -40,11 +41,12 @@ export interface UsePythPricesReturn {
 }
 
 /**
- * Hook for streaming real-time prices from Pyth Network via WebSocket.
- * 
- * Connects to Pyth Hermes and subscribes to price feeds for all supported assets.
- * Prices update approximately every 400ms.
- * 
+ * Hook for streaming real-time prices from Pyth Network via SSE.
+ *
+ * Hermes provides streaming via Server-Sent Events at /v2/updates/price/stream.
+ * The legacy WebSocket endpoint (wss://hermes.pyth.network/ws) is NOT part of
+ * the Hermes API and will fail to connect.
+ *
  * @example
  * const { prices, getPrice, isConnected } = usePythPrices();
  * const ethPrice = getPrice('ETH/USD'); // Returns current ETH price or null
@@ -54,14 +56,14 @@ export function usePythPrices(): UsePythPricesReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionState, setConnectionState] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
-  
-  const wsRef = useRef<WebSocket | null>(null);
+
+  const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
   const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastUpdateRef = useRef<number | null>(null);
-  const isConnectingRef = useRef(false); // Guard against multiple simultaneous connections
+  const isConnectingRef = useRef(false);
   const STALE_CONNECTION_THRESHOLD = 30000; // 30 seconds without updates = stale
 
   // Get price for a pair
@@ -70,119 +72,97 @@ export function usePythPrices(): UsePythPricesReturn {
     return priceData ? priceData.price : null;
   }, [prices]);
 
-  // Parse Pyth price update
-  const parsePriceUpdate = useCallback((data: any): void => {
+  // Parse Hermes SSE price update (parsed format from /v2/updates/price/stream)
+  const parsePriceUpdate = useCallback((data: { parsed?: Array<{ id: string; price?: { price: string; conf: string; expo: number; publish_time: number } }> }): void => {
     try {
-      if (data.type === 'price_update' && data.price_feed) {
-        const feed = data.price_feed;
-        const feedId = '0x' + feed.id;
+      if (!data.parsed || !Array.isArray(data.parsed)) return;
+
+      for (const item of data.parsed) {
+        if (!item?.price) continue;
+        const feedId = (item.id || '').toLowerCase().replace(/^0x/, '');
         const pair = FEED_ID_TO_PAIR[feedId];
-        
-        if (pair && feed.price) {
-          const price = parseFloat(feed.price.price);
-          const expo = feed.price.expo;
-          const confidence = parseFloat(feed.price.conf);
-          const timestamp = feed.price.publish_time * 1000;
-          
-          // Convert price using exponent (Pyth uses negative exponents)
-          const adjustedPrice = price * Math.pow(10, expo);
-          const adjustedConfidence = confidence * Math.pow(10, expo);
-          
-          setPrices(prev => ({
-            ...prev,
-            [pair]: {
-              price: adjustedPrice,
-              confidence: adjustedConfidence,
-              timestamp,
-              expo,
-            }
-          }));
-          
-          setLastUpdate(Date.now());
-          lastUpdateRef.current = Date.now();
-        }
+        if (!pair) continue;
+
+        const price = parseFloat(item.price.price);
+        const expo = item.price.expo ?? -8;
+        const confidence = parseFloat(item.price.conf || '0');
+        const timestamp = (item.price.publish_time || 0) * 1000;
+
+        const adjustedPrice = price * Math.pow(10, expo);
+        const adjustedConfidence = confidence * Math.pow(10, expo);
+
+        setPrices(prev => ({
+          ...prev,
+          [pair]: {
+            price: adjustedPrice,
+            confidence: adjustedConfidence,
+            timestamp,
+            expo,
+          },
+        }));
+
+        const now = Date.now();
+        setLastUpdate(now);
+        lastUpdateRef.current = now;
       }
     } catch (err) {
       console.error('[PythPrices] Error parsing price update:', err);
     }
   }, []);
 
-  // Connect to Pyth WebSocket
+  // Connect to Pyth Hermes SSE stream
   const connect = useCallback(() => {
-    // Guard: Don't connect if already connected or connecting
-    const currentWs = wsRef.current;
-    if (currentWs?.readyState === WebSocket.OPEN) {
-      return;
-    }
-    
-    // Guard: Don't connect if already connecting
-    if (isConnectingRef.current) {
-      return;
-    }
-    
-    // Clear any pending reconnection timeout to prevent race conditions
+    const currentEs = eventSourceRef.current;
+    if (currentEs?.readyState === EventSource.OPEN) return;
+    if (isConnectingRef.current) return;
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-    
-    // Close any existing connection that's not already closed
-    if (currentWs && currentWs.readyState !== WebSocket.CLOSED && currentWs.readyState !== WebSocket.CLOSING) {
+
+    if (currentEs) {
       try {
-        currentWs.close();
+        currentEs.close();
       } catch (e) {
-        // Ignore errors when closing
+        /* ignore */
       }
+      eventSourceRef.current = null;
     }
 
     isConnectingRef.current = true;
     setConnectionState('connecting');
-    debug('[PythPrices] Connecting to Pyth Hermes...');
+    debug('[PythPrices] Connecting to Pyth Hermes SSE...');
 
-    const ws = new WebSocket(PYTH_WS_URL);
+    const feedIds = Object.values(PYTH_FEED_IDS);
+    const params = new URLSearchParams();
+    feedIds.forEach(id => params.append('ids[]', id));
+    const url = `${PYTH_HERMES_BASE}${PYTH_SSE_PATH}?${params.toString()}`;
 
-    ws.onopen = () => {
-      debug('[PythPrices] Connected to Pyth Hermes');
+    const es = new EventSource(url);
+
+    es.onopen = () => {
+      debug('[PythPrices] Connected to Pyth Hermes SSE');
       isConnectingRef.current = false;
       setIsConnected(true);
       setConnectionState('connected');
       reconnectAttempts.current = 0;
 
-      // Subscribe to all price feeds
-      const feedIds = Object.values(PYTH_FEED_IDS);
-      const subscribeMsg = {
-        type: 'subscribe',
-        ids: feedIds,
-      };
-      
-      debug('[PythPrices] Subscribing to feeds:', Object.keys(PYTH_FEED_IDS));
-      try {
-        ws.send(JSON.stringify(subscribeMsg));
-      } catch (err) {
-        console.error('[PythPrices] Error sending subscribe message:', err);
-      }
-      
-      // Start health check interval to detect stale connections
       if (healthCheckIntervalRef.current) {
         clearInterval(healthCheckIntervalRef.current);
       }
       healthCheckIntervalRef.current = setInterval(() => {
-        const currentWs = wsRef.current;
-        if (!currentWs) return;
-        
         const now = Date.now();
         const lastUpdateTime = lastUpdateRef.current ?? 0;
         const timeSinceLastUpdate = now - lastUpdateTime;
-        
-        // If we haven't received updates in a while and connection appears open, it might be stale
-        if (currentWs.readyState === WebSocket.OPEN && timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD && lastUpdateTime > 0) {
+        if (es.readyState === EventSource.OPEN && timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD && lastUpdateTime > 0) {
           console.warn(`[PythPrices] Stale connection detected (${timeSinceLastUpdate}ms since last update), reconnecting...`);
-          currentWs.close(); // This will trigger onclose and reconnect
+          es.close();
         }
-      }, 10000); // Check every 10 seconds
+      }, 10000);
     };
 
-    ws.onmessage = (event) => {
+    es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         parsePriceUpdate(data);
@@ -191,39 +171,20 @@ export function usePythPrices(): UsePythPricesReturn {
       }
     };
 
-    ws.onerror = (error) => {
-      console.error('[PythPrices] WebSocket error:', error);
-      console.error('[PythPrices] WebSocket error details:', {
-        type: error.type,
-        readyState: ws.readyState,
-        url: ws.url,
-        protocol: ws.protocol,
-      });
-      isConnectingRef.current = false;
-      setConnectionState('error');
-    };
-
-    ws.onclose = (event) => {
-      debug('[PythPrices] WebSocket closed:', event.code, event.reason);
+    es.onerror = () => {
       isConnectingRef.current = false;
       setIsConnected(false);
       setConnectionState('disconnected');
-      
-      // Only process this close event if it's for the current WebSocket instance
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-        
-        // Clear health check interval
+      es.close();
+      if (eventSourceRef.current === es) {
+        eventSourceRef.current = null;
         if (healthCheckIntervalRef.current) {
           clearInterval(healthCheckIntervalRef.current);
           healthCheckIntervalRef.current = null;
         }
-
-        // Attempt to reconnect with exponential backoff (only if no timeout already scheduled)
         if (!reconnectTimeoutRef.current && reconnectAttempts.current < maxReconnectAttempts) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
           debug(`[PythPrices] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
-          
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current++;
             reconnectTimeoutRef.current = null;
@@ -236,7 +197,7 @@ export function usePythPrices(): UsePythPricesReturn {
       }
     };
 
-    wsRef.current = ws;
+    eventSourceRef.current = es;
   }, [parsePriceUpdate]);
 
   // Connect on mount
@@ -252,58 +213,47 @@ export function usePythPrices(): UsePythPricesReturn {
         clearInterval(healthCheckIntervalRef.current);
         healthCheckIntervalRef.current = null;
       }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
       isConnectingRef.current = false;
     };
   }, [connect]);
 
-  // Reconnect on visibility change - improved to handle stale connections
+  // Reconnect on visibility change
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (!document.hidden) {
-        // Tab became visible - check connection health
-        const ws = wsRef.current;
-        const isActuallyConnected = ws?.readyState === WebSocket.OPEN;
+        const es = eventSourceRef.current;
+        const isActuallyConnected = es?.readyState === EventSource.OPEN;
         const now = Date.now();
         const lastUpdateTime = lastUpdateRef.current ?? 0;
         const timeSinceLastUpdate = now - lastUpdateTime;
         const isStale = timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD && lastUpdateTime > 0;
-        
-        // Reconnect if: not connected, stale connection, or WebSocket is not actually open
-        // But only if we're not already connecting
+
         if ((!isActuallyConnected || isStale || (!isConnected && connectionState !== 'connecting')) && !isConnectingRef.current) {
-          debug('[PythPrices] Tab visible, reconnecting...', { 
-            isActuallyConnected, 
-            isStale, 
+          debug('[PythPrices] Tab visible, reconnecting...', {
+            isActuallyConnected,
+            isStale,
             connectionState,
-            timeSinceLastUpdate 
+            timeSinceLastUpdate,
           });
-          reconnectAttempts.current = 0; // Reset attempts when user returns
-          
-          // Close existing connection if it's stale or dead
-          if (ws && (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED || isStale)) {
+          reconnectAttempts.current = 0;
+          if (es && (es.readyState === EventSource.CLOSED || isStale)) {
             try {
-              ws.close();
+              es.close();
             } catch (e) {
-              // Ignore errors when closing
+              /* ignore */
             }
           }
-          
-          // Small delay to ensure cleanup, then reconnect
-          setTimeout(() => {
-            connect();
-          }, 100);
+          setTimeout(() => connect(), 100);
         }
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [connect, isConnected, connectionState]);
 
   return {
@@ -322,22 +272,22 @@ export function usePythPrices(): UsePythPricesReturn {
 export function usePythPricesSync(): UsePythPricesReturn {
   const pythPrices = usePythPrices();
   const setPrices = useTradeStore(state => state.setPrices);
-  
+
   // Sync prices to store
   useEffect(() => {
     if (Object.keys(pythPrices.prices).length > 0) {
       const storePrices: Record<string, { price: number; timestamp: number }> = {};
-      
+
       for (const [pair, data] of Object.entries(pythPrices.prices)) {
         storePrices[pair] = {
           price: data.price,
           timestamp: data.timestamp,
         };
       }
-      
+
       setPrices(storePrices);
     }
   }, [pythPrices.prices, setPrices]);
-  
+
   return pythPrices;
 }

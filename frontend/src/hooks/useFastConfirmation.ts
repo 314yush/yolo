@@ -69,6 +69,7 @@ export function useFastConfirmation(
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isConfirmingRef = useRef(false);
+  const hasFiredOnConfirmedRef = useRef(false);
 
   // Calculate latency
   const latencyMs = confirmationTimestamp 
@@ -107,6 +108,7 @@ export function useFastConfirmation(
     // Set initial state
     currentTxHashRef.current = txHash;
     isConfirmingRef.current = true;
+    hasFiredOnConfirmedRef.current = false;
     setConfirmationStage('submitted');
     setConfirmationTimestamp(Date.now());
     
@@ -138,8 +140,9 @@ export function useFastConfirmation(
           
           if (receipt.status === 'success') {
             debug(`[FastConfirmation] Receipt confirmed (polling) in ${elapsed}ms`);
-            // Only update if Pusher hasn't already confirmed
-            if (confirmationStage !== 'confirmed') {
+            // Only fire onConfirmed once (prevents duplicate toasts from race with Pusher)
+            if (!hasFiredOnConfirmedRef.current) {
+              hasFiredOnConfirmedRef.current = true;
               setConfirmationStage('confirmed');
               onConfirmed?.(elapsed);
             }
@@ -190,8 +193,12 @@ export function useFastConfirmation(
     // Order filled
     if (pusher.hasFilled && confirmationStage !== 'confirmed' && confirmationStage !== 'failed') {
       debug(`[FastConfirmation] Confirmed (Pusher) in ${elapsed}ms`);
-      setConfirmationStage('confirmed');
-      onConfirmed?.(elapsed);
+      // Only fire onConfirmed once (prevents duplicate toasts from race with polling)
+      if (!hasFiredOnConfirmedRef.current) {
+        hasFiredOnConfirmedRef.current = true;
+        setConfirmationStage('confirmed');
+        onConfirmed?.(elapsed);
+      }
       cleanup();
     }
     

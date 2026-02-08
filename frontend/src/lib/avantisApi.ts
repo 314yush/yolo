@@ -1,8 +1,8 @@
 /**
  * Avantis API Client
  *
- * Uses backend proxy to avoid CORS when frontend runs on localhost or non-whitelisted origins.
- * tradeyolo.fun is whitelisted by Avantis; proxy allows dev and other deployments to work.
+ * When on tradeyolo.fun (whitelisted by Avantis), calls Avantis APIs directly for lower latency.
+ * On localhost or other origins, uses backend proxy to avoid CORS.
  */
 
 import { ASSETS } from './constants';
@@ -10,6 +10,17 @@ import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const AVANTIS_PROXY_BASE = `${API_BASE}/avantis`;
+
+// Direct Avantis API URLs (used when origin is whitelisted)
+const AVANTIS_CORE_BASE = 'https://core.avantisfi.com';
+const AVANTIS_HISTORY_BASE = 'https://api.avantisfi.com/v2/history/portfolio/history';
+
+/** tradeyolo.fun is whitelisted by Avantis - use direct API calls for better latency */
+function useDirectAvantis(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'tradeyolo.fun' || host === 'www.tradeyolo.fun';
+}
 
 // Decimal conversions
 const USDC_DECIMALS = 1e6;
@@ -128,12 +139,14 @@ async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise
 }
 
 /**
- * Fetch user's open trades from Avantis API (via backend proxy)
+ * Fetch user's open trades from Avantis API (direct when whitelisted, else via proxy)
  */
 export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
-  const url = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
+  const url = useDirectAvantis()
+    ? `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`
+    : `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
   
-  const response = await fetchWithTimeout(url, 10000); // 10 second timeout
+  const response = await fetchWithTimeout(url, 15000); // 15s - direct calls can be slower on cold start
   if (!response.ok) {
     throw new Error(`Avantis API error: ${response.status}`);
   }
@@ -144,7 +157,7 @@ export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
 }
 
 /**
- * Fetch user's positions with PnL from Avantis API
+ * Fetch user's positions with PnL from Avantis API (direct when whitelisted, else via proxy)
  * 
  * @param traderAddress - Trader's wallet address
  * @param prices - Map of pair name to current price (from Pyth)
@@ -153,9 +166,11 @@ export async function fetchPnL(
   traderAddress: string,
   prices: Record<string, { price: number; timestamp: number }>
 ): Promise<PnLData[]> {
-  const url = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
+  const url = useDirectAvantis()
+    ? `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`
+    : `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
   
-  const response = await fetchWithTimeout(url, 10000); // 10 second timeout
+  const response = await fetchWithTimeout(url, 15000); // 15s
   if (!response.ok) {
     throw new Error(`Avantis API error: ${response.status}`);
   }
@@ -231,10 +246,12 @@ export async function fetchClosedTrades(
   traderAddress: string,
   pageNumber: number = 1
 ): Promise<ClosedTrade[]> {
-  const url = `${AVANTIS_PROXY_BASE}/history/portfolio/history/${traderAddress}/${pageNumber}`;
+  const url = useDirectAvantis()
+    ? `${AVANTIS_HISTORY_BASE}/${traderAddress}/${pageNumber}`
+    : `${AVANTIS_PROXY_BASE}/history/portfolio/history/${traderAddress}/${pageNumber}`;
   
   try {
-    const response = await fetchWithTimeout(url, 10000); // 10 second timeout
+    const response = await fetchWithTimeout(url, 15000); // 15s
     if (!response.ok) {
       // If API returns error, return empty array (user might not have history yet)
       if (response.status === 404) {
