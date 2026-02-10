@@ -192,7 +192,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
       <div 
         className={`flex flex-col items-center justify-center px-4 ${isFlashing ? 'animate-pnl-flash' : ''}`}
         style={{
-          minHeight: '35vh',
+          minHeight: (displayTrade?.leverage ?? 1) >= 250 ? '28vh' : '35vh',
           paddingTop: 'max(env(safe-area-inset-top, 0px), 1rem)',
         }}
         role="status"
@@ -437,12 +437,12 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         )}
       </div>
 
-      {/* 3. Chart Widget - Readable size */}
-      <div 
+      {/* 3. Chart Widget - Readable size, taller for high leverage */}
+      <div
         className="w-full overflow-hidden px-4 py-2 flex-1"
-        style={{ 
+        style={{
           minHeight: '140px',
-          maxHeight: '180px',
+          maxHeight: (displayTrade?.leverage ?? 1) >= 250 ? '260px' : '180px',
         }}
       >
         <PriceChart
@@ -451,9 +451,10 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
           entryPrice={entryPrice}
           liquidationPrice={liquidationPrice}
           takeProfitPrice={takeProfitPrice}
-          height={160}
+          height={(displayTrade?.leverage ?? 1) >= 250 ? 240 : 160}
           pnl={pnl}
           showLegend={false}
+          leverage={displayTrade?.leverage ?? 1}
         />
       </div>
 

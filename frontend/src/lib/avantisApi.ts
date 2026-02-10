@@ -180,10 +180,15 @@ export async function fetchPnL(
   return data.positions.map(pos => {
     const trade = parsePosition(pos);
     const pairName = trade.pair;
-    const currentPrice = prices[pairName]?.price || trade.openPrice;
-    
+    const pythPrice = prices[pairName]?.price;
+    const currentPrice = pythPrice ?? trade.openPrice;
+
+    if (!pythPrice) {
+      console.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL will show $0 until prices arrive`);
+    }
+
     const { pnl, pnlPercentage } = calculatePnL(pos, currentPrice);
-    
+
     return {
       trade,
       currentPrice,

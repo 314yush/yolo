@@ -262,26 +262,23 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
   };
 
   return (
-    <div 
-      className="relative w-full h-full"
+    <div
+      className="flex flex-col items-center w-full h-full"
       style={{
         height: '100%',
         maxHeight: '100%',
         overflow: 'hidden',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
       }}
     >
-      {/* Selection display - Simplified text-based, no button-like fills (60/30/10 rule) */}
-      {(showAssetChip || showLeverageChip || showDirectionChip) && (
-        <div 
-          className="absolute flex flex-col items-center gap-2 z-20"
+      {/* Selection display - normal flex flow, no overlap */}
+      {(showAssetChip || showLeverageChip || showDirectionChip) ? (
+        <div
+          className="shrink-0 flex flex-col items-center z-20"
           style={{
-            top: 'clamp(1rem, 5vh, 2rem)',
-            left: '50%',
-            transform: 'translateX(-50%)',
             width: 'calc(100% - clamp(2rem, 8vw, 4rem))',
+            gap: 'clamp(0.25rem, 1.5vw, 0.5rem)',
+            paddingTop: 'clamp(0.25rem, 1vh, 0.5rem)',
+            paddingBottom: 'clamp(0.25rem, 1vh, 0.5rem)',
           }}
           role="status"
           aria-live="polite"
@@ -289,14 +286,15 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           aria-label="Selected trade parameters"
         >
           {/* Combined selection display - inline text with color indicators */}
-          <div 
-            className="flex items-center justify-center gap-3 text-white font-bold font-mono animate-bounce-in"
-            style={{ 
+          <div
+            className="flex items-center justify-center text-white font-bold font-mono animate-bounce-in whitespace-nowrap overflow-hidden text-ellipsis"
+            style={{
               fontSize: 'clamp(1rem, 3vw, 1.5rem)',
+              gap: 'clamp(0.25rem, 1.5vw, 0.75rem)',
             }}
           >
             {showAssetChip && selection?.asset && (
-              <span 
+              <span
                 className="flex items-center gap-1.5"
                 role="status"
                 aria-label={`Selected asset: ${selection.asset.name}`}
@@ -308,7 +306,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             {showLeverageChip && selection?.leverage && (
               <>
                 <span className="text-white/30">•</span>
-                <span 
+                <span
                   className="text-white"
                   role="status"
                   aria-label={`Selected leverage: ${selection.leverage.name}`}
@@ -320,7 +318,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             {showDirectionChip && selection?.direction && (
               <>
                 <span className="text-white/30">•</span>
-                <span 
+                <span
                   style={{ color: selection.direction.color }}
                   role="status"
                   aria-label={`Selected direction: ${selection.direction.name}`}
@@ -330,10 +328,10 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
               </>
             )}
           </div>
-          
+
           {/* Gamification message */}
           {showAssetChip && showLeverageChip && showDirectionChip && (
-            <div 
+            <div
               className="text-[#CCFF00] font-bold font-mono animate-bounce-in"
               style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1.125rem)' }}
             >
@@ -341,16 +339,19 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             </div>
           )}
         </div>
+      ) : (
+        <div className="shrink-0" />
       )}
 
-      {/* Wheel container - Centered on screen */}
+      {/* Wheel container - flex center, shrinks to fit */}
+      <div className="flex-1 min-h-0 flex items-center justify-center">
       <div
         className="relative touch-none cursor-pointer"
         style={{
-          width: 'clamp(180px, min(75vw, 75dvh), 400px)',
-          height: 'clamp(180px, min(75vw, 75dvh), 400px)',
-          maxWidth: 'clamp(180px, min(75vw, 75dvh), 400px)',
-          maxHeight: 'clamp(180px, min(75vw, 75dvh), 400px)',
+          width: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
+          height: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
+          maxWidth: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
+          maxHeight: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
         }}
         onClick={handleWheelClick}
         onKeyDown={(e) => {
@@ -442,18 +443,17 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
         {/* Outer border with shadow */}
         <div className="absolute inset-0 rounded-full border-8 border-black pointer-events-none shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]" />
       </div>
+      </div>
 
-      {/* Status text - Positioned below wheel, absolutely */}
+      {/* Status text - normal flex flow below wheel */}
       {stage === 'spinning' && (
-        <div 
-          className="absolute text-white/60 text-center font-medium px-4 z-20"
+        <div
+          className="shrink-0 text-white/60 text-center font-medium px-4 z-20"
           style={{
-            bottom: 'clamp(1rem, 5vh, 2rem)',
-            left: '50%',
-            transform: 'translateX(-50%)',
             width: 'calc(100% - clamp(2rem, 8vw, 4rem))',
             fontSize: 'clamp(0.75rem, 2vw, 1rem)',
-            minHeight: 'clamp(1.5rem, 4vh, 2rem)',
+            paddingTop: 'clamp(0.25rem, 1vh, 0.5rem)',
+            paddingBottom: 'clamp(0.25rem, 1vh, 0.5rem)',
           }}
           role="status"
           aria-live="polite"

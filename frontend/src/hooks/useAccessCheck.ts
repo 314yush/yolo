@@ -19,6 +19,13 @@ export function useAccessCheck(walletAddress: string | null): UseAccessCheckRetu
 
   useEffect(() => {
     async function check() {
+      // 0. Bypass access gate in local dev
+      if (process.env.NEXT_PUBLIC_BYPASS_ACCESS_CODE === 'true') {
+        setHasAccess(true);
+        setIsChecking(false);
+        return;
+      }
+
       // 1. First check localStorage (fast path) - per-wallet
       if (walletAddress && hasLocalAccess(walletAddress)) {
         setHasAccess(true);

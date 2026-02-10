@@ -10,7 +10,6 @@ import { useSound } from '@/hooks/useSound';
 import { useUsdcBalance } from '@/hooks/useUsdcBalance';
 import { useOpenTrades } from '@/hooks/useOpenTrades';
 import { useFastConfirmation } from '@/hooks/useFastConfirmation';
-import { usePythPricesSync } from '@/hooks/usePythPrices';
 import { useChartDataCollector } from '@/hooks/useChartDataCollector';
 import { usePrebuiltTx } from '@/hooks/usePrebuiltTx';
 import { useAccessCheck } from '@/hooks/useAccessCheck';
@@ -170,9 +169,8 @@ export default function HomePage() {
   // Start fetching open trades + PnL immediately when user logs in
   useOpenTrades();
   
-  // Stream real-time prices from Pyth (syncs to store)
-  usePythPricesSync();
-  
+  // Pyth prices now synced at app level (providers.tsx)
+
   // Collect chart data in background for all assets (pre-load for instant charts)
   useChartDataCollector();
 
@@ -794,8 +792,8 @@ export default function HomePage() {
         role="main"
         aria-label="Trading interface"
         style={{
-          paddingBottom: (stage === 'idle' || stage === 'spinning' || stage === 'executing') 
-            ? 'calc(200px + env(safe-area-inset-bottom, 0px))' 
+          paddingBottom: (stage === 'idle' || stage === 'spinning' || stage === 'executing')
+            ? 'calc(140px + env(safe-area-inset-bottom, 0px))'
             : stage === 'pnl'
             ? '0'
             : 'calc(80px + env(safe-area-inset-bottom, 0px))',
@@ -852,8 +850,8 @@ export default function HomePage() {
                 </a>
               </div>
             )}
-            <div 
-              className="w-full h-full flex items-center justify-center shrink-0"
+            <div
+              className="w-full h-full flex items-center justify-center"
               style={{ minHeight: 0 }}
             >
               <PickerWheel

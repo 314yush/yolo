@@ -25,6 +25,7 @@ interface PriceChartProps {
   showLegend?: boolean;
   pnl?: number;
   resolution?: Resolution;
+  leverage?: number;
 }
 
 // Fixed resolution for simplified chart - no user control
@@ -76,14 +77,15 @@ function hexToRgba(hex: string, opacity: number): string {
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 }
 
-function PriceChartComponent({ 
-  assetPair, 
+function PriceChartComponent({
+  assetPair,
   lineColor = BRAND_COLORS.primary,
   entryPrice = null,
   liquidationPrice = null,
   takeProfitPrice = null,
   height = 120,
   pnl = 0,
+  leverage = 1,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -182,7 +184,8 @@ function PriceChartComponent({
       takeProfitPriceLineRef.current = null;
     }
 
-    if (takeProfitPrice !== null && takeProfitPrice > 0) {
+    // Skip take-profit line for high leverage (stretches scale too much)
+    if (takeProfitPrice !== null && takeProfitPrice > 0 && leverage < 100) {
       try {
         takeProfitPriceLineRef.current = seriesRef.current.createPriceLine({
           price: takeProfitPrice,
@@ -196,7 +199,7 @@ function PriceChartComponent({
         console.error('[PriceChart] Error creating take profit price line:', err);
       }
     }
-  }, [entryPrice, calculatedLiquidationPrice, takeProfitPrice]);
+  }, [entryPrice, calculatedLiquidationPrice, takeProfitPrice, leverage]);
 
   // Initialize chart only once
   useEffect(() => {
@@ -229,7 +232,7 @@ function PriceChartComponent({
         visible: false, // Hide price scale labels, but keep Entry/LIQ labels
       },
       rightPriceScale: {
-        visible: false, // Hide right price scale
+        visible: leverage >= 250, // Show price scale for high leverage trades
       },
       timeScale: {
         visible: false, // Hide time scale for minimal look
@@ -379,7 +382,8 @@ function PriceChartComponent({
       }
     }
 
-    if (takeProfitPrice !== null && takeProfitPrice > 0) {
+    // Skip take-profit line for high leverage (stretches scale too much)
+    if (takeProfitPrice !== null && takeProfitPrice > 0 && leverage < 100) {
       try {
         takeProfitPriceLineRef.current = series.createPriceLine({
           price: takeProfitPrice,
@@ -391,6 +395,55 @@ function PriceChartComponent({
         });
       } catch (err) {
         console.error('[PriceChart] Error creating take profit price line:', err);
+      }
+    }
+
+    // For high leverage, set a focused price range around entry
+    if (leverage >= 100 && entryPrice !== null && entryPrice > 0) {
+      try {
+        // Margin = enough to show entry-to-liquidation with padding
+        const margin = entryPrice / leverage * 3; // 3x the entry-to-liq distance
+        chart.priceScale('right').applyOptions({
+          autoScale: false,
+        });
+        // Use timeScale fitContent first, then manually set price range
+        requestAnimationFrame(() => {
+          try {
+            const priceScale = chart.priceScale('right');
+            priceScale.applyOptions({ autoScale: false });
+            // Set visible range via series price range
+            if (seriesRef.current) {
+              const minPrice = entryPrice - margin;
+              const maxPrice = entryPrice + margin;
+              // lightweight-charts v5: use setVisibleLogicalRange equivalent for price
+              // Workaround: add invisible price lines to anchor the scale
+              // Anchor lines widen the auto-scale range
+              seriesRef.current.createPriceLine({
+                price: minPrice,
+                color: 'transparent',
+                lineWidth: 1,
+                lineStyle: LineStyle.Solid,
+                axisLabelVisible: false,
+                title: '',
+              });
+              seriesRef.current.createPriceLine({
+                price: maxPrice,
+                color: 'transparent',
+                lineWidth: 1,
+                lineStyle: LineStyle.Solid,
+                axisLabelVisible: false,
+                title: '',
+              });
+              // Re-enable autoScale so it includes our anchors
+              priceScale.applyOptions({ autoScale: true });
+            }
+          } catch (err) {
+            // Fallback: just use autoScale
+            chart.priceScale('right').applyOptions({ autoScale: true });
+          }
+        });
+      } catch (err) {
+        console.error('[PriceChart] Error setting high-leverage price range:', err);
       }
     }
 
