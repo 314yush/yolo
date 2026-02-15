@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { usePrivy } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
+import { usePrivyEmbeddedWallet } from './usePrivyEmbeddedWallet';
 import { publicClient } from '@/lib/viemClient';
 import { CONTRACTS } from '@/lib/constants';
 import { formatUnits } from 'viem';
@@ -21,7 +21,7 @@ const ERC20_ABI = [
 const BALANCE_POLL_INTERVAL_MS = 3000;
 
 export function useUsdcBalance() {
-  const { authenticated, user } = usePrivy();
+  const { address: embeddedAddress, isReady } = usePrivyEmbeddedWallet();
   const txHash = useTradeStore((s) => s.txHash);
   const [balance, setBalance] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -29,9 +29,7 @@ export function useUsdcBalance() {
   const prevTxHashRef = useRef<`0x${string}` | null>(null);
 
   const fetchBalance = useCallback(async () => {
-    const userAddress = user?.wallet?.address as `0x${string}` | undefined;
-    
-    if (!authenticated || !userAddress) {
+    if (!isReady || !embeddedAddress) {
       setBalance(null);
       return;
     }
@@ -44,10 +42,9 @@ export function useUsdcBalance() {
         address: CONTRACTS.USDC,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
-        args: [userAddress],
+        args: [embeddedAddress],
       })) as bigint;
 
-      // USDC has 6 decimals
       const balanceFormatted = parseFloat(formatUnits(balanceBigInt, 6));
       setBalance(balanceFormatted);
     } catch (err) {
@@ -57,7 +54,7 @@ export function useUsdcBalance() {
     } finally {
       setIsLoading(false);
     }
-  }, [authenticated, user]);
+  }, [isReady, embeddedAddress]);
 
   // Refetch immediately when txHash changes (trade/close submitted)
   useEffect(() => {

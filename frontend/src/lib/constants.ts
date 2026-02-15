@@ -85,9 +85,10 @@ export const CONTRACTS = {
 
 // Local storage keys
 export const STORAGE_KEYS = {
+  // Legacy keys (kept for cleanup on existing installs)
   DELEGATE_KEY: 'yolo_delegate_key',
   DELEGATE_ADDRESS: 'yolo_delegate_address',
-  DELEGATE_7702_DELEGATED: 'yolo_delegate_7702_delegated', // EIP-7702 delegation status
+  DELEGATE_7702_DELEGATED: 'yolo_delegate_7702_delegated',
 };
 
 // ============================================================

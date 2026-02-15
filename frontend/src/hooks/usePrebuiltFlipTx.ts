@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from './useDelegateWallet';
+import { usePrivyEmbeddedWallet } from './usePrivyEmbeddedWallet';
 import { buildFlipTradeTxs } from '@/lib/avantisEncoder';
 import { debug } from '@/lib/debug';
 
@@ -12,7 +12,7 @@ const TTL_MS = 30000; // 30 seconds
 
 /**
  * Pre-builds flip trade transactions (close + open opposite).
- * 
+ *
  * Automatically rebuilds when:
  * - currentTrade changes
  * - Price moves significantly (> 0.5%)
@@ -27,8 +27,8 @@ export function usePrebuiltFlipTx() {
     setPrebuiltFlipTxs,
     setIsPrebuildingFlip,
   } = useTradeStore();
-  
-  const { delegateAddress } = useDelegateWallet();
+
+  const { address: embeddedAddress } = usePrivyEmbeddedWallet();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const isBuildingRef = useRef(false);
 
@@ -45,7 +45,7 @@ export function usePrebuiltFlipTx() {
 
   // Build flip transactions
   const buildTxs = useCallback(() => {
-    if (!currentTrade || !userAddress || !delegateAddress) {
+    if (!currentTrade || !userAddress || !embeddedAddress) {
       setPrebuiltFlipTxs(null);
       return;
     }
@@ -60,7 +60,7 @@ export function usePrebuiltFlipTx() {
     // Get current price from Pyth
     const pair = currentTrade.pair;
     const currentPrice = prices[pair]?.price;
-    
+
     if (!currentPrice) return; // Wait for Pyth price
 
     if (isBuildingRef.current) return;
@@ -92,7 +92,7 @@ export function usePrebuiltFlipTx() {
       isBuildingRef.current = false;
       setIsPrebuildingFlip(false);
     }
-  }, [currentTrade, userAddress, delegateAddress, prices, setPrebuiltFlipTxs, setIsPrebuildingFlip, getTradeKey]);
+  }, [currentTrade, userAddress, embeddedAddress, prices, setPrebuiltFlipTxs, setIsPrebuildingFlip, getTradeKey]);
 
   // Debounced build
   const debouncedBuild = useCallback(() => {
@@ -130,10 +130,10 @@ export function usePrebuiltFlipTx() {
 
   // Initial build
   useEffect(() => {
-    if (currentTrade && userAddress && delegateAddress && !prebuiltFlipTxs && !isBuildingRef.current) {
+    if (currentTrade && userAddress && embeddedAddress && !prebuiltFlipTxs && !isBuildingRef.current) {
       debouncedBuild();
     }
-  }, [currentTrade, userAddress, delegateAddress, prebuiltFlipTxs, debouncedBuild]);
+  }, [currentTrade, userAddress, embeddedAddress, prebuiltFlipTxs, debouncedBuild]);
 
   // Cleanup
   useEffect(() => {

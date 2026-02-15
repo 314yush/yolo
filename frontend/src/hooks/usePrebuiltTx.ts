@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from './useDelegateWallet';
+import { usePrivyEmbeddedWallet } from './usePrivyEmbeddedWallet';
 import { 
   buildOpenTradeTx as buildOpenTradeTxDirect, 
   validatePositionSize,
@@ -43,7 +43,7 @@ export function usePrebuiltTx() {
     setPrebuildError,
   } = useTradeStore();
   
-  const { delegateAddress } = useDelegateWallet();
+  const { address: embeddedAddress } = usePrivyEmbeddedWallet();
   
   // Track when the tx was built and at what price
   const prebuildMetaRef = useRef<{
@@ -63,7 +63,7 @@ export function usePrebuiltTx() {
 
   // Build the transaction (now entirely in frontend!)
   const buildTx = useCallback(() => {
-    if (!selection || !userAddress || !delegateAddress) {
+    if (!selection || !userAddress || !embeddedAddress) {
       setPrebuiltTx(null);
       return;
     }
@@ -124,7 +124,7 @@ export function usePrebuiltTx() {
   }, [
     selection,
     userAddress,
-    delegateAddress,
+    embeddedAddress,
     collateral,
     prices,
     setPrebuiltTx,
@@ -172,10 +172,10 @@ export function usePrebuiltTx() {
 
   // Initial build when addresses become available
   useEffect(() => {
-    if (selection && userAddress && delegateAddress && !prebuiltTx && !isBuildingRef.current) {
+    if (selection && userAddress && embeddedAddress && !prebuiltTx && !isBuildingRef.current) {
       debouncedBuild();
     }
-  }, [selection, userAddress, delegateAddress, prebuiltTx, debouncedBuild]);
+  }, [selection, userAddress, embeddedAddress, prebuiltTx, debouncedBuild]);
 
   // Cleanup debounce on unmount
   useEffect(() => {

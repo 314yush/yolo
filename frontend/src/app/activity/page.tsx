@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from '@/hooks/useDelegateWallet';
+import { usePrivyEmbeddedWallet } from '@/hooks/usePrivyEmbeddedWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { useTxSigner } from '@/hooks/useTxSigner';
 import { useSound } from '@/hooks/useSound';
@@ -19,7 +19,7 @@ import type { Trade, PnLData, ClosedTrade } from '@/types';
 export default function ActivityPage() {
   const router = useRouter();
   const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, toasts, removeToast, tradeStats, setTradeStats, showToast, setIsIntentionalClose } = useTradeStore();
-  const { delegateAddress } = useDelegateWallet();
+  const { address: embeddedAddress } = usePrivyEmbeddedWallet();
   const { getTrades, getPnL, getClosedTrades, getTotalVolume } = useAvantisAPI();
   const { signAndWait, signAndBroadcast } = useTxSigner();
   const { playWin, playLose, playFlip } = useSound();
@@ -225,7 +225,7 @@ export default function ActivityPage() {
       return;
     }
 
-    if (!userAddress || !delegateAddress) return;
+    if (!userAddress || !embeddedAddress) return;
 
     // Find the trade in the current list to ensure we have the correct data
     const tradeWithPnL = tradesWithPnL.find((t) => 
@@ -362,7 +362,7 @@ export default function ActivityPage() {
       return;
     }
 
-    if (!userAddress || !delegateAddress) return;
+    if (!userAddress || !embeddedAddress) return;
 
     const tradeIndex = tradesWithPnL.findIndex((t) => 
       t.trade.pairIndex === trade.pairIndex && t.trade.tradeIndex === trade.tradeIndex

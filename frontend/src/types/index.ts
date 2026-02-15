@@ -28,7 +28,6 @@ export interface Direction {
 // Trade input for API
 export interface TradeParams {
   trader: string;
-  delegate: string;
   pair: string;
   pairIndex: number;
   leverage: number;
@@ -88,10 +87,9 @@ export interface WheelSelection {
   direction: Direction;
 }
 
-// Delegate status
+// Wallet setup status (embedded wallet)
 export interface DelegateStatus {
   isSetup: boolean;
-  delegateAddress: string | null;
   usdcApproved: boolean;
 }
 

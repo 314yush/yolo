@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from '@/hooks/useDelegateWallet';
+import { usePrivyEmbeddedWallet } from '@/hooks/usePrivyEmbeddedWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { useTxSigner } from '@/hooks/useTxSigner';
 import { useSound } from '@/hooks/useSound';
@@ -62,102 +62,27 @@ export default function HomePage() {
     prices,
   } = useTradeStore();
   
-  const { delegateAddress } = useDelegateWallet();
+  const { address: embeddedAddress } = usePrivyEmbeddedWallet();
   const { isOnline } = useNetworkStatus();
-  const { getPnL, checkDelegateStatus } = useAvantisAPI();  // Only read operations from backend
-  
-  // Ensure userAddress is set when user is authenticated
-  // Also load cached delegate status for this user
-  // Check onboarding status
-  // CRITICAL: Verify on-chain delegate status before trusting cache
+  const { getPnL } = useAvantisAPI();
+
+  // Set userAddress from embedded wallet when authenticated
   useEffect(() => {
-    async function verifyDelegateStatus() {
-      if (authenticated && user?.wallet?.address) {
-        const address = user.wallet.address as `0x${string}`;
-        if (address !== userAddress) {
-          setUserAddress(address);
-          // Load cached delegate status for this user
-          loadDelegateStatusForUser(address);
-          // Check if onboarding is already completed
-          setIsOnboardingComplete(hasCompletedOnboarding(address));
-        }
-
-        // CRITICAL FIX: Always verify on-chain delegate status if cache says setup is complete
-        // This prevents delegate mismatch issues
-        const { delegateStatus: cachedStatus } = useTradeStore.getState();
-        if (cachedStatus.isSetup && cachedStatus.delegateAddress) {
-          // Prevent multiple simultaneous verifications for the same address
-          if (verifyingRef.current === address) {
-            return; // Already verifying this address
-          }
-          
-          // Set verifying state to prevent trading during verification
-          verifyingRef.current = address;
-          setIsVerifyingDelegate(true);
-          
-          try {
-            // Use the hook's checkDelegateStatus function
-            const status = await checkDelegateStatus(address);
-            
-            // Check for delegate mismatch
-            const onChainDelegate = status.delegateAddress?.toLowerCase();
-            const cachedDelegate = cachedStatus.delegateAddress?.toLowerCase();
-            const localDelegate = delegateAddress?.toLowerCase();
-            
-            if (!status.isSetup) {
-              // On-chain says not set up, but cache says it is - clear cache
-              useTradeStore.getState().setDelegateStatus({
-                isSetup: false,
-                delegateAddress: null,
-                usdcApproved: false,
-              });
-            } else if (onChainDelegate && cachedDelegate && onChainDelegate !== cachedDelegate) {
-              // Delegate mismatch - clear cache and force re-setup
-              // User will see error message in SetupFlow guiding them to remove old delegate
-              useTradeStore.getState().setDelegateStatus({
-                isSetup: false,
-                delegateAddress: null,
-                usdcApproved: false,
-              });
-            } else if (onChainDelegate && localDelegate && onChainDelegate !== localDelegate) {
-              // On-chain delegate doesn't match local delegate - clear cache and force re-setup
-              useTradeStore.getState().setDelegateStatus({
-                isSetup: false,
-                delegateAddress: null,
-                usdcApproved: false,
-              });
-            }
-          } catch (err) {
-            console.error('Failed to verify delegate status:', err);
-            // On error, don't trust cache - force re-verification
-            useTradeStore.getState().setDelegateStatus({
-              isSetup: false,
-              delegateAddress: null,
-              usdcApproved: false,
-            });
-          } finally {
-            // Always clear verifying state
-            verifyingRef.current = null;
-            setIsVerifyingDelegate(false);
-          }
-        } else {
-          // No cached status to verify, clear verifying state
-          verifyingRef.current = null;
-          setIsVerifyingDelegate(false);
-        }
-      } else if (!authenticated) {
-        // Clear delegate status, onboarding status, and access cache when logged out
-        if (userAddress) {
-          clearOnboardingStatus(userAddress);
-          clearLocalAccess(userAddress);
-        }
-        loadDelegateStatusForUser(null);
-        setIsOnboardingComplete(false);
+    if (authenticated && embeddedAddress) {
+      if (embeddedAddress !== userAddress) {
+        setUserAddress(embeddedAddress);
+        loadDelegateStatusForUser(embeddedAddress);
+        setIsOnboardingComplete(hasCompletedOnboarding(embeddedAddress));
       }
+    } else if (!authenticated) {
+      if (userAddress) {
+        clearOnboardingStatus(userAddress);
+        clearLocalAccess(userAddress);
+      }
+      loadDelegateStatusForUser(null);
+      setIsOnboardingComplete(false);
     }
-
-    verifyDelegateStatus();
-  }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus]);
+  }, [authenticated, embeddedAddress, userAddress, setUserAddress, loadDelegateStatusForUser]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playWin, playLose } = useSound();
   const { balance: usdcBalance } = useUsdcBalance();
@@ -271,9 +196,7 @@ export default function HomePage() {
   const [isOnboardingComplete, setIsOnboardingComplete] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
-  const [isVerifyingDelegate, setIsVerifyingDelegate] = useState(false);
   const [showInsufficientFundsModal, setShowInsufficientFundsModal] = useState(false);
-  const verifyingRef = useRef<string | null>(null); // Track which address is being verified
 
   // Calculate total PnL for open trades (for warning banner)
   const totalOpenPnL = React.useMemo(() => {
@@ -320,10 +243,10 @@ export default function HomePage() {
     const currentSelection = storeState.selection;
     const storedPrebuiltTx = storeState.prebuiltTx;
     
-    // Get user address - from store or directly from Privy user
-    const traderAddress = userAddress || (user?.wallet?.address as `0x${string}` | undefined);
+    // Get user address from embedded wallet
+    const traderAddress = userAddress || embeddedAddress;
     
-    if (!traderAddress || !delegateAddress || !currentSelection) return;
+    if (!traderAddress || !currentSelection) return;
 
     // Check USDC balance before proceeding
     if (usdcBalance !== null && usdcBalance < collateral) {
@@ -405,8 +328,7 @@ export default function HomePage() {
     }
   }, [
     userAddress,
-    user,
-    delegateAddress,
+    embeddedAddress,
     collateral,
     prices,
     signAndBroadcast,
@@ -564,7 +486,7 @@ export default function HomePage() {
     }
 
     const { currentTrade, pnlData, prebuiltCloseTx, setPrebuiltCloseTx, setIsIntentionalClose } = useTradeStore.getState();
-    if (!userAddress || !delegateAddress || !currentTrade) return;
+    if (!userAddress || !currentTrade) return;
 
     // Set BEFORE any await - prevents PnL poll from false liquidation during close
     setIsIntentionalClose(true);
@@ -611,7 +533,7 @@ export default function HomePage() {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast]);
+  }, [userAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast]);
 
   handleCloseTradeRef.current = handleCloseTrade;
 
@@ -689,16 +611,6 @@ export default function HomePage() {
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
           <OnboardingFlow onComplete={() => setIsOnboardingComplete(true)} />
         </main>
-      </div>
-    );
-  }
-
-  // Show loading while verifying delegate status (prevents race condition)
-  if (isVerifyingDelegate) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
-        <div className="text-xl sm:text-2xl font-bold text-white mb-4">VERIFYING SETUP...</div>
-        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }

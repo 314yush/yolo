@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from './useDelegateWallet';
+import { usePrivyEmbeddedWallet } from './usePrivyEmbeddedWallet';
 import { useAvantisAPI } from './useAvantisAPI';
 import { useTxSigner } from './useTxSigner';
 import { useSound } from './useSound';
@@ -28,7 +28,7 @@ export function useFlipTrade() {
     prices,           // Real-time Pyth prices
     setIsIntentionalClose, // Prevent false liquidation detection
   } = useTradeStore();
-  const { delegateAddress } = useDelegateWallet();
+  const { address: embeddedAddress } = usePrivyEmbeddedWallet();
   const { getTrades, getPnL } = useAvantisAPI();  // Only need read operations now
   const { signAndWait, signAndBroadcast } = useTxSigner();
   const { playFlip } = useSound();
@@ -41,7 +41,7 @@ export function useFlipTrade() {
       throw new Error('Please complete setup before trading. Enable trading in the setup flow first.');
     }
 
-    if (!userAddress || !delegateAddress) {
+    if (!userAddress || !embeddedAddress) {
       throw new Error('Missing user address or delegate address');
     }
 
@@ -328,7 +328,7 @@ export function useFlipTrade() {
     }
   }, [
     userAddress,
-    delegateAddress,
+    embeddedAddress,
     getTrades,
     getPnL,
     signAndWait,
