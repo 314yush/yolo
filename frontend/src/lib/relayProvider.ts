@@ -1,6 +1,6 @@
 /**
  * Relay Provider Interface
- * 
+ *
  * Abstract interface for different relay providers (Tachyon, Gelato, etc.)
  * This allows easy switching and performance comparison between providers.
  */
@@ -11,14 +11,28 @@ import type { Address, Hex } from 'viem';
  * Parameters for relaying a trade transaction
  */
 export interface RelayTradeParams {
-  /** Private key of the delegate wallet */
-  delegatePrivateKey: `0x${string}`;
+  /** Address of the embedded wallet (sender) */
+  senderAddress: Address;
   /** Target contract address (e.g., Avantis Trading) */
   targetContract: Address;
-  /** Encoded function call (already wrapped in delegatedAction) */
+  /** Encoded function call (raw trade calldata, no delegatedAction) */
   calldata: Hex;
   /** Value to send with transaction (in wei) */
   value?: bigint;
+  /** Sign a message (for UserOp hash signing) */
+  signMessage: (message: { raw: Hex }) => Promise<Hex>;
+  /** Sign EIP-7702 authorization (for first trade) */
+  signAuthorization?: (contractAddress: Address) => Promise<{
+    chainId: number;
+    address: Address;
+    nonce: number;
+    r: Hex;
+    s: Hex;
+    v: number;
+    yParity: 0 | 1;
+  }>;
+  /** First trade: bundle USDC approve in batch execute */
+  needsApproval?: boolean;
   /** Force authorization even if already delegated (provider-specific) */
   forceAuthorization?: boolean;
 }
@@ -35,7 +49,7 @@ export interface RelayResult {
 
 /**
  * Relay Provider Interface
- * 
+ *
  * All relay providers must implement this interface to ensure compatibility.
  */
 export interface IRelayProvider {
@@ -47,7 +61,7 @@ export interface IRelayProvider {
 
   /**
    * Relay a trade transaction
-   * 
+   *
    * @param params - Transaction parameters
    * @returns Transaction hash and optional metadata
    */

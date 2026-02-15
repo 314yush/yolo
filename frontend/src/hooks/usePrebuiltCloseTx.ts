@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from './useDelegateWallet';
+import { usePrivyEmbeddedWallet } from './usePrivyEmbeddedWallet';
 import { buildCloseTradeTx } from '@/lib/avantisEncoder';
 import { debug } from '@/lib/debug';
 
@@ -25,7 +25,7 @@ export function usePrebuiltCloseTx() {
     setIsPrebuildingClose,
   } = useTradeStore();
   
-  const { delegateAddress } = useDelegateWallet();
+  const { address: embeddedAddress } = usePrivyEmbeddedWallet();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const isBuildingRef = useRef(false);
 
@@ -39,7 +39,7 @@ export function usePrebuiltCloseTx() {
 
   // Build close transaction
   const buildTx = useCallback(() => {
-    if (!currentTrade || !userAddress || !delegateAddress) {
+    if (!currentTrade || !userAddress || !embeddedAddress) {
       setPrebuiltCloseTx(null);
       return;
     }
@@ -73,7 +73,7 @@ export function usePrebuiltCloseTx() {
       isBuildingRef.current = false;
       setIsPrebuildingClose(false);
     }
-  }, [currentTrade, userAddress, delegateAddress, setPrebuiltCloseTx, setIsPrebuildingClose, getTradeKey]);
+  }, [currentTrade, userAddress, embeddedAddress, setPrebuiltCloseTx, setIsPrebuildingClose, getTradeKey]);
 
   // Debounced build
   const debouncedBuild = useCallback(() => {
@@ -93,10 +93,10 @@ export function usePrebuiltCloseTx() {
 
   // Initial build
   useEffect(() => {
-    if (currentTrade && userAddress && delegateAddress && !prebuiltCloseTx && !isBuildingRef.current) {
+    if (currentTrade && userAddress && embeddedAddress && !prebuiltCloseTx && !isBuildingRef.current) {
       debouncedBuild();
     }
-  }, [currentTrade, userAddress, delegateAddress, prebuiltCloseTx, debouncedBuild]);
+  }, [currentTrade, userAddress, embeddedAddress, prebuiltCloseTx, debouncedBuild]);
 
   // Cleanup
   useEffect(() => {

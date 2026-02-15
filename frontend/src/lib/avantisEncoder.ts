@@ -51,17 +51,6 @@ export const EXECUTION_FEE_ABI = [
   },
 ] as const;
 
-// ABI for setDelegate function
-const SET_DELEGATE_ABI = [
-  {
-    name: 'setDelegate',
-    type: 'function',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'delegate', type: 'address' }],
-    outputs: [],
-  },
-] as const;
-
 // ABI for delegations mapping (view)
 export const DELEGATIONS_ABI = [
   {
@@ -144,20 +133,6 @@ const CLOSE_TRADE_ABI = [
       { name: '_amount', type: 'uint256' },
     ],
     outputs: [{ name: 'orderId', type: 'uint256' }],
-  },
-] as const;
-
-// ABI for delegatedAction function
-const DELEGATED_ACTION_ABI = [
-  {
-    name: 'delegatedAction',
-    type: 'function',
-    stateMutability: 'payable',
-    inputs: [
-      { name: 'trader', type: 'address' },
-      { name: 'call_data', type: 'bytes' },
-    ],
-    outputs: [{ name: '', type: 'bytes' }],
   },
 ] as const;
 
@@ -322,47 +297,32 @@ function buildCloseTradeCalldata(params: CloseTradeParams): `0x${string}` {
 }
 
 /**
- * Wrap calldata in delegatedAction for delegate wallet execution
- */
-function wrapInDelegatedAction(
-  trader: `0x${string}`,
-  innerCalldata: `0x${string}`
-): `0x${string}` {
-  return encodeFunctionData({
-    abi: DELEGATED_ACTION_ABI,
-    functionName: 'delegatedAction',
-    args: [trader, innerCalldata],
-  });
-}
-
-/**
- * Build a complete open trade transaction for delegate signing
- * 
- * This builds a delegatedAction(trader, openTrade(...)) transaction
- * that the delegate wallet signs and broadcasts.
+ * Build a complete open trade transaction
+ *
+ * Returns raw openTrade calldata — embedded wallet calls Avantis directly.
  */
 export function buildOpenTradeTx(params: OpenTradeParams): EncodedTransaction {
-  const innerCalldata = buildOpenTradeCalldata(params);
-  const delegatedCalldata = wrapInDelegatedAction(params.trader, innerCalldata);
+  const calldata = buildOpenTradeCalldata(params);
 
   return {
     to: AVANTIS_CONTRACTS.Trading,
-    data: delegatedCalldata,
+    data: calldata,
     value: DEFAULT_EXECUTION_FEE.toString(),
     chainId: 8453,  // Base mainnet
   };
 }
 
 /**
- * Build a complete close trade transaction for delegate signing
+ * Build a complete close trade transaction
+ *
+ * Returns raw closeTradeMarket calldata — embedded wallet calls Avantis directly.
  */
 export function buildCloseTradeTx(params: CloseTradeParams): EncodedTransaction {
-  const innerCalldata = buildCloseTradeCalldata(params);
-  const delegatedCalldata = wrapInDelegatedAction(params.trader, innerCalldata);
+  const calldata = buildCloseTradeCalldata(params);
 
   return {
     to: AVANTIS_CONTRACTS.Trading,
-    data: delegatedCalldata,
+    data: calldata,
     value: DEFAULT_EXECUTION_FEE.toString(),
     chainId: 8453,
   };
@@ -419,41 +379,6 @@ export function buildFlipTradeTxs(params: FlipTradeParams): FlipTradeResult {
   });
 
   return { closeTx, openTx };
-}
-
-// ============================================================
-// DELEGATE SETUP
-// ============================================================
-
-/**
- * Build a setDelegate transaction
- * This authorizes a delegate wallet to perform trades on behalf of the trader
- */
-export function buildSetDelegateTx(
-  delegateAddress: `0x${string}`
-): EncodedTransaction {
-  const calldata = encodeFunctionData({
-    abi: SET_DELEGATE_ABI,
-    functionName: 'setDelegate',
-    args: [delegateAddress],
-  });
-
-  return {
-    to: AVANTIS_CONTRACTS.Trading,
-    data: calldata,
-    value: '0x0',  // No value needed (must be hex string for EIP-5792)
-    chainId: 8453,
-  };
-}
-
-/**
- * Build a removeDelegate transaction
- * This removes the current delegate by setting it to the zero address
- * Users need to call this before setting a new delegate if there's a mismatch
- */
-export function buildRemoveDelegateTx(): EncodedTransaction {
-  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as `0x${string}`;
-  return buildSetDelegateTx(ZERO_ADDRESS);
 }
 
 // ============================================================

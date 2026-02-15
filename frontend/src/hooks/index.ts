@@ -1,7 +1,7 @@
 export { useAccessCheck } from './useAccessCheck';
 export { useNetworkStatus } from './useNetworkStatus';
 export { useAvantisAPI } from './useAvantisAPI';
-export { useDelegateWallet } from './useDelegateWallet';
+export { usePrivyEmbeddedWallet } from './usePrivyEmbeddedWallet';
 export { useFastConfirmation } from './useFastConfirmation';
 export { usePnL } from './usePnL';
 export { usePrebuiltTx } from './usePrebuiltTx';

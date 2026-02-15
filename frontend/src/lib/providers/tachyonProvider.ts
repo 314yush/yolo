@@ -1,33 +1,34 @@
 /**
  * Tachyon Relay Provider Implementation
- * 
+ *
  * Implements IRelayProvider for Tachyon relay service.
+ * Uses embedded wallet signing functions instead of raw private keys.
  */
 
-import { privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
 import type { IRelayProvider, RelayTradeParams, RelayResult } from '../relayProvider';
 import { debug } from '../debug';
-import { 
-  tachyon, 
+import {
+  tachyon,
   isTachyonConfigured,
-  ENTRY_POINT_ADDRESS, 
-  ERC4337_DELEGATION_CONTRACT, 
+  ENTRY_POINT_ADDRESS,
+  ERC4337_DELEGATION_CONTRACT,
   TACHYON_BENEFICIARY,
 } from '../tachyonClient';
 import {
   buildExecuteCallData,
+  buildBatchExecuteCallData,
   buildUserOperation,
   hashUserOperation,
   encodeHandleOps,
   calculateRelayGasLimit,
 } from '../userOperation';
 import {
-  isDelegateDelegated,
-  markDelegateDelegated,
-  signEIP7702Authorization,
-  getDelegateNonce,
+  isWalletDelegated,
+  markWalletDelegated,
+  getWalletNonce,
 } from '../tachyonRelay';
+import { buildUsdcApprovalTx } from '../avantisEncoder';
 
 const LOG_PREFIX = '[TachyonProvider]';
 
@@ -48,71 +49,73 @@ export class TachyonRelayProvider implements IRelayProvider {
         entryPoint: ENTRY_POINT_ADDRESS,
         delegationContract: ERC4337_DELEGATION_CONTRACT,
         beneficiary: TACHYON_BENEFICIARY,
-        isDelegated: isDelegateDelegated(),
       },
     };
   }
 
   async relayTrade(params: RelayTradeParams): Promise<RelayResult> {
-    const { delegatePrivateKey, targetContract, calldata, value = BigInt(0), forceAuthorization } = params;
+    const {
+      senderAddress,
+      targetContract,
+      calldata,
+      value = BigInt(0),
+      signMessage,
+      signAuthorization,
+      needsApproval,
+      forceAuthorization,
+    } = params;
 
     debug(LOG_PREFIX, '═══════════════════════════════════════');
-    debug(LOG_PREFIX, '🚀 Starting Tachyon relay...');
+    debug(LOG_PREFIX, 'Starting Tachyon relay...');
     debug(LOG_PREFIX, '═══════════════════════════════════════');
 
     if (!this.isConfigured()) {
-      const error = new Error('Tachyon not configured - missing API key. Set NEXT_PUBLIC_TACHYON_API_KEY in .env.local');
-      console.error(LOG_PREFIX, '❌', error.message);
-      throw error;
+      throw new Error('Tachyon not configured - missing API key. Set NEXT_PUBLIC_TACHYON_API_KEY in .env.local');
     }
 
-    const delegateAccount = privateKeyToAccount(delegatePrivateKey);
-    const delegateAddress = delegateAccount.address;
-
-    debug(LOG_PREFIX, '📋 Transaction details:');
-    debug(LOG_PREFIX, '  Delegate:', delegateAddress);
-    debug(LOG_PREFIX, '  Target contract:', targetContract);
-    debug(LOG_PREFIX, '  Calldata length:', calldata.length, 'chars');
-    debug(LOG_PREFIX, '  Value:', value.toString(), 'wei');
+    debug(LOG_PREFIX, 'Sender:', senderAddress);
+    debug(LOG_PREFIX, 'Target:', targetContract);
+    debug(LOG_PREFIX, 'Calldata length:', calldata.length);
+    debug(LOG_PREFIX, 'Needs approval:', !!needsApproval);
 
     // Check if this is the first trade (needs EIP-7702 authorization)
-    const delegatedStatus = isDelegateDelegated();
+    const delegatedStatus = isWalletDelegated(senderAddress);
     const needsAuthorization = forceAuthorization || !delegatedStatus;
-    debug(LOG_PREFIX, '  Needs EIP-7702 auth:', needsAuthorization);
+    debug(LOG_PREFIX, 'Needs EIP-7702 auth:', needsAuthorization);
 
     // Get nonce from EntryPoint
     const nonceStart = Date.now();
-    const nonce = await getDelegateNonce(delegateAddress);
+    const nonce = await getWalletNonce(senderAddress);
     const nonceTime = Date.now() - nonceStart;
-    if (nonceTime > 100) {
-      debug(LOG_PREFIX, `⏱️  Getting nonce took ${nonceTime}ms`);
+
+    // Build execute callData
+    const buildOpStart = Date.now();
+    let executeCallData: Hex;
+
+    if (needsApproval) {
+      // First trade: batch [approve USDC, trade] in one UserOp
+      const approvalTx = buildUsdcApprovalTx();
+      executeCallData = buildBatchExecuteCallData([
+        { target: approvalTx.to, value: BigInt(0), calldata: approvalTx.data },
+        { target: targetContract, value, calldata },
+      ]);
+      debug(LOG_PREFIX, 'Built batch execute: approve + trade');
+    } else {
+      // Normal trade: single execute
+      executeCallData = buildExecuteCallData(targetContract, value, calldata);
     }
 
-    // Build execute callData - wraps the trade call in ERC-7579 execute format
-    const buildOpStart = Date.now();
-    const executeCallData = buildExecuteCallData(targetContract, value, calldata);
-    
     // Build UserOperation
     const userOp = buildUserOperation({
-      sender: delegateAddress,
+      sender: senderAddress,
       nonce,
       callData: executeCallData,
     });
     const buildOpTime = Date.now() - buildOpStart;
-    if (buildOpTime > 50) {
-      debug(LOG_PREFIX, `⏱️  Building UserOp took ${buildOpTime}ms`);
-    }
 
-    // Sign UserOp hash
+    // Sign UserOp hash using embedded wallet
     const userOpHash = hashUserOperation(userOp);
-    const { createWalletClient, http } = await import('viem');
-    const { base } = await import('viem/chains');
-    const delegateWalletClient = createWalletClient({
-      account: delegateAccount,
-      chain: base,
-      transport: http(),
-    });
-    const signature = await delegateWalletClient.signMessage({ message: { raw: userOpHash } });
+    const signature = await signMessage({ raw: userOpHash });
     const signedUserOp = { ...userOp, signature };
 
     // Prepare authorization list if needed
@@ -127,67 +130,63 @@ export class TachyonRelayProvider implements IRelayProvider {
     }> | undefined;
 
     if (needsAuthorization) {
-      debug(LOG_PREFIX, '🔐 Signing EIP-7702 authorization...');
-      const authorization = await signEIP7702Authorization(delegatePrivateKey);
+      if (!signAuthorization) {
+        throw new Error('EIP-7702 authorization required but signAuthorization not provided');
+      }
+      debug(LOG_PREFIX, 'Signing EIP-7702 authorization...');
+      const authorization = await signAuthorization(ERC4337_DELEGATION_CONTRACT);
       authorizationList = [authorization];
     } else {
-      debug(LOG_PREFIX, '⏭️  Skipping EIP-7702 auth (already delegated)');
+      debug(LOG_PREFIX, 'Skipping EIP-7702 auth (already delegated)');
     }
 
     // Build relay parameters
     const handleOpsCallData = encodeHandleOps(signedUserOp, TACHYON_BENEFICIARY);
     const relayGasLimit = calculateRelayGasLimit(signedUserOp);
-    
+
     const relayParams = {
-      chainId: 8453, // Base mainnet
+      chainId: 8453,
       to: ENTRY_POINT_ADDRESS,
       callData: handleOpsCallData,
-      value: '0', // Tachyon relay value is always 0 (gas sponsorship)
+      value: '0',
       gasLimit: relayGasLimit.toString(),
       ...(authorizationList
-        ? { authorizationList } // First tx: EIP-7702 (standard relay, ~150ms)
-        : { transactionType: 'flash-blocks' as const }), // Future: flash-blocks (sub-50ms!)
+        ? { authorizationList }
+        : { transactionType: 'flash-blocks' as const }),
     };
 
-    debug(LOG_PREFIX, '📤 Relaying UserOperation...');
-    debug(LOG_PREFIX, '    to:', relayParams.to);
-    debug(LOG_PREFIX, '    gasLimit:', relayParams.gasLimit);
-    debug(LOG_PREFIX, '    transactionType:', authorizationList ? 'standard (EIP-7702)' : 'flash-blocks');
+    debug(LOG_PREFIX, 'Relaying UserOperation...');
+    debug(LOG_PREFIX, '  type:', authorizationList ? 'standard (EIP-7702)' : 'flash-blocks');
 
     // Relay via Tachyon
     const relayStart = Date.now();
     let taskId: string;
     try {
       taskId = await tachyon.relay(relayParams);
-      debug(LOG_PREFIX, '✅ Relay submitted successfully');
-      debug(LOG_PREFIX, '  Task ID:', taskId);
+      debug(LOG_PREFIX, 'Relay submitted, taskId:', taskId);
     } catch (error) {
-      console.error(LOG_PREFIX, '❌ Relay submission failed:', error);
+      console.error(LOG_PREFIX, 'Relay submission failed:', error);
       throw error;
     }
 
     // Wait for execution
-    debug(LOG_PREFIX, '⏳ Waiting for execution (timeout: 30s)...');
+    debug(LOG_PREFIX, 'Waiting for execution (timeout: 30s)...');
     const relayTime = Date.now() - relayStart;
     let result;
     try {
       result = await tachyon.waitForExecutionHash(taskId, 30_000);
-      debug(LOG_PREFIX, `✅ Execution completed in ${relayTime}ms`);
-      
-      // Extract the transaction hash from the result
-      // The result can be either a string (tx hash) or an object with executionTxHash property
-      const txHash = typeof result === 'string' 
-        ? result 
-        : (result as { executionTxHash?: string; txHash?: string }).executionTxHash 
-          || (result as { txHash?: string }).txHash 
+
+      const txHash = typeof result === 'string'
+        ? result
+        : (result as { executionTxHash?: string; txHash?: string }).executionTxHash
+          || (result as { txHash?: string }).txHash
           || String(result);
 
-      debug(LOG_PREFIX, '  TX Hash:', txHash);
-      debug(LOG_PREFIX, '═══════════════════════════════════════');
+      debug(LOG_PREFIX, 'TX Hash:', txHash);
 
       // Mark delegation as complete after successful first trade
       if (needsAuthorization) {
-        markDelegateDelegated();
+        markWalletDelegated(senderAddress);
       }
 
       return {
@@ -198,10 +197,11 @@ export class TachyonRelayProvider implements IRelayProvider {
           relayTimeMs: relayTime,
           nonceTimeMs: nonceTime,
           buildOpTimeMs: buildOpTime,
+          batchedApproval: !!needsApproval,
         },
       };
     } catch (error) {
-      console.error(LOG_PREFIX, '❌ Execution failed:', error);
+      console.error(LOG_PREFIX, 'Execution failed:', error);
       throw error;
     }
   }

@@ -154,7 +154,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     // This will be updated when userAddress is set
     return {
       isSetup: false,
-      delegateAddress: null,
       usdcApproved: false,
     };
   })(),
@@ -246,11 +245,9 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   },
   loadDelegateStatusForUser: (userAddress) => {
     if (!userAddress) {
-      // Reset to default if no user
       set({
         delegateStatus: {
           isSetup: false,
-          delegateAddress: null,
           usdcApproved: false,
         },
       });
@@ -260,14 +257,12 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     // Load from localStorage
     const cached = loadDelegateStatus(userAddress);
     if (cached) {
-      debug('📦 Loaded cached delegate status:', cached);
+      debug('Loaded cached setup status:', cached);
       set({ delegateStatus: cached });
     } else {
-      // No cached status, start with defaults
       set({
         delegateStatus: {
           isSetup: false,
-          delegateAddress: null,
           usdcApproved: false,
         },
       });

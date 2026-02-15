@@ -7,6 +7,7 @@
 
 import {
   encodeFunctionData,
+  encodeAbiParameters,
   encodePacked,
   concat,
   pad,
@@ -115,6 +116,38 @@ export function buildExecuteCallData(
       '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex, // Default exec mode
       encoded,
     ],
+  });
+}
+
+/**
+ * Build batch execute callData for ERC-7579 modular account
+ * Batch mode byte: 0x01 (vs single 0x00)
+ * Encodes an array of (target, value, calldata) tuples
+ */
+export function buildBatchExecuteCallData(
+  calls: Array<{ target: Address; value: bigint; calldata: Hex }>
+): Hex {
+  // Encode each call as packed (address, value, bytes)
+  const encodedCalls = calls.map((call) =>
+    encodePacked(
+      ['address', 'uint256', 'bytes'],
+      [call.target, call.value, call.calldata]
+    )
+  );
+
+  // ABI-encode the array of calls as bytes[]
+  const encodedArray = encodeAbiParameters(
+    [{ type: 'bytes[]' }],
+    [encodedCalls]
+  );
+
+  // Batch exec mode: 0x01 in the first byte, rest zeros
+  const batchExecMode = pad(numberToHex(1), { size: 32 }) as Hex;
+
+  return encodeFunctionData({
+    abi: EXECUTE_ABI,
+    functionName: 'execute',
+    args: [batchExecMode, encodedArray],
   });
 }
 
