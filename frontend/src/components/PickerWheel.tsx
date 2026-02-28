@@ -270,15 +270,13 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
         overflow: 'hidden',
       }}
     >
-      {/* Selection display - normal flex flow, no overlap */}
-      {(showAssetChip || showLeverageChip || showDirectionChip) ? (
+      {/* Selection display - compact inline */}
+      {(showAssetChip || showLeverageChip || showDirectionChip) && (
         <div
-          className="shrink-0 flex flex-col items-center z-20"
+          className="shrink-0 flex items-center justify-center z-20 px-4"
           style={{
-            width: 'calc(100% - clamp(2rem, 8vw, 4rem))',
-            gap: 'clamp(0.25rem, 1.5vw, 0.5rem)',
-            paddingTop: 'clamp(0.25rem, 1vh, 0.5rem)',
-            paddingBottom: 'clamp(0.25rem, 1vh, 0.5rem)',
+            paddingTop: 'clamp(0.25rem, 0.5vh, 0.375rem)',
+            paddingBottom: 'clamp(0.25rem, 0.5vh, 0.375rem)',
           }}
           role="status"
           aria-live="polite"
@@ -289,13 +287,13 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           <div
             className="flex items-center justify-center text-white font-bold font-mono animate-bounce-in whitespace-nowrap overflow-hidden text-ellipsis"
             style={{
-              fontSize: 'clamp(1rem, 3vw, 1.5rem)',
-              gap: 'clamp(0.25rem, 1.5vw, 0.75rem)',
+              fontSize: 'clamp(0.875rem, 2.5vw, 1.125rem)',
+              gap: 'clamp(0.25rem, 1vw, 0.5rem)',
             }}
           >
             {showAssetChip && selection?.asset && (
               <span
-                className="flex items-center gap-1.5"
+                className="flex items-center gap-1"
                 role="status"
                 aria-label={`Selected asset: ${selection.asset.name}`}
               >
@@ -327,20 +325,15 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
                 </span>
               </>
             )}
+            {/* Inline gamification message */}
+            {showAssetChip && showLeverageChip && showDirectionChip && (
+              <>
+                <span className="text-white/30">•</span>
+                <span className="text-[#CCFF00]">Good luck!</span>
+              </>
+            )}
           </div>
-
-          {/* Gamification message */}
-          {showAssetChip && showLeverageChip && showDirectionChip && (
-            <div
-              className="text-[#CCFF00] font-bold font-mono animate-bounce-in"
-              style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1.125rem)' }}
-            >
-              Good luck!
-            </div>
-          )}
         </div>
-      ) : (
-        <div className="shrink-0" />
       )}
 
       {/* Wheel container - flex center, shrinks to fit */}
@@ -348,10 +341,10 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
       <div
         className="relative touch-none cursor-pointer"
         style={{
-          width: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
-          height: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
-          maxWidth: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
-          maxHeight: 'clamp(180px, min(75vw, calc(100dvh - 340px)), 400px)',
+          width: 'clamp(200px, min(80vw, calc(100dvh - 240px)), 450px)',
+          height: 'clamp(200px, min(80vw, calc(100dvh - 240px)), 450px)',
+          maxWidth: 'clamp(200px, min(80vw, calc(100dvh - 240px)), 450px)',
+          maxHeight: 'clamp(200px, min(80vw, calc(100dvh - 240px)), 450px)',
         }}
         onClick={handleWheelClick}
         onKeyDown={(e) => {
@@ -445,15 +438,14 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
       </div>
       </div>
 
-      {/* Status text - normal flex flow below wheel */}
+      {/* Status text - compact */}
       {stage === 'spinning' && (
         <div
           className="shrink-0 text-white/60 text-center font-medium px-4 z-20"
           style={{
-            width: 'calc(100% - clamp(2rem, 8vw, 4rem))',
-            fontSize: 'clamp(0.75rem, 2vw, 1rem)',
-            paddingTop: 'clamp(0.25rem, 1vh, 0.5rem)',
-            paddingBottom: 'clamp(0.25rem, 1vh, 0.5rem)',
+            fontSize: 'clamp(0.75rem, 2vw, 0.875rem)',
+            paddingTop: 'clamp(0.25rem, 0.5vh, 0.375rem)',
+            paddingBottom: 'clamp(0.25rem, 0.5vh, 0.375rem)',
           }}
           role="status"
           aria-live="polite"

@@ -12,6 +12,7 @@ import { vibrateMedium } from '@/lib/haptics';
 import confetti from 'canvas-confetti';
 import { PriceChart } from './PriceChart';
 import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
+import { X, ArrowUpDown, Dice5, Loader2, ChevronDown } from 'lucide-react';
 
 // Chart colors matching PriceChart component
 const CHART_COLORS = {
@@ -188,12 +189,13 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         overflow: 'hidden',
       }}
     >
-      {/* 1. HERO: PnL Display - Top of screen, largest element */}
+      {/* 1. HERO: PnL Display - Compact, efficient layout */}
       <div 
         className={`flex flex-col items-center justify-center px-4 ${isFlashing ? 'animate-pnl-flash' : ''}`}
         style={{
-          minHeight: (displayTrade?.leverage ?? 1) >= 250 ? '28vh' : '35vh',
-          paddingTop: 'max(env(safe-area-inset-top, 0px), 1rem)',
+          minHeight: '20vh',
+          paddingTop: 'max(env(safe-area-inset-top, 0px), 0.75rem)',
+          paddingBottom: '0.5rem',
         }}
         role="status"
         aria-live="polite"
@@ -201,50 +203,11 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
       >
         {isLiquidated ? (
           <>
-            {/* Liquidation message - HUGE */}
-            <div 
-              className="font-black leading-none font-mono text-[#FF006E] mb-4 animate-pulse"
-              style={{ fontSize: 'clamp(2.5rem, 10vw, 4.5rem)' }}
-            >
-              LIQUIDATED
-            </div>
-            
-            {/* Final PnL display */}
-            <div
-              className={`font-black ${glowClass} leading-none font-mono`}
-              style={{ 
-                color: '#FF006E', 
-                letterSpacing: '-0.03em',
-                fontSize: 'clamp(3rem, 12vw, 6rem)',
-              }}
-            >
-              -${Math.abs(pnl).toFixed(2)}
-            </div>
-            
-            {/* Final percentage */}
-            <div
-              className={`font-bold mt-2 ${glowClass} font-mono`}
-              style={{ 
-                color: '#FF006E',
-                fontSize: 'clamp(1.5rem, 6vw, 2.5rem)',
-              }}
-            >
-              {pnlPercentage.toFixed(2)}%
-            </div>
-            
-            {/* Liquidation explanation */}
-            <div 
-              className="text-white/70 mt-4 font-semibold font-mono text-center px-4"
-              style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
-            >
-              Position closed at -85% loss
-            </div>
-            
-            {/* Inline trade info */}
+            {/* Inline: Trade info */}
             {displayAsset && (
               <div 
-                className="flex items-center gap-2 mt-4 text-white font-semibold font-mono"
-                style={{ fontSize: 'clamp(1rem, 3vw, 1.125rem)' }}
+                className="flex items-center gap-2 mb-2 text-white/80 font-mono"
+                style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
               >
                 <span className="flex items-center gap-1">
                   <span style={{ color: displayAsset.color }}>●</span>
@@ -264,6 +227,45 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
                 )}
               </div>
             )}
+            
+            {/* Liquidation message - Compact */}
+            <div 
+              className="font-black leading-none font-mono text-[#FF006E] mb-2 animate-pulse"
+              style={{ fontSize: 'clamp(2rem, 8vw, 3.5rem)' }}
+            >
+              LIQUIDATED
+            </div>
+            
+            {/* Final PnL display */}
+            <div
+              className={`font-black ${glowClass} leading-none font-mono`}
+              style={{ 
+                color: '#FF006E', 
+                letterSpacing: '-0.03em',
+                fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
+              }}
+            >
+              -${Math.abs(pnl).toFixed(2)}
+            </div>
+            
+            {/* Final percentage */}
+            <div
+              className={`font-bold mt-1 ${glowClass} font-mono`}
+              style={{ 
+                color: '#FF006E',
+                fontSize: 'clamp(1.25rem, 5vw, 2rem)',
+              }}
+            >
+              {pnlPercentage.toFixed(2)}%
+            </div>
+            
+            {/* Liquidation explanation */}
+            <div 
+              className="text-white/70 mt-2 font-semibold font-mono text-center px-4"
+              style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
+            >
+              Position closed at -85% loss
+            </div>
           </>
         ) : isConfirming ? (
           <>
@@ -296,51 +298,10 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
           </>
         ) : (
           <>
-            {/* Gamification message - More prominent when near liquidation */}
-            {gamificationMessage && (
-              <div 
-                className={`font-black font-mono mb-2 ${isNearLiq ? 'animate-pulse' : ''}`}
-                style={{ 
-                  color: isNearLiq ? '#FF006E' : '#CCFF00',
-                  fontSize: isNearLiq 
-                    ? 'clamp(1.25rem, 4vw, 1.75rem)' 
-                    : 'clamp(1rem, 3vw, 1.25rem)',
-                  textShadow: isNearLiq 
-                    ? '0 0 10px rgba(255, 0, 110, 0.8), 0 0 20px rgba(255, 0, 110, 0.4)' 
-                    : 'none',
-                }}
-              >
-                {gamificationMessage}
-              </div>
-            )}
-            
-            {/* Main PnL - HUGE */}
-            <div
-              className={`font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
-              style={{ 
-                color, 
-                letterSpacing: '-0.03em',
-                fontSize: 'clamp(3rem, 12vw, 6rem)',
-              }}
-            >
-              {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
-            </div>
-            
-            {/* Percentage */}
-            <div
-              className={`font-bold mt-2 ${glowClass} font-mono`}
-              style={{ 
-                color,
-                fontSize: 'clamp(1.5rem, 6vw, 2.5rem)',
-              }}
-            >
-              {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
-            </div>
-
-            {/* Inline trade info - simplified, no fill colors */}
+            {/* Inline: Trade info + Gamification - Compact header */}
             <div 
-              className="flex items-center gap-2 mt-4 text-white font-semibold font-mono"
-              style={{ fontSize: 'clamp(1rem, 3vw, 1.125rem)' }}
+              className="flex items-center gap-2 mb-2 text-white/80 font-mono flex-wrap justify-center"
+              style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
             >
               {displayAsset && (
                 <span className="flex items-center gap-1">
@@ -360,6 +321,45 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
                   <span style={{ color: displayDirection.color }}>{displayDirection.name}</span>
                 </>
               )}
+              {gamificationMessage && (
+                <>
+                  <span className="text-white/40">•</span>
+                  <span 
+                    className={`font-bold ${isNearLiq ? 'animate-pulse' : ''}`}
+                    style={{ 
+                      color: isNearLiq ? '#FF006E' : '#CCFF00',
+                      textShadow: isNearLiq 
+                        ? '0 0 10px rgba(255, 0, 110, 0.8), 0 0 20px rgba(255, 0, 110, 0.4)' 
+                        : 'none',
+                    }}
+                  >
+                    {gamificationMessage}
+                  </span>
+                </>
+              )}
+            </div>
+            
+            {/* Main PnL - Still prominent but more compact */}
+            <div
+              className={`font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
+              style={{ 
+                color, 
+                letterSpacing: '-0.03em',
+                fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
+              }}
+            >
+              {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
+            </div>
+            
+            {/* Percentage - Inline with PnL */}
+            <div
+              className={`font-bold mt-1 ${glowClass} font-mono`}
+              style={{ 
+                color,
+                fontSize: 'clamp(1.25rem, 5vw, 2rem)',
+              }}
+            >
+              {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
             </div>
           </>
         )}
@@ -367,26 +367,26 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
 
       {/* 2. Compact Info Row - Entry → Current */}
       <div 
-        className="px-4 py-2"
+        className="px-4 py-1.5"
         style={{
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          gap: '0.5rem',
+          gap: '0.25rem',
         }}
       >
         {/* Entry → Current price */}
         {(entryPrice != null || currentPrice != null) && (
           <div 
-            className="flex items-center justify-center gap-3 font-mono text-white font-semibold"
-            style={{ fontSize: 'clamp(1rem, 3vw, 1.125rem)' }}
+            className="flex items-center justify-center gap-2 font-mono text-white font-semibold"
+            style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
           >
-            <span>Entry:</span>
+            <span className="text-white/60">Entry:</span>
             <span className="text-white font-bold">
               ${entryPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
             </span>
             <span className="text-white/60">→</span>
-            <span>Now:</span>
+            <span className="text-white/60">Now:</span>
             <span className="font-bold" style={{ color }}>
               ${currentPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
             </span>
@@ -397,69 +397,58 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         <button
           onClick={() => setShowDetails(!showDetails)}
           className="text-white/70 font-semibold font-mono flex items-center gap-1 hover:text-white transition-colors touch-manipulation"
-          style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)', minHeight: '44px' }}
+          style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)', minHeight: '44px', padding: '0.5rem' }}
         >
           <span>{showDetails ? 'Hide' : 'Show'} details</span>
-          <svg 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="2"
-            style={{ 
-              width: '1em', 
-              height: '1em',
-              transform: showDetails ? 'rotate(180deg)' : 'rotate(0deg)',
-              transition: 'transform 0.2s ease',
-            }}
-          >
-            <path d="M6 9l6 6 6-6" />
-          </svg>
+          <ChevronDown 
+            className={`w-4 h-4 transition-transform duration-200 ${showDetails ? 'rotate-180' : ''}`}
+            strokeWidth={2}
+          />
         </button>
         
         {/* Progressive disclosure content */}
         {showDetails && (
           <div 
             className="flex flex-col items-center gap-1 text-white/80 font-semibold font-mono animate-fade-in"
-            style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
+            style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
           >
             {takeProfitPrice && (
               <div>
                 Max: ${takeProfitPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })} 
-                <span className="text-[#CCFF00]/60"> (200% profit)</span>
+                <span className="text-[#CCFF00]/60"> (200%)</span>
               </div>
             )}
             {liquidationPrice && (
               <div>
-                Liquidation: ${liquidationPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                Liq: ${liquidationPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* 3. Chart Widget - Readable size, taller for high leverage */}
+      {/* 3. Chart Widget - Expanded for better visibility */}
       <div
-        className="w-full overflow-hidden px-4 py-2 flex-1"
+        className="w-full overflow-hidden px-4 flex-1"
         style={{
-          minHeight: '140px',
-          maxHeight: (displayTrade?.leverage ?? 1) >= 250 ? '260px' : '180px',
+          minHeight: '220px',
+          maxHeight: 'min(300px, 40vh)',
         }}
       >
         <PriceChart
           assetPair={assetPair}
           entryPrice={entryPrice}
           liquidationPrice={liquidationPrice}
-          height={(displayTrade?.leverage ?? 1) >= 250 ? 240 : 160}
+          height={Math.min(280, typeof window !== 'undefined' ? window.innerHeight * 0.4 : 280)}
           pnl={pnl}
         />
       </div>
 
-      {/* 5. Action Buttons - Stacked above nav bar */}
+      {/* 5. Action Buttons - Compact spacing */}
       <div 
         className="mt-auto px-4"
         style={{
-          // Account for nav bar height (~70px) + safe area + padding
-          paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
+          paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',
         }}
       >
         {/* Secondary actions: Close and Flip - Disabled when liquidated */}
@@ -482,32 +471,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
               }}
             >
               {isClosing ? (
-                <svg
-                  className="animate-spin"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  style={{ width: '1.25rem', height: '1.25rem' }}
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
+                <Loader2 className="w-5 h-5 animate-spin" strokeWidth={2.5} />
               ) : (
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  style={{ width: '1.25rem', height: '1.25rem' }}
-                >
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
+                <X className="w-5 h-5" strokeWidth={3} />
               )}
               <span className="font-black font-mono uppercase">CLOSE</span>
             </button>
@@ -526,32 +492,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
               }}
             >
               {isFlipping ? (
-                <svg
-                  className="animate-spin"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  style={{ width: '1.25rem', height: '1.25rem' }}
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
+                <Loader2 className="w-5 h-5 animate-spin" strokeWidth={2} />
               ) : (
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  style={{ width: '1.25rem', height: '1.25rem' }}
-                >
-                  <path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4" />
-                </svg>
+                <ArrowUpDown className="w-5 h-5" strokeWidth={2.5} />
               )}
               <span className="font-black font-mono uppercase">FLIP</span>
             </button>
@@ -570,19 +513,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
             fontSize: 'clamp(1.25rem, 4vw, 1.5rem)',
           }}
         >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-            style={{ width: '1.75rem', height: '1.75rem' }}
-          >
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <path d="M9 9h.01M15 9h.01M9 15h.01M15 15h.01" />
-          </svg>
+          <Dice5 className="w-7 h-7" strokeWidth={2.5} />
           <span>ROLL AGAIN</span>
         </button>
       </div>

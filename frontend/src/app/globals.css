@@ -10,6 +10,13 @@
   --color-xrp: #00AAE4;
   --color-warning: #FFD60A;
   --color-danger: #FF006E;
+  
+  /* Spacing scale - 8/12/16/24 system */
+  --space-xs: 0.5rem;  /* 8px  - tight spacing (icon gaps, chip padding) */
+  --space-sm: 0.75rem; /* 12px - compact spacing (button padding, card gaps) */
+  --space-md: 1rem;    /* 16px - standard spacing (section padding) */
+  --space-lg: 1.5rem;  /* 24px - loose spacing (major sections) */
+  --space-xl: 2rem;    /* 32px - extra loose spacing */
 }
 
 /* Neo-brutalist base styles */
@@ -279,6 +286,16 @@ body {
 
 .animate-fade-in {
   animation: fadeIn 0.2s ease-out forwards;
+}
+
+/* Shine animation for buttons */
+@keyframes shine {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 /* Pulse animation for PnL - more dramatic */

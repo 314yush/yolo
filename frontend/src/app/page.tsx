@@ -37,6 +37,7 @@ import type { Trade } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DEFAULT_COLLATERAL } from '@/lib/constants';
 import { debug } from '@/lib/debug';
+import { Activity, Settings, Dice5, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
   const { authenticated, ready, user } = usePrivy();
@@ -444,7 +445,7 @@ export default function HomePage() {
           tp: 0,
           sl: 0,
           liquidationPrice: 0,
-          openedAt: Date.now(),
+          openedAt: Math.floor(Date.now() / 1000),
         };
         setCurrentTrade(tempTrade);
         setPnLData({
@@ -479,7 +480,7 @@ export default function HomePage() {
             tp: 0,
             sl: 0,
             liquidationPrice: 0,
-            openedAt: Date.now(),
+            openedAt: Math.floor(Date.now() / 1000),
           };
           setCurrentTrade(tempTrade);
           setPnLData({
@@ -510,7 +511,7 @@ export default function HomePage() {
         tp: 0,
         sl: 0,
         liquidationPrice: 0,
-        openedAt: Date.now(),
+        openedAt: Math.floor(Date.now() / 1000),
       };
       setCurrentTrade(tempTrade);
       setPnLData({
@@ -750,29 +751,29 @@ export default function HomePage() {
       
       {/* Header - Compact and always visible */}
       {stage !== 'pnl' && (
-        <header className="w-full flex justify-between items-center px-4 pt-3 pb-2 relative z-10 shrink-0">
+        <header className="w-full flex justify-between items-center px-4 py-2 relative z-50 shrink-0">
           <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
           <LoginButton />
         </header>
       )}
 
-      {/* Financial Info Bar - Prominent and always visible */}
+      {/* Financial Info Bar - Compact and always visible */}
       {stage !== 'pnl' && (
-        <div className="w-full px-4 py-2 border-b-2 border-white/10 bg-black/50 backdrop-blur-sm relative z-10 shrink-0">
-          <div className="flex justify-center items-center gap-4 sm:gap-6 text-white/80 text-xs sm:text-sm font-mono">
-            <div className="flex items-center gap-2">
+        <div className="w-full px-4 py-1.5 border-b-2 border-white/10 bg-black/50 backdrop-blur-sm relative z-10 shrink-0">
+          <div className="flex justify-center items-center gap-3 sm:gap-4 text-white/80 text-xs sm:text-sm font-mono">
+            <div className="flex items-center gap-1.5">
               <span className="text-white/60 font-semibold">COLLATERAL:</span>
               <span className="text-[#CCFF00] font-bold" aria-live="polite">
-                <span className="sr-only">Collateral: </span>${collateral} USDC
+                <span className="sr-only">Collateral: </span>${collateral}
               </span>
             </div>
             <div className="w-1 h-1 rounded-full bg-white/40" aria-hidden="true" />
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-white/60 font-semibold">BALANCE:</span>
               <span className="text-[#CCFF00] font-bold" aria-live="polite">
                 <span className="sr-only">Balance: </span>
                 {usdcBalance !== null 
-                  ? `$${usdcBalance.toFixed(2)} USDC`
+                  ? `$${usdcBalance.toFixed(2)}`
                   : '--'
                 }
               </span>
@@ -793,10 +794,10 @@ export default function HomePage() {
         aria-label="Trading interface"
         style={{
           paddingBottom: (stage === 'idle' || stage === 'spinning' || stage === 'executing')
-            ? 'calc(140px + env(safe-area-inset-bottom, 0px))'
+            ? '120px'
             : stage === 'pnl'
             ? '0'
-            : 'calc(80px + env(safe-area-inset-bottom, 0px))',
+            : '72px',
           height: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl')
             ? '100%'
             : 'auto',
@@ -902,15 +903,15 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* Bottom Action Area - Stacked Nav Bar + ROLL Button */}
+      {/* Bottom Action Area - STACKED: ROLL Button + Nav Bar */}
       {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
         <footer 
-          className="fixed bottom-0 left-0 right-0 bg-linear-to-t from-black via-black/98 to-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-40 safe-area-bottom"
+          className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-40"
           style={{ 
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
           }}
         >
-          <div className="px-4 pt-4 pb-3 max-w-md mx-auto space-y-3">
+          <div className="px-4 pt-3 pb-2 max-w-md mx-auto space-y-2">
             {/* ROLL Button - Top of stack */}
             <div>
               <button
@@ -932,7 +933,7 @@ export default function HomePage() {
                 }
                 aria-busy={stage !== 'idle'}
                 className={`
-                  w-full py-4 sm:py-5 text-2xl sm:text-3xl font-black brutal-button min-h-[64px] touch-manipulation
+                  w-full py-4 text-2xl sm:text-3xl font-black brutal-button min-h-[56px] touch-manipulation
                   transition-all duration-200 shadow-[0_8px_0px_0px_rgba(0,0,0,0.3)]
                   focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black
                   ${stage === 'idle'
@@ -943,35 +944,12 @@ export default function HomePage() {
               >
                 {stage === 'idle' ? (
                   <span className="flex items-center justify-center gap-2">
-                    <svg 
-                      className="w-6 h-6 sm:w-7 sm:h-7" 
-                      viewBox="0 0 24 24" 
-                      fill="none" 
-                      stroke="currentColor" 
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <rect x="3" y="3" width="18" height="18" rx="2" />
-                      <path d="M9 9h.01M15 9h.01M9 15h.01M15 15h.01" />
-                    </svg>
+                    <Dice5 className="w-6 h-6 sm:w-7 sm:h-7" strokeWidth={3} />
                     <span>ROLL</span>
                   </span>
                 ) : (
                   <span className="flex items-center justify-center gap-2">
-                    <svg 
-                      className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" 
-                      viewBox="0 0 24 24" 
-                      fill="none" 
-                      stroke="currentColor" 
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
+                    <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" strokeWidth={2.5} />
                     <span>SPINNING...</span>
                   </span>
                 )}
@@ -980,28 +958,16 @@ export default function HomePage() {
 
             {/* Navigation Bar - Below ROLL button */}
             <nav 
-              className="flex justify-around items-center py-2"
+              className="flex justify-around items-center py-1.5"
               aria-label="Main navigation"
               role="navigation"
             >
               <Link
                 href="/activity"
-                className="relative flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+                className="relative p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
                 aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
               >
-                <svg
-                  className="w-6 h-6 text-[#CCFF00]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 3h18v18H3zM3 9h18M9 3v18" />
-                </svg>
-                <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Activity</span>
+                <Activity className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
                 {openTrades.length > 0 && (
                   <span 
                     className="absolute top-0 right-0 bg-[#FF006E] text-white text-xs font-black rounded-full w-5 h-5 flex items-center justify-center border-2 border-black animate-danger-pulse"
@@ -1015,23 +981,10 @@ export default function HomePage() {
               </Link>
               <Link
                 href="/settings"
-                className="flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+                className="p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
                 aria-label="Settings"
               >
-                <svg
-                  className="w-6 h-6 text-[#CCFF00]"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3m15.364 6.364l-4.243-4.243m0 0L12 12m4.121-4.121l4.243-4.243M12 12l-4.121-4.121m0 0L3.636 3.636m4.243 4.243L12 12" />
-                </svg>
-                <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Settings</span>
+                <Settings className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
               </Link>
             </nav>
           </div>
@@ -1039,36 +992,28 @@ export default function HomePage() {
       )}
 
       {/* Bottom Navigation Bar - Only shown when not in trading stage */}
-      {stage !== 'idle' && stage !== 'spinning' && stage !== 'executing' && (
+      {stage !== 'idle' && stage !== 'spinning' && stage !== 'executing' && stage !== 'pnl' && (
         <nav 
-          className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-2 border-white/10 backdrop-blur-md z-30 safe-area-bottom"
+          className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-30"
           aria-label="Main navigation"
           role="navigation"
+          style={{ 
+            height: 'calc(72px + env(safe-area-inset-bottom, 0px))',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          }}
         >
-          <div className="flex justify-around items-center px-4 py-2.5 max-w-md mx-auto">
+          <div className="h-full flex justify-center items-center gap-6 px-4 max-w-md mx-auto">
             <Link
               href="/activity"
-              className="relative flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+              className="relative p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
               aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
             >
-              <svg
-                className="w-6 h-6 text-[#CCFF00]"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M3 3h18v18H3zM3 9h18M9 3v18" />
-              </svg>
-              <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Activity</span>
+              <Activity className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
               {openTrades.length > 0 && (
                 <span 
-                  className="absolute top-0 right-0 bg-[#FF006E] text-white text-xs font-black rounded-full w-5 h-5 flex items-center justify-center border-2 border-black animate-danger-pulse"
-                  style={{ fontSize: 'clamp(0.625rem, 1.5vw, 0.75rem)' }}
-                  aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
+                  className="absolute -top-1 -right-1 bg-[#FF006E] text-white text-xs font-black rounded-full w-5 h-5 flex items-center justify-center border-2 border-black animate-danger-pulse"
+                  style={{ fontSize: '0.625rem' }}
+                  aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` }
                 >
                   <span className="sr-only">{openTrades.length}</span>
                   <span aria-hidden="true">{openTrades.length}</span>
@@ -1077,23 +1022,10 @@ export default function HomePage() {
             </Link>
             <Link
               href="/settings"
-              className="flex flex-col items-center gap-1 p-2 touch-manipulation min-h-[44px] min-w-[44px] justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
+              className="p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
               aria-label="Settings"
             >
-              <svg
-                className="w-6 h-6 text-[#CCFF00]"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="3" />
-                <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3m15.364 6.364l-4.243-4.243m0 0L12 12m4.121-4.121l4.243-4.243M12 12l-4.121-4.121m0 0L3.636 3.636m4.243 4.243L12 12" />
-              </svg>
-              <span className="text-xs font-black text-[#CCFF00] uppercase" style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}>Settings</span>
+              <Settings className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
             </Link>
           </div>
         </nav>
