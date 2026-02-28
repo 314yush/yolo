@@ -112,6 +112,19 @@ export function getChartData(assetPair: string, resolution: Resolution = DEFAULT
 }
 
 /**
+ * Get raw per-second tick data for an asset pair.
+ * Useful for line charts that should mirror live SSE cadence directly.
+ */
+export function getTickData(assetPair: string, lookbackSeconds = 900): Array<{ time: number; price: number }> {
+  const ticks = tickDataStore.get(assetPair) || [];
+  if (ticks.length === 0) return [];
+
+  const latestTime = ticks[ticks.length - 1]?.time ?? 0;
+  const cutoff = Math.max(0, latestTime - lookbackSeconds);
+  return ticks.filter(tick => tick.time >= cutoff);
+}
+
+/**
  * Clear chart data for an asset pair.
  */
 export function clearChartData(assetPair: string): void {

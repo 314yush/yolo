@@ -106,3 +106,7 @@ export const ENTRY_POINT_ADDRESS = '0x0000000071727De22E5E9d8BAf0edAc6f37da032' 
 
 // Beneficiary for handleOps (receives leftover gas) - set to your own address
 export const TACHYON_BENEFICIARY = '0x4C16955d8A0DcB2e7826d50f4114990c787b21E7' as `0x${string}`;
+
+// Toggle Privy embedded-wallet execution path for trade relay.
+// Keep off by default so existing delegate flow remains unchanged unless explicitly enabled.
+export const USE_PRIVY_EXECUTION_WALLET = process.env.NEXT_PUBLIC_USE_PRIVY_EXECUTION_WALLET === 'true';

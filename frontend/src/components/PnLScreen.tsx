@@ -447,14 +447,10 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
       >
         <PriceChart
           assetPair={assetPair}
-          lineColor={isProfit ? '#CCFF00' : '#FF006E'}
           entryPrice={entryPrice}
           liquidationPrice={liquidationPrice}
-          takeProfitPrice={takeProfitPrice}
           height={(displayTrade?.leverage ?? 1) >= 250 ? 240 : 160}
           pnl={pnl}
-          showLegend={false}
-          leverage={displayTrade?.leverage ?? 1}
         />
       </div>
 

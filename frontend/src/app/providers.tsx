@@ -63,7 +63,9 @@ export function Providers({ children }: ProvidersProps) {
         // Auth only via email + OAuth (Google/X). No wallet login methods.
         loginMethods: ['email', 'google', 'twitter'],
         embeddedWallets: {
-          createOnLogin: 'users-without-wallets',
+          ethereum: {
+            createOnLogin: 'users-without-wallets',
+          },
         },
         defaultChain: base,
         supportedChains: [base],

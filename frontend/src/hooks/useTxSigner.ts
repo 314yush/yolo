@@ -1,12 +1,17 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { useWallets } from '@privy-io/react-auth';
 import { getOrCreateDelegateWallet } from '@/lib/delegateWallet';
 import { isDelegateDelegated } from '@/lib/tachyonRelay';
 import { AVANTIS_CONTRACTS } from '@/lib/avantisEncoder';
 import { relayService } from '@/lib/relayService';
 import type { UnsignedTx } from '@/types';
 import { debug } from '@/lib/debug';
+import { USE_PRIVY_EXECUTION_WALLET } from '@/lib/constants';
+import { useTradeStore } from '@/store/tradeStore';
+import { buildPrivyRelayRequest } from '@/lib/tachyonPrivy';
+import { getWalletProvider, resolvePrivyEmbeddedWallet, type PrivyWalletLike } from '@/lib/privyWallet';
 
 const LOG_PREFIX = '[useTxSigner]';
 
@@ -20,6 +25,8 @@ const LOG_PREFIX = '[useTxSigner]';
  */
 export function useTxSigner() {
   const [isPending, setIsPending] = useState(false);
+  const userAddress = useTradeStore((state) => state.userAddress);
+  const { wallets, ready: walletsReady } = useWallets();
 
   /**
    * Check if delegate has enough ETH for gas
@@ -45,6 +52,57 @@ export function useTxSigner() {
       setIsPending(true);
       
       try {
+        const isTradeTx = unsignedTx.to.toLowerCase() === AVANTIS_CONTRACTS.Trading.toLowerCase();
+        if (!isTradeTx) {
+          throw new Error(
+            `Tachyon relay only supports Avantis Trading transactions. ` +
+              `Target: ${unsignedTx.to}, Expected: ${AVANTIS_CONTRACTS.Trading}`
+          );
+        }
+
+        if (USE_PRIVY_EXECUTION_WALLET) {
+          if (!userAddress) {
+            throw new Error('Missing Privy wallet address');
+          }
+          if (!walletsReady) {
+            throw new Error('Wallet still initializing. Please retry in a moment.');
+          }
+          debug(LOG_PREFIX, 'Privy signer preflight:', {
+            walletsReady,
+            walletCount: wallets?.length || 0,
+            userAddress,
+          });
+
+          const walletResult = resolvePrivyEmbeddedWallet(wallets as PrivyWalletLike[] | undefined, userAddress);
+          if (!walletResult.wallet) {
+            throw new Error(walletResult.error || 'No embedded wallet available');
+          }
+          const provider = await getWalletProvider(walletResult.wallet);
+          const relayRequest = await buildPrivyRelayRequest({
+            provider,
+            walletAddress: userAddress,
+            targetContract: unsignedTx.to as `0x${string}`,
+            calldata: unsignedTx.data as `0x${string}`,
+            value: unsignedTx.value ? BigInt(unsignedTx.value) : BigInt(0),
+          });
+
+          const response = await fetch('/api/tachyon/relay-trade', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(relayRequest),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload?.txHash) {
+            throw new Error(payload?.error || 'Server relay failed');
+          }
+
+          const txHash = payload.txHash as `0x${string}`;
+          debug(LOG_PREFIX, '✅ Privy signer relay success:', txHash);
+          return txHash;
+        }
+
         // Get delegate wallet
         debug(LOG_PREFIX, '🔑 Getting delegate wallet...');
         const wallet = getOrCreateDelegateWallet();
@@ -56,20 +114,6 @@ export function useTxSigner() {
         debug(LOG_PREFIX, '  To:', unsignedTx.to);
         debug(LOG_PREFIX, '  Data length:', unsignedTx.data?.length || 0, 'chars');
         debug(LOG_PREFIX, '  Value:', unsignedTx.value || '0');
-        
-        // Validate this is a trade transaction (to Avantis Trading contract)
-        const isTradeTx = unsignedTx.to.toLowerCase() === AVANTIS_CONTRACTS.Trading.toLowerCase();
-        debug(LOG_PREFIX, '  Is Avantis trade:', isTradeTx);
-        debug(LOG_PREFIX, '  Expected:', AVANTIS_CONTRACTS.Trading);
-        
-        if (!isTradeTx) {
-          const error = new Error(
-            `Tachyon relay only supports Avantis Trading transactions. ` +
-            `Target: ${unsignedTx.to}, Expected: ${AVANTIS_CONTRACTS.Trading}`
-          );
-          console.error(LOG_PREFIX, '❌', error.message);
-          throw error;
-        }
 
         const currentProvider = relayService.getCurrentProviderType();
         debug(LOG_PREFIX, `🚀 Relaying trade via ${currentProvider}...`);
@@ -115,9 +159,9 @@ export function useTxSigner() {
           }
           
           debug(LOG_PREFIX, '✅ Avantis delegate verified:', wallet.address);
-        } catch (e: any) {
+        } catch (e: unknown) {
           // If it's our own error about delegate not registered, re-throw it
-          if (e.message?.includes('Avantis delegate not set up')) {
+          if (e instanceof Error && e.message.includes('Avantis delegate not set up')) {
             throw e;
           }
           // Otherwise log and continue (might be RPC issue)
@@ -149,7 +193,7 @@ export function useTxSigner() {
         setIsPending(false);
       }
     },
-    []
+    [userAddress, wallets, walletsReady]
   );
 
   /**

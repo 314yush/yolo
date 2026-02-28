@@ -2,12 +2,29 @@ import type { Settings } from '@/types';
 import { DEFAULT_COLLATERAL } from './constants';
 
 const STORAGE_KEY = 'yolo_settings';
+export const MIN_COLLATERAL = 2;
+export const MAX_COLLATERAL = 1000;
 
-const DEFAULT_SETTINGS: Settings = {
+export const COLLATERAL_PRESETS = [5, 10, 25, 50, 100, 250, 500, 1000] as const;
+
+export const DEFAULT_SETTINGS: Settings = {
   collateral: DEFAULT_COLLATERAL,
   audioEnabled: true,
   musicEnabled: true, // Music plays by default on landing page
 };
+
+function parseBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+export function clampCollateral(value: number): number {
+  return Math.max(MIN_COLLATERAL, Math.min(MAX_COLLATERAL, value));
+}
+
+export function formatWalletAddress(address: string, start = 6, end = 4): string {
+  if (!address || address.length <= start + end) return address;
+  return `${address.slice(0, start)}...${address.slice(-end)}`;
+}
 
 export function loadSettings(): Settings {
   if (typeof window === 'undefined') {
@@ -23,11 +40,11 @@ export function loadSettings(): Settings {
     const parsed = JSON.parse(stored);
     // Validate and merge with defaults
     return {
-      collateral: typeof parsed.collateral === 'number' 
-        ? Math.max(2, Math.min(1000, parsed.collateral)) 
+      collateral: typeof parsed.collateral === 'number'
+        ? clampCollateral(parsed.collateral)
         : DEFAULT_COLLATERAL,
-      audioEnabled: typeof parsed.audioEnabled === 'boolean' ? parsed.audioEnabled : true,
-      musicEnabled: typeof parsed.musicEnabled === 'boolean' ? parsed.musicEnabled : true, // Default to true for new users
+      audioEnabled: parseBoolean(parsed.audioEnabled, DEFAULT_SETTINGS.audioEnabled),
+      musicEnabled: parseBoolean(parsed.musicEnabled, DEFAULT_SETTINGS.musicEnabled),
     };
   } catch (error) {
     console.error('Failed to load settings:', error);
