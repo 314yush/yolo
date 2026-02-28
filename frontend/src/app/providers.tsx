@@ -60,7 +60,11 @@ export function Providers({ children }: ProvidersProps) {
           accentColor: '#CCFF00',
           logo: '/yolo-logo.svg',
         },
-        loginMethods: ['wallet'], // Only external wallets (MetaMask, WalletConnect, etc.)
+        // Auth only via email + OAuth (Google/X). No wallet login methods.
+        loginMethods: ['email', 'google', 'twitter'],
+        embeddedWallets: {
+          createOnLogin: 'users-without-wallets',
+        },
         defaultChain: base,
         supportedChains: [base],
       }}

@@ -1,26 +1,15 @@
 /**
  * Avantis API Client
  *
- * When on tradeyolo.fun (whitelisted by Avantis), calls Avantis APIs directly for lower latency.
- * On localhost or other origins, uses backend proxy to avoid CORS.
+ * Calls Avantis APIs directly from the client.
+ * YOLO domains are whitelisted, so no frontend proxy is required.
  */
 
 import { ASSETS } from './constants';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const AVANTIS_PROXY_BASE = `${API_BASE}/avantis`;
-
-// Direct Avantis API URLs (used when origin is whitelisted)
 const AVANTIS_CORE_BASE = 'https://core.avantisfi.com';
 const AVANTIS_HISTORY_BASE = 'https://api.avantisfi.com/v2/history/portfolio/history';
-
-/** tradeyolo.fun is whitelisted by Avantis - use direct API calls for better latency */
-function useDirectAvantis(): boolean {
-  if (typeof window === 'undefined') return false;
-  const host = window.location.hostname;
-  return host === 'tradeyolo.fun' || host === 'www.tradeyolo.fun';
-}
 
 // Decimal conversions
 const USDC_DECIMALS = 1e6;
@@ -139,12 +128,10 @@ async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise
 }
 
 /**
- * Fetch user's open trades from Avantis API (direct when whitelisted, else via proxy)
+ * Fetch user's open trades from Avantis API.
  */
 export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
-  const url = useDirectAvantis()
-    ? `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`
-    : `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
+  const url = `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`;
   
   const response = await fetchWithTimeout(url, 15000); // 15s - direct calls can be slower on cold start
   if (!response.ok) {
@@ -157,8 +144,8 @@ export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
 }
 
 /**
- * Fetch user's positions with PnL from Avantis API (direct when whitelisted, else via proxy)
- * 
+ * Fetch user's positions with PnL from Avantis API.
+ *
  * @param traderAddress - Trader's wallet address
  * @param prices - Map of pair name to current price (from Pyth)
  */
@@ -166,9 +153,7 @@ export async function fetchPnL(
   traderAddress: string,
   prices: Record<string, { price: number; timestamp: number }>
 ): Promise<PnLData[]> {
-  const url = useDirectAvantis()
-    ? `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`
-    : `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
+  const url = `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`;
   
   const response = await fetchWithTimeout(url, 15000); // 15s
   if (!response.ok) {
@@ -222,7 +207,7 @@ interface AvantisPortfolioItem {
       positionSizeUSDC: number;
       usdcSentToTrader: number;
       isPnl: boolean;
-      _feeInfo: {
+      _feeInfo?: {
         closingFee: number;
         liquidationFee: number;
         keeperFee: number;
@@ -251,9 +236,7 @@ export async function fetchClosedTrades(
   traderAddress: string,
   pageNumber: number = 1
 ): Promise<ClosedTrade[]> {
-  const url = useDirectAvantis()
-    ? `${AVANTIS_HISTORY_BASE}/${traderAddress}/${pageNumber}`
-    : `${AVANTIS_PROXY_BASE}/history/portfolio/history/${traderAddress}/${pageNumber}`;
+  const url = `${AVANTIS_HISTORY_BASE}/${traderAddress}/${pageNumber}`;
   
   try {
     const response = await fetchWithTimeout(url, 15000); // 15s
@@ -274,16 +257,17 @@ export async function fetchClosedTrades(
     // Convert API response to ClosedTrade format
     return data.portfolio.map((item) => {
       const t = item.event.args.t;
+      const args = item.event.args;
       const asset = ASSETS.find(a => a.pairIndex === t.pairIndex);
       const pair = asset ? asset.name + '/USD' : `PAIR_${t.pairIndex}/USD`;
       
-      // Calculate final PnL percentage
-      const collateral = t.initialPosToken;
+      // Avantis history: closed collateral is args.positionSizeUSDC (fallback to initialPosToken)
+      const collateral = args.positionSizeUSDC > 0 ? args.positionSizeUSDC : t.initialPosToken;
       const finalPnL = item._grossPnl;
       const finalPnLPercentage = collateral > 0 ? (finalPnL / collateral) * 100 : 0;
       
-      // Check if liquidated (liquidationFee > 0 indicates liquidation)
-      const isLiquidated = item.event.args._feeInfo.liquidationFee > 0;
+      // _feeInfo can be absent in some records. Treat missing as not-liquidated.
+      const isLiquidated = (args._feeInfo?.liquidationFee ?? 0) > 0;
       
       return {
         tradeIndex: t.index,
@@ -300,7 +284,7 @@ export async function fetchClosedTrades(
         closedAt: new Date(item.timeStamp).getTime(),
         finalPnL,
         finalPnLPercentage,
-        closePrice: item.event.args.price,
+        closePrice: args.price ?? t.openPrice,
         isLiquidated,
       } as ClosedTrade;
     });
@@ -316,16 +300,60 @@ export async function fetchClosedTrades(
  * Volume = sum of position sizes (collateral * leverage) across entire history.
  */
 export async function fetchTotalVolume(traderAddress: string): Promise<number> {
-  const url = `${AVANTIS_PROXY_BASE}/volume/${traderAddress}`;
+  return computeTotalVolumeDirect(traderAddress);
+}
+
+async function computeTotalVolumeDirect(traderAddress: string): Promise<number> {
+  let total = 0;
+
+  // 1) Open positions from user-data
+  const userDataUrl = `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`;
+
   try {
-    const response = await fetchWithTimeout(url, 15000);
-    if (!response.ok) {
-      return 0;
+    const userDataResp = await fetchWithTimeout(userDataUrl, 15000);
+    if (userDataResp.ok) {
+      const userData: AvantisUserDataResponse = await userDataResp.json();
+      for (const pos of userData.positions ?? []) {
+        const collateral = Number(pos.collateral) / USDC_DECIMALS;
+        const leverage = Number(pos.leverage) / LEVERAGE_DECIMALS;
+        total += collateral * leverage;
+      }
     }
-    const data = await response.json();
-    return typeof data.totalVolume === 'number' ? data.totalVolume : 0;
   } catch (error) {
-    console.error('[fetchTotalVolume] Failed to fetch volume:', error);
-    return 0;
+    console.warn('[fetchTotalVolume] Fallback open positions failed:', error);
   }
+
+  // 2) Closed positions from history pages
+  let page = 1;
+  let pageCount = 1;
+  while (page <= pageCount) {
+    const historyUrl = `${AVANTIS_HISTORY_BASE}/${traderAddress}/${page}`;
+
+    try {
+      const historyResp = await fetchWithTimeout(historyUrl, 15000);
+      if (!historyResp.ok) {
+        if (historyResp.status === 404) break;
+        throw new Error(`History API error: ${historyResp.status}`);
+      }
+
+      const historyData: AvantisPortfolioResponse = await historyResp.json();
+      if (!historyData.success || !historyData.portfolio?.length) break;
+
+      pageCount = historyData.pageCount || page;
+      for (const item of historyData.portfolio) {
+        const args = item.event.args;
+        const t = args.t;
+        const closedCollateral = args.positionSizeUSDC > 0 ? args.positionSizeUSDC : t.initialPosToken;
+        const leverage = t.leverage;
+        total += closedCollateral * leverage;
+      }
+
+      page += 1;
+    } catch (error) {
+      console.warn('[fetchTotalVolume] Fallback history failed:', error);
+      break;
+    }
+  }
+
+  return Number.isFinite(total) ? Math.round(total * 100) / 100 : 0;
 }
