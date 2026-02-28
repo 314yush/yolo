@@ -13,9 +13,7 @@ import { debug } from './debug';
 // Validate API key on initialization
 const apiKey = TACHYON_API_KEY;
 if (!apiKey) {
-  console.error('[Tachyon] ❌ CRITICAL: No API key found!');
-  console.error('[Tachyon] Set NEXT_PUBLIC_TACHYON_API_KEY in your .env.local file');
-  console.error('[Tachyon] Get your API key from https://rath.fi');
+  debug('[Tachyon] No API key found');
 } else {
   debug('[Tachyon] ✅ API key configured (length:', apiKey.length, ')');
 }
@@ -31,7 +29,7 @@ export const tachyon = new Tachyon({
 export function isTachyonConfigured(): boolean {
   const configured = !!apiKey && apiKey.length > 0;
   if (!configured) {
-    console.warn('[Tachyon] SDK not configured - missing API key');
+    debug('[Tachyon] SDK not configured - missing API key');
   }
   return configured;
 }

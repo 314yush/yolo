@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Space_Mono } from 'next/font/google';
+import Script from 'next/script';
 import { Providers } from './providers';
 import './globals.css';
 
@@ -13,6 +14,7 @@ const spaceMono = Space_Mono({
 });
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://tradeonyolo.fun';
+const disableClientConsole = process.env.NODE_ENV === 'production';
 
 export const metadata: Metadata = {
   title: 'YOLO - Hypercasual Leverage Trading',
@@ -97,6 +99,21 @@ export default function RootLayout({
   return (
     <html lang="en" className={spaceMono.variable}>
       <body className="bg-black text-white font-mono antialiased">
+        {disableClientConsole ? (
+          <Script id="disable-client-console" strategy="beforeInteractive">
+            {`(() => {
+  const noop = () => {};
+  const methods = ['log', 'debug', 'info', 'warn', 'error'];
+  for (const method of methods) {
+    try {
+      console[method] = noop;
+    } catch (_) {
+      // Ignore assignment failures in locked-down environments.
+    }
+  }
+})();`}
+          </Script>
+        ) : null}
         <Providers>{children}</Providers>
       </body>
     </html>
