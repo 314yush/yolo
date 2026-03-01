@@ -165,6 +165,26 @@ export function hashUserOperation(userOp: UserOperation): Hex {
   });
 }
 
+function userOpToHandleOpsTuple(userOp: UserOperation) {
+  return {
+    sender: userOp.sender,
+    nonce: userOp.nonce,
+    initCode: userOp.initCode || '0x',
+    callData: userOp.callData,
+    accountGasLimits: concat([
+      pad(numberToHex(userOp.verificationGasLimit || BigInt(0)), { size: 16 }),
+      pad(numberToHex(userOp.callGasLimit || BigInt(0)), { size: 16 }),
+    ]),
+    preVerificationGas: userOp.preVerificationGas,
+    gasFees: concat([
+      pad(numberToHex(BigInt(0)), { size: 16 }),
+      pad(numberToHex(BigInt(0)), { size: 16 }),
+    ]),
+    paymasterAndData: userOp.paymasterAndData || '0x',
+    signature: userOp.signature,
+  };
+}
+
 /**
  * Encode handleOps call for EntryPoint v0.7
  * Packs gas limits into bytes32 as required by v0.7
@@ -173,33 +193,21 @@ export function encodeHandleOps(
   userOp: UserOperation,
   beneficiary: Address
 ): Hex {
+  return encodeHandleOpsBatch([userOp], beneficiary);
+}
+
+/**
+ * Encode handleOps with multiple UserOperations (for batched setup)
+ */
+export function encodeHandleOpsBatch(
+  userOps: UserOperation[],
+  beneficiary: Address
+): Hex {
+  const ops = userOps.map(userOpToHandleOpsTuple);
   return encodeFunctionData({
     abi: ENTRY_POINT_ABI,
     functionName: 'handleOps',
-    args: [
-      [
-        {
-          sender: userOp.sender,
-          nonce: userOp.nonce,
-          initCode: userOp.initCode || '0x',
-          callData: userOp.callData,
-          // v0.7: Pack verification + call gas limits into 32 bytes
-          accountGasLimits: concat([
-            pad(numberToHex(userOp.verificationGasLimit || BigInt(0)), { size: 16 }),
-            pad(numberToHex(userOp.callGasLimit || BigInt(0)), { size: 16 }),
-          ]),
-          preVerificationGas: userOp.preVerificationGas,
-          // v0.7: Pack priority + max fee into 32 bytes (both 0 for sponsored)
-          gasFees: concat([
-            pad(numberToHex(BigInt(0)), { size: 16 }),
-            pad(numberToHex(BigInt(0)), { size: 16 }),
-          ]),
-          paymasterAndData: userOp.paymasterAndData || '0x',
-          signature: userOp.signature,
-        },
-      ],
-      beneficiary,
-    ],
+    args: [ops, beneficiary],
   });
 }
 
@@ -211,4 +219,17 @@ export function calculateRelayGasLimit(userOp: UserOperation): bigint {
     (userOp.callGasLimit + userOp.verificationGasLimit + userOp.preVerificationGas) *
     BigInt(2)
   );
+}
+
+/**
+ * Calculate relay gas limit for multiple UserOps (sum with 2x safety margin)
+ */
+export function calculateRelayGasLimitBatch(userOps: UserOperation[]): bigint {
+  const total =
+    userOps.reduce(
+      (sum, op) =>
+        sum + op.callGasLimit + op.verificationGasLimit + op.preVerificationGas,
+      BigInt(0)
+    ) * BigInt(2);
+  return total;
 }

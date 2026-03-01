@@ -1,42 +1,15 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { useWallets } from '@privy-io/react-auth';
+import { useWallets, useSendTransaction } from '@privy-io/react-auth';
 import { useAvantisAPI } from './useAvantisAPI';
 import { useDelegateWallet } from './useDelegateWallet';
 import { buildUsdcApprovalTx } from '@/lib/avantisEncoder';
-import type { UnsignedTx } from '@/types';
 import { debug } from '@/lib/debug';
+import { base } from 'viem/chains';
 
-// USDC approval limit: 10,000 USDC (in 6 decimals)
-const USDC_APPROVAL_LIMIT = 10_000n * 10n ** 6n; // 10,000,000,000 (10k USDC)
-
-// Multicall3 contract address (deployed on Base and most EVM chains)
-// This is the standard Multicall3 contract that allows batching multiple calls
-const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11' as `0x${string}`;
-
-// Multicall3 ABI - only need the aggregate function
-const MULTICALL3_ABI = [
-  {
-    inputs: [
-      {
-        components: [
-          { name: 'target', type: 'address' },
-          { name: 'callData', type: 'bytes' },
-        ],
-        name: 'calls',
-        type: 'tuple[]',
-      },
-    ],
-    name: 'aggregate',
-    outputs: [
-      { name: 'blockNumber', type: 'uint256' },
-      { name: 'returnData', type: 'bytes[]' },
-    ],
-    stateMutability: 'payable',
-    type: 'function',
-  },
-] as const;
+const USDC_APPROVAL_LIMIT = 10_000n * 10n ** 6n;
+const BASE_CHAIN_ID_HEX = '0x2105';
 
 interface BatchedSetupResult {
   success: boolean;
@@ -44,102 +17,19 @@ interface BatchedSetupResult {
   txHashes?: string[];
 }
 
+/**
+ * Setup flow uses Privy gas sponsorship for the FIRST signing only (setDelegate + approveUSDC).
+ * When both are needed, tries wallet_sendCalls (EIP-5792) batch first, else falls back to separate txns.
+ * After setup, Tachyon handles all trade transactions.
+ */
 export function useBatchedSetup() {
   const { wallets } = useWallets();
-  const { buildDelegateSetupTx, checkDelegateStatus, checkUsdcAllowance } = useAvantisAPI();
+  const { sendTransaction } = useSendTransaction();
+  const { buildDelegateSetupTx, checkUsdcAllowance } = useAvantisAPI();
   const { delegateAddress } = useDelegateWallet();
   const [isProcessing, setIsProcessing] = useState(false);
   const [setupStatus, setSetupStatus] = useState<string>('');
 
-  // Get Ethereum provider from wallet
-  const getEthereumProvider = useCallback(async (wallet: any) => {
-    if (wallet && typeof wallet.getEthereumProvider === 'function') {
-      const provider = await wallet.getEthereumProvider();
-      if (provider) return provider;
-    }
-    if (typeof window !== 'undefined' && (window as any).ethereum) {
-      return (window as any).ethereum;
-    }
-    throw new Error('Unable to get Ethereum provider');
-  }, []);
-
-  // Switch to Base network
-  const switchToBase = useCallback(async (provider: any) => {
-    const BASE_CHAIN_ID_HEX = '0x2105'; // 8453 in hex
-    try {
-      await provider.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: BASE_CHAIN_ID_HEX }],
-      });
-    } catch (switchError: any) {
-      if (switchError.code === 4902) {
-        await provider.request({
-          method: 'wallet_addEthereumChain',
-          params: [{
-            chainId: BASE_CHAIN_ID_HEX,
-            chainName: 'Base',
-            nativeCurrency: {
-              name: 'Ethereum',
-              symbol: 'ETH',
-              decimals: 18,
-            },
-            rpcUrls: ['https://mainnet.base.org'],
-            blockExplorerUrls: ['https://basescan.org'],
-          }],
-        });
-      } else {
-        throw switchError;
-      }
-    }
-  }, []);
-
-  // Estimate gas for a transaction
-  const estimateGas = useCallback(async (provider: any, tx: UnsignedTx, from: string): Promise<string> => {
-    try {
-      const estimatedGas = await provider.request({
-        method: 'eth_estimateGas',
-        params: [{
-          from,
-          to: tx.to,
-          data: tx.data,
-          value: tx.value || '0x0',
-        }],
-      });
-      return estimatedGas as string;
-    } catch (error) {
-      console.warn('Gas estimation failed, using fallback:', error);
-      return '0x493e0'; // 300k gas fallback
-    }
-  }, []);
-
-  // Send a single transaction
-  const sendTransaction = useCallback(async (
-    provider: any,
-    tx: UnsignedTx,
-    from: string
-  ): Promise<string> => {
-    const estimatedGas = await estimateGas(provider, tx, from);
-    const gasPrice = await provider.request({
-      method: 'eth_gasPrice',
-      params: [],
-    });
-
-    const txHash = await provider.request({
-      method: 'eth_sendTransaction',
-      params: [{
-        from,
-        to: tx.to,
-        data: tx.data,
-        value: tx.value || '0x0',
-        gas: estimatedGas,
-        gasPrice: gasPrice,
-      }],
-    });
-
-    return txHash as string;
-  }, [estimateGas]);
-
-  // Execute batched setup: remove old delegate (if needed) + set new delegate + USDC approval (single signature)
   const executeBatchedSetup = useCallback(async (
     userAddress: string
   ): Promise<BatchedSetupResult> => {
@@ -147,159 +37,83 @@ export function useBatchedSetup() {
       return { success: false, error: 'Delegate wallet not initialized' };
     }
 
+    const userWallet = wallets?.find((w) =>
+      w.address.toLowerCase() === userAddress.toLowerCase()
+    ) ?? wallets?.[0];
+    if (!userWallet) {
+      return { success: false, error: 'No wallet found. Please ensure your wallet is connected.' };
+    }
+
     setIsProcessing(true);
-    setSetupStatus('Checking current delegate status...');
+    setSetupStatus('Checking current setup status...');
 
     try {
-      // Find user wallet
-      const userWallet = wallets?.find((w) => 
-        w.address.toLowerCase() === userAddress.toLowerCase()
-      ) || wallets?.[0];
-
-      if (!userWallet) {
-        return { success: false, error: 'No wallet found. Please ensure your wallet is connected.' };
-      }
-
-      // Get provider and switch to Base
-      setSetupStatus('Connecting to wallet...');
-      const provider = await getEthereumProvider(userWallet);
-      await switchToBase(provider);
-
-      // Check for existing delegate and USDC allowance
-      setSetupStatus('Checking current setup status...');
-      const currentDelegateStatus = await checkDelegateStatus(userAddress);
       const usdcAllowanceCheck = await checkUsdcAllowance(userAddress).catch(() => ({ hasSufficient: false, allowance: 0 }));
-
-      const hasExistingDelegate = currentDelegateStatus.isSetup && 
-        currentDelegateStatus.delegateAddress?.toLowerCase() !== delegateAddress.toLowerCase();
       const needsUsdcApproval = !usdcAllowanceCheck.hasSufficient;
 
-      // Build delegate setup transaction
+      if (!needsUsdcApproval) {
+        debug('✅ USDC already approved, skipping approval tx');
+      }
+
       const delegateTx = await buildDelegateSetupTx(userAddress, delegateAddress);
       if (!delegateTx) {
         return { success: false, error: 'Failed to build delegate setup transaction' };
       }
 
-      // Build calls array - conditionally include USDC approval
-      const calls: Array<{ to: `0x${string}`; data: `0x${string}`; value: string }> = [
+      const txHashes: string[] = [];
+
+      // When both setDelegate and approve are needed, try wallet_sendCalls (EIP-5792) batch first
+      if (needsUsdcApproval) {
+        const approvalTx = buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
+        const batchAttempt = await tryBatchedSendCalls(
+          userWallet,
+          delegateTx,
+          approvalTx,
+          (msg) => setSetupStatus(msg)
+        );
+        if (batchAttempt.success && batchAttempt.txHashes?.length) {
+          txHashes.push(...batchAttempt.txHashes);
+          debug('✅ Batched setDelegate + approve:', batchAttempt.txHashes);
+          setSetupStatus('Setup complete!');
+          return { success: true, txHashes };
+        }
+        // Fallback to separate transactions
+        debug('Batch not supported, falling back to sequential txns');
+      }
+
+      // 1. setDelegate - Privy sponsors gas
+      setSetupStatus('Ready to sign. Setting up delegate wallet...');
+      const setDelegateResult = await sendTransaction(
         {
           to: delegateTx.to as `0x${string}`,
           data: delegateTx.data as `0x${string}`,
-          value: delegateTx.value || '0x0',
+          value: BigInt(delegateTx.value ?? '0x0'),
+          chainId: base.id,
         },
-      ];
+        { sponsor: true, address: userWallet.address }
+      );
+      txHashes.push(setDelegateResult.hash);
+      debug('✅ setDelegate (Privy sponsored):', setDelegateResult.hash);
 
-      // Only include USDC approval if not already approved
+      // 2. approveUSDC if needed - Privy sponsors gas
       if (needsUsdcApproval) {
-        const approvalTxEncoded = buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
-        calls.push({
-          to: approvalTxEncoded.to as `0x${string}`,
-          data: approvalTxEncoded.data as `0x${string}`,
-          value: approvalTxEncoded.value || '0x0',
-        });
+        setSetupStatus('Approving USDC spending...');
+        const approvalTx = buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
+        const approvalResult = await sendTransaction(
+          {
+            to: approvalTx.to as `0x${string}`,
+            data: approvalTx.data as `0x${string}`,
+            value: BigInt(approvalTx.value ?? '0x0'),
+            chainId: base.id,
+          },
+          { sponsor: true, address: userWallet.address }
+        );
+        txHashes.push(approvalResult.hash);
+        debug('✅ USDC approval (Privy sponsored):', approvalResult.hash);
       }
 
-      // Update status message based on what's needed
-      if (hasExistingDelegate && needsUsdcApproval) {
-        setSetupStatus('Step 1/2: Removing old delegate...');
-      } else if (hasExistingDelegate && !needsUsdcApproval) {
-        setSetupStatus('Step 1/1: Removing old delegate...');
-      } else if (!hasExistingDelegate && needsUsdcApproval) {
-        setSetupStatus('Step 1/2: Creating delegate wallet...');
-      } else {
-        setSetupStatus('Step 1/1: Creating delegate wallet...');
-      }
-
-      // Use EIP-5792 sendCalls (wallet-level batching) which preserves msg.sender
-      // This allows us to batch setDelegate + approve USDC (if needed) in a single signature
-      // while maintaining the correct msg.sender context for setDelegate
-      
-      if (calls.length === 1) {
-        setSetupStatus('Step 1/1: Ready to sign. Setting up delegate wallet...');
-      } else {
-        setSetupStatus('Step 1/2: Ready to sign. Creating delegate wallet...');
-      }
-      
-      // Call EIP-5792 wallet_sendCalls directly through the wallet provider
-      // This is supported by Privy wallets and preserves msg.sender
-      // If not supported, we'll fall back to sequential transactions
-      let batchId: string;
-      
-      try {
-        const sendCallsParams = {
-          version: '1.0',
-          chainId: '0x2105', // Base chain ID in hex (8453)
-          from: userAddress,
-          calls: calls.map(call => ({
-            to: call.to,
-            data: call.data,
-            value: call.value,
-          })),
-          atomicRequired: false, // Set to false for sequential execution (can still be atomic if wallet supports it)
-        };
-        
-        batchId = await provider.request({
-          method: 'wallet_sendCalls',
-          params: [sendCallsParams],
-        }) as string;
-      } catch (sendCallsError: any) {
-        // Check error code and message for fallback conditions
-        const errorCode = sendCallsError?.code;
-        const errorMessage = sendCallsError?.message || '';
-        const matchesCode = errorCode === -32601;
-        const matchesMessage = errorMessage.includes('not supported') || errorMessage.includes('Unsupported') || errorMessage.includes('wallet_sendCalls') || errorMessage.includes('Unknown') || errorMessage.includes('doesn\'t has corresponding handler') || errorMessage.includes('doesn\'t have corresponding handler');
-        
-        // If wallet_sendCalls is not supported (method not found), fall back to sequential transactions
-        if (matchesCode || matchesMessage) {
-          console.warn('wallet_sendCalls not supported, falling back to sequential transactions');
-          setSetupStatus('Wallet doesn\'t support batching. Sending transactions sequentially...');
-          
-          // Send setDelegate first
-          setSetupStatus(needsUsdcApproval ? 'Step 1/2: Creating delegate wallet...' : 'Step 1/1: Creating delegate wallet...');
-          const delegateHash = await sendTransaction(provider, delegateTx, userAddress);
-          
-          const txHashes: string[] = [delegateHash];
-          
-          // Only send USDC approval if needed
-          if (needsUsdcApproval) {
-            const approvalTxEncoded = buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
-            setSetupStatus('Step 2/2: Approving USDC spending...');
-            const approvalHash = await sendTransaction(provider, approvalTxEncoded, userAddress);
-            txHashes.push(approvalHash);
-            debug('✅ Sequential transactions sent! Hashes:', delegateHash, approvalHash);
-            setSetupStatus('Both transactions sent! Waiting for confirmation...');
-          } else {
-            debug('✅ Delegate transaction sent! Hash:', delegateHash);
-            setSetupStatus('Transaction sent! Waiting for confirmation...');
-          }
-          
-          return {
-            success: true,
-            txHashes,
-          };
-        }
-        
-        // Re-throw if it's a different error
-        throw sendCallsError;
-      }
-      
-      // wallet_sendCalls returns a batch ID (string) - this is the identifier for the batch
-      // The wallet will execute the calls and we can track them via this ID
-      // Note: Some wallets may batch into a single transaction, others may create multiple
-      // The wallet handles this internally and preserves msg.sender for each call
-      
-      debug('✅ Batched calls sent! Batch ID:', batchId);
-      if (calls.length > 1) {
-        debug('🎉 User only needed to sign ONCE for both setDelegate and approve USDC!');
-      } else {
-        debug('🎉 User only needed to sign ONCE for setDelegate (USDC already approved)!');
-      }
-      setSetupStatus('Transaction sent! Waiting for confirmation...');
-
-      return {
-        success: true,
-        txHashes: [batchId as string], // Use batch ID as transaction identifier
-      };
+      setSetupStatus('Setup complete!');
+      return { success: true, txHashes };
     } catch (err: any) {
       console.error('Batched setup error:', err);
       setSetupStatus('');
@@ -314,11 +128,67 @@ export function useBatchedSetup() {
       setIsProcessing(false);
       setSetupStatus('');
     }
-  }, [delegateAddress, wallets, getEthereumProvider, switchToBase, buildDelegateSetupTx, checkDelegateStatus, checkUsdcAllowance, sendTransaction]);
+  }, [delegateAddress, wallets, checkUsdcAllowance, sendTransaction, buildDelegateSetupTx]);
 
   return {
     executeBatchedSetup,
     isProcessing,
     setupStatus,
   };
+}
+
+/** Try EIP-5792 wallet_sendCalls for batched setDelegate + approve. Falls back gracefully. */
+async function tryBatchedSendCalls(
+  wallet: { getEthereumProvider?: () => Promise<unknown>; address: string },
+  delegateTx: { to: string; data: string; value?: string },
+  approvalTx: { to: string; data: string; value?: string },
+  setStatus: (msg: string) => void
+): Promise<{ success: boolean; txHashes?: string[] }> {
+  try {
+    const provider = wallet.getEthereumProvider
+      ? (await wallet.getEthereumProvider()) as { request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
+      : null;
+    if (!provider?.request) return { success: false };
+
+    setStatus('Ready to sign. Setting up delegate and approving USDC in one step...');
+
+    const result = await provider.request({
+      method: 'wallet_sendCalls',
+      params: [
+        {
+          version: '1.0',
+          chainId: BASE_CHAIN_ID_HEX,
+          from: wallet.address as `0x${string}`,
+          calls: [
+            {
+              to: delegateTx.to as `0x${string}`,
+              data: delegateTx.data as `0x${string}`,
+              value: (delegateTx.value ?? '0x0') as `0x${string}`,
+            },
+            {
+              to: approvalTx.to as `0x${string}`,
+              data: approvalTx.data as `0x${string}`,
+              value: (approvalTx.value ?? '0x0') as `0x${string}`,
+            },
+          ],
+        },
+      ],
+    }) as { batchId?: string; txHashes?: string[] } | undefined;
+
+    if (!result) return { success: false };
+
+    // Some wallets return tx hashes; others return batchId. If we get batchId we'd need to poll wallet_getCallsStatus
+    const hashes = Array.isArray(result) ? result : result?.txHashes ?? [];
+    if (hashes.length > 0) {
+      return { success: true, txHashes: hashes };
+    }
+    if (result?.batchId) {
+      // Batch submitted, assume success - SetupFlow will verify on-chain
+      return { success: true, txHashes: [result.batchId] };
+    }
+    return { success: false };
+  } catch (e) {
+    debug('wallet_sendCalls not supported or failed:', e);
+    return { success: false };
+  }
 }

@@ -100,7 +100,7 @@ function PriceChartComponent({
         // Transparent canvas avoids any embedded-library panel effect.
         background: { color: 'transparent' },
         textColor: COLORS.scaleText,
-        fontFamily: "'JetBrains Mono', 'Courier New', monospace",
+        fontFamily: "var(--font-sans), ui-sans-serif, system-ui, sans-serif",
         fontSize: 10,
       },
       grid: {

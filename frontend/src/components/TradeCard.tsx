@@ -16,16 +16,15 @@ interface TradeCardProps {
 }
 
 /**
- * Normalize timestamp to milliseconds
- * openedAt is in seconds (Unix timestamp), closedAt is in milliseconds
+ * Normalize timestamp to milliseconds.
+ * Handles both Unix seconds and Unix milliseconds defensively.
  */
-function normalizeToMs(timestamp: number | undefined | null, isOpenedAt: boolean): number | null {
+function normalizeToMs(timestamp: number | undefined | null): number | null {
   if (!timestamp || timestamp === 0) {
     return null;
   }
-  // If it's openedAt, it's in seconds, so multiply by 1000
-  // If it's closedAt, it's already in milliseconds
-  return isOpenedAt ? timestamp * 1000 : timestamp;
+  // Timestamps < 1e12 are seconds; >= 1e12 are already milliseconds.
+  return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
 }
 
 // Format timestamp to UTC string
@@ -151,7 +150,7 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
         <div className="flex items-center justify-between text-white/50">
           <span>Opened:</span>
           <div className="flex items-center gap-2">
-            <span className="text-white/70">{formatRelativeTime(normalizeToMs(trade.openedAt, true))}</span>
+            <span className="text-white/70">{formatRelativeTime(normalizeToMs(trade.openedAt))}</span>
             {closedTrade?.txHash && (
               <a
                 href={`${BASESCAN_BASE}/${closedTrade.txHash}`}
@@ -191,7 +190,7 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
             </span>
             <div className="flex items-center gap-2">
               <span className="text-white/70">
-                {formatRelativeTime(normalizeToMs(closedTrade.closedAt, false))}
+                {formatRelativeTime(normalizeToMs(closedTrade.closedAt))}
               </span>
               {closedTrade.closeTxHash && (
                 <a
@@ -221,7 +220,7 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
         {/* Full UTC timestamp on hover/tap (for closed trades) */}
         {closedTrade && (
           <div className="text-white/30 text-[10px] mt-1">
-            {formatTimestamp(normalizeToMs(trade.openedAt, true))} → {formatTimestamp(normalizeToMs(closedTrade.closedAt, false))}
+            {formatTimestamp(normalizeToMs(trade.openedAt))} → {formatTimestamp(normalizeToMs(closedTrade.closedAt))}
           </div>
         )}
       </div>

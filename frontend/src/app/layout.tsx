@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Space_Mono } from 'next/font/google';
+import { Outfit, Oswald } from 'next/font/google';
 import Script from 'next/script';
 import { Providers } from './providers';
 import './globals.css';
@@ -7,10 +7,16 @@ import './globals.css';
 // Force dynamic rendering - app requires Privy auth
 export const dynamic = 'force-dynamic';
 
-const spaceMono = Space_Mono({
-  weight: ['400', '700'],
+const outfit = Outfit({
   subsets: ['latin'],
-  variable: '--font-mono',
+  variable: '--font-sans',
+  display: 'swap',
+});
+
+const oswald = Oswald({
+  subsets: ['latin'],
+  variable: '--font-display',
+  display: 'swap',
 });
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://tradeonyolo.fun';
@@ -97,8 +103,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={spaceMono.variable}>
-      <body className="bg-black text-white font-mono antialiased">
+    <html lang="en" className={`${outfit.variable} ${oswald.variable}`}>
+      <body className="bg-black text-white font-sans antialiased">
         {disableClientConsole ? (
           <Script id="disable-client-console" strategy="beforeInteractive">
             {`(() => {

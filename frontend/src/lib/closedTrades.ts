@@ -49,13 +49,23 @@ export function saveClosedTrade(
     return;
   }
 
+  // Ignore optimistic placeholder trades; these are not canonical on-chain positions.
+  if (trade.tradeIndex === 0) {
+    return;
+  }
+
+  // Avoid persisting synthetic $0 PnL entries when canonical PnL has not synced yet.
+  if (!pnlData) {
+    return;
+  }
+
   try {
     const closedTrade: ClosedTrade = {
       ...trade,
       closedAt: Date.now(),
-      finalPnL: pnlData?.pnl ?? 0,
-      finalPnLPercentage: pnlData?.pnlPercentage ?? 0,
-      closePrice: pnlData?.currentPrice ?? trade.openPrice,
+      finalPnL: pnlData.pnl,
+      finalPnLPercentage: pnlData.pnlPercentage,
+      closePrice: pnlData.currentPrice,
       txHash: options?.txHash,
       closeTxHash: options?.closeTxHash,
       isLiquidated: options?.isLiquidated ?? false,

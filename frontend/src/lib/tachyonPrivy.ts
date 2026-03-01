@@ -34,6 +34,10 @@ export interface TachyonRelayRequest {
   authorizationList?: Eip7702Authorization[];
 }
 
+/**
+ * Sign EIP-7702 authorization via Privy's eth_sign7702Authorization.
+ * viem's signAuthorization only supports local accounts, not JSON-RPC (Privy embedded wallet).
+ */
 export async function getAuthorizationListIfNeeded(
   provider: Eip1193LikeProvider,
   walletAddress: Address
@@ -41,25 +45,37 @@ export async function getAuthorizationListIfNeeded(
   const status = await getEip7702Status(walletAddress);
   if (status.isAuthorized) return undefined;
 
-  const walletClient = createWalletClient({
-    account: walletAddress,
-    chain: base,
-    transport: custom(provider as EIP1193Provider),
+  const nonce = await publicClient.getTransactionCount({
+    address: walletAddress,
+    blockTag: 'pending',
   });
 
-  const authorization = await walletClient.signAuthorization({
-    contractAddress: ERC4337_DELEGATION_CONTRACT,
-  });
+  const response = await provider.request({
+    method: 'eth_sign7702Authorization',
+    params: {
+      contract: ERC4337_DELEGATION_CONTRACT,
+      chain_id: base.id,
+      nonce: Number(nonce),
+    },
+  }) as { authorization?: { address?: string; chain_id?: number; nonce?: number; r?: string; s?: string; y_parity?: number } };
+
+  const auth = response?.authorization;
+  if (!auth?.r || !auth?.s) {
+    throw new Error('eth_sign7702Authorization failed or unsupported. Ensure you are using a Privy embedded wallet.');
+  }
+
+  const yParity = Number(auth.y_parity ?? 0) as 0 | 1;
+  const v = yParity === 1 ? 28 : 27;
 
   return [
     {
-      chainId: authorization.chainId,
-      address: authorization.address as Address,
-      nonce: Number(authorization.nonce),
-      r: authorization.r,
-      s: authorization.s,
-      v: Number(authorization.v),
-      yParity: Number(authorization.yParity) as 0 | 1,
+      chainId: auth.chain_id ?? base.id,
+      address: (auth.address ?? ERC4337_DELEGATION_CONTRACT) as Address,
+      nonce: auth.nonce ?? Number(nonce),
+      r: auth.r as Hex,
+      s: auth.s as Hex,
+      v,
+      yParity,
     },
   ];
 }

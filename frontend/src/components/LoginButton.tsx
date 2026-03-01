@@ -7,7 +7,12 @@ import { base } from 'viem/chains';
 import { useTradeStore } from '@/store/tradeStore';
 import { LogOut, Copy, Wallet, Check, ChevronDown } from 'lucide-react';
 
-export function LoginButton() {
+interface LoginButtonProps {
+  label?: string;
+  variant?: 'default' | 'glow';
+}
+
+export function LoginButton({ label = 'SIGN IN', variant = 'default' }: LoginButtonProps) {
   const { login, logout, authenticated, user, ready } = usePrivy();
   const { fundWallet } = useFundWallet();
   const { setUserAddress } = useTradeStore();
@@ -169,29 +174,44 @@ export function LoginButton() {
     );
   }
 
+  const isGlow = variant === 'glow';
+
   return (
     <button
       onClick={login}
-      className="group relative px-6 sm:px-8 py-3 sm:py-4 text-lg sm:text-xl font-black font-mono uppercase tracking-tight bg-[#CCFF00] text-black border-8 border-black touch-manipulation min-h-[56px] transition-all duration-200 hover:translate-x-[-4px] hover:translate-y-[-4px] active:translate-x-[4px] active:translate-y-[4px]"
-      style={{
-        boxShadow: '8px 8px 0px 0px rgba(0, 0, 0, 1)',
-      }}
-      aria-label="Sign in to YOLO"
+      className={
+        isGlow
+          ? 'group relative px-8 sm:px-10 py-4 sm:py-5 text-lg sm:text-xl font-black font-mono uppercase tracking-tight bg-[#CCFF00] text-black border-4 border-[#CCFF00]/80 touch-manipulation min-h-[56px] transition-all duration-200 rounded-lg hover:opacity-95'
+          : 'group relative px-6 sm:px-8 py-3 sm:py-4 text-lg sm:text-xl font-black font-mono uppercase tracking-tight bg-[#CCFF00] text-black border-8 border-black touch-manipulation min-h-[56px] transition-all duration-200 hover:translate-x-[-4px] hover:translate-y-[-4px] active:translate-x-[4px] active:translate-y-[4px]'
+      }
+      style={
+        isGlow
+          ? {
+              boxShadow:
+                '0 0 30px rgba(204,255,0,0.6), 0 0 60px rgba(204,255,0,0.3), inset 0 0 20px rgba(255,255,255,0.1)',
+            }
+          : {
+              boxShadow: '8px 8px 0px 0px rgba(0, 0, 0, 1)',
+            }
+      }
+      aria-label={`${label} - Sign in to YOLO`}
     >
       {/* Animated shine effect on hover */}
-      <div 
-        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-        style={{
-          background: 'linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)',
-          backgroundSize: '200% 100%',
-          animation: 'shine 1.5s infinite',
-        }}
-      />
-      
+      {!isGlow && (
+        <div
+          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-none"
+          style={{
+            background: 'linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)',
+            backgroundSize: '200% 100%',
+            animation: 'shine 1.5s infinite',
+          }}
+        />
+      )}
+
       {/* Content */}
       <span className="relative flex items-center justify-center gap-2">
         <Wallet className="w-5 h-5 sm:w-6 sm:h-6 group-hover:scale-110 transition-transform duration-200" strokeWidth={3} />
-        <span>SIGN IN</span>
+        <span>{label}</span>
       </span>
     </button>
   );

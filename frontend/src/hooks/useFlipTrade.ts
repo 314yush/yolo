@@ -50,17 +50,46 @@ export function useFlipTrade() {
       throw new Error(`Invalid trade data: missing pairIndex or tradeIndex. Trade: ${JSON.stringify(trade)}`);
     }
 
-    // Double-check: Verify we're closing the correct trade by fetching current trades
-    // This ensures we're closing the trade that matches both pairIndex AND tradeIndex
+    // Resolve the canonical trade from backend state before building close tx.
+    // Immediately after opening, local UI may still hold a temporary tradeIndex.
     const currentTrades = await getTrades(userAddress);
-    const matchingTrade = currentTrades.find(
-      t => t.pairIndex === trade.pairIndex && t.tradeIndex === trade.tradeIndex
+    const pnlPositions = await getPnL(userAddress);
+    const pnlTrades = pnlPositions.map((position) => position.trade);
+    const candidates = [...currentTrades, ...pnlTrades];
+    const isLeverageClose = (a: number, b: number) => Math.abs(a - b) < 0.01;
+
+    // 1) Prefer exact pair+trade index match when available.
+    let matchingTrade = candidates.find(
+      (candidate) =>
+        candidate.pairIndex === trade.pairIndex &&
+        candidate.tradeIndex === trade.tradeIndex
     );
-    
+
+    // 2) Fallback: match by pair+direction and leverage tolerance, newest first.
+    if (!matchingTrade) {
+      const traitMatches = candidates
+        .filter(
+          (candidate) =>
+            candidate.pairIndex === trade.pairIndex &&
+            isLeverageClose(candidate.leverage, trade.leverage) &&
+            candidate.isLong === trade.isLong
+        )
+        .sort((a, b) => b.openedAt - a.openedAt);
+      matchingTrade = traitMatches[0];
+    }
+
+    // 3) Last-resort fallback: if this looks like a temporary UI trade (index 0),
+    // pick the newest open trade on the same pair.
+    if (!matchingTrade && trade.tradeIndex === 0) {
+      const pairMatches = candidates
+        .filter((candidate) => candidate.pairIndex === trade.pairIndex)
+        .sort((a, b) => b.openedAt - a.openedAt);
+      matchingTrade = pairMatches[0];
+    }
+
     if (!matchingTrade) {
       throw new Error(
-        `Trade not found! Cannot flip trade with pairIndex=${trade.pairIndex}, tradeIndex=${trade.tradeIndex}. ` +
-        `Available trades: ${currentTrades.map(t => `${t.pair} (pairIndex=${t.pairIndex}, tradeIndex=${t.tradeIndex})`).join(', ')}`
+        'Trade is still syncing on-chain. Please wait 1-2 seconds and try flip again.'
       );
     }
     

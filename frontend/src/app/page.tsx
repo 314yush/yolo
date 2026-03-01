@@ -20,8 +20,10 @@ import { PnLScreen } from '@/components/PnLScreen';
 import { LoginButton } from '@/components/LoginButton';
 import { SetupFlow } from '@/components/SetupFlow';
 import { OnboardingFlow } from '@/components/OnboardingFlow';
+import { DepositUSDC } from '@/components/DepositUSDC';
 import { ToastContainer } from '@/components/Toast';
 import { AbstractBackground } from '@/components/AbstractBackground';
+import { LandingPremium } from '@/components/LandingPremium';
 import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
 import { hasCompletedOnboarding, clearOnboardingStatus } from '@/lib/onboarding';
 import { clearLocalAccess } from '@/lib/access';
@@ -40,7 +42,7 @@ import { debug } from '@/lib/debug';
 import { Activity, Settings, Dice5, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
-  const { authenticated, ready, user } = usePrivy();
+  const { authenticated, ready, user, login } = usePrivy();
   const {
     stage,
     setStage,
@@ -154,6 +156,7 @@ export default function HomePage() {
         }
         loadDelegateStatusForUser(null);
         setIsOnboardingComplete(false);
+        setIsDepositComplete(false);
       }
     }
 
@@ -270,6 +273,7 @@ export default function HomePage() {
   
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [isOnboardingComplete, setIsOnboardingComplete] = useState(false);
+  const [isDepositComplete, setIsDepositComplete] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
   const [isVerifyingDelegate, setIsVerifyingDelegate] = useState(false);
@@ -631,19 +635,11 @@ export default function HomePage() {
     );
   }
 
-  // Not authenticated - show login
+  // Not authenticated - show premium landing
   if (!authenticated) {
     return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center px-4 py-8 safe-area-top safe-area-bottom">
-        <header className="text-center">
-          <h1 className="yolo-logo text-5xl sm:text-6xl font-bold px-12 sm:px-16 py-10 sm:py-12 mb-8 sm:mb-12">
-            YOLO
-          </h1>
-          <p className="text-white/60 text-center mb-8 sm:mb-10 max-w-md text-base sm:text-lg leading-relaxed px-4">
-            Spin the wheel, open a trade. Zero-fee perpetuals on Base.
-          </p>
-        </header>
-        <LoginButton />
+      <div className="safe-area-top safe-area-bottom">
+        <LandingPremium onLogin={login} />
       </div>
     );
   }
@@ -704,7 +700,24 @@ export default function HomePage() {
     );
   }
 
-  // Authenticated but not set up (onboarding complete or skipped)
+  // After onboarding: prompt to deposit USDC before setup (until they have enough and click Continue)
+  const needsDeposit = isOnboardingComplete && !delegateStatus.isSetup && !isSetupComplete &&
+    (usdcBalance === null || usdcBalance < DEFAULT_COLLATERAL || !isDepositComplete);
+  if (needsDeposit) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
+        <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
+          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+          <LoginButton />
+        </header>
+        <main className="flex-1 flex items-center justify-center px-4" id="main-content">
+          <DepositUSDC onDeposited={() => setIsDepositComplete(true)} />
+        </main>
+      </div>
+    );
+  }
+
+  // Authenticated but not set up (onboarding complete, deposit done)
   if (!delegateStatus.isSetup && !isSetupComplete) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
