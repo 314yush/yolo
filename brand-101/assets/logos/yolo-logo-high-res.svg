@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="1024" viewBox="0 0 2048 1024">
+  <rect width="2048" height="1024" fill="#000000" />
+
+  <g transform="translate(1024,512) rotate(-2)">
+    <rect x="-600" y="-220" width="1200" height="440" fill="none" stroke="#CCFF00" stroke-width="28" />
+    <rect x="-568" y="-188" width="1200" height="440" fill="none" stroke="#CCFF00" stroke-opacity="0.45" stroke-width="28" />
+    <text
+      x="0"
+      y="34"
+      font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+      font-size="280"
+      font-weight="900"
+      letter-spacing="10"
+      fill="#CCFF00"
+      text-anchor="middle"
+    >
+      YOLO
+    </text>
+  </g>
+</svg>

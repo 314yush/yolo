@@ -45,22 +45,15 @@ When the app loads, check the browser console:
 
 ---
 
-### Step 2: Complete Setup Flow (User Pays Gas)
+### Step 2: Complete Setup Flow (Privy Gas Sponsorship)
 
 1. **Login** with Privy
-2. **Complete Setup Flow**:
+2. **Complete Setup Flow** (Privy sponsors gas - first signing only):
    - ✅ Create delegate wallet (automatic)
-   - ✅ Set delegate (user pays gas - ~$0.01-0.10)
-   - ✅ Approve USDC (user pays gas - ~$0.01-0.10)
+   - ✅ Set delegate (Privy sponsors gas)
+   - ✅ Approve USDC (Privy sponsors gas)
 
-**Expected Console Output:**
-```
-[useTxSigner] 🎯 Sign and broadcast requested
-[TachyonRelay] ═══════════════════════════════════════
-[TachyonRelay] 🚀 Starting Tachyon relay...
-```
-
-**Note:** Setup transactions (`setDelegate`, `approveUSDC`) are **NOT** gasless - they're standard transactions the user pays for. Only **trading** transactions are gasless.
+**Note:** Setup uses Privy's native gas sponsorship. After setup, Tachyon handles all trade transactions. Users with only USDC (no ETH) can complete setup.
 
 ---
 
