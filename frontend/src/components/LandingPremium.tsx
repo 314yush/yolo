@@ -142,7 +142,7 @@ function PremiumWheel() {
     []
   );
   const segmentCount = SEGMENTS.length;
-  const iconSize = segmentCount <= 6 ? 22 : 18;
+  const iconSize = segmentCount <= 6 ? 16 : 14;
 
   return (
     <div className="relative w-full flex flex-col items-center">

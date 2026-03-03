@@ -6,6 +6,7 @@ import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useState, type ReactNode } from 'react';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { OriginDebug } from '@/components/OriginDebug';
 import { usePythPricesSync } from '@/hooks/usePythPrices';
 
 /** Runs Pyth price streaming at app level so all pages have fresh prices */
@@ -30,7 +31,7 @@ export function Providers({ children }: ProvidersProps) {
   const [queryClient] = useState(() => new QueryClient());
   
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
-  
+
   // If no Privy App ID, show error (dev mode)
   if (!privyAppId) {
     return (
@@ -75,6 +76,7 @@ export function Providers({ children }: ProvidersProps) {
         <WagmiProvider config={wagmiConfig}>
           <OfflineBanner />
           <GlobalPriceSync />
+          <OriginDebug />
           {children}
         </WagmiProvider>
       </QueryClientProvider>
