@@ -34,6 +34,7 @@ import {
   buildOpenTradeTx as buildOpenTradeTxDirect,
   calculate200PercentGainMultiplier,
 } from '@/lib/avantisEncoder';
+import { PNL_FEES, pnlFeeByGrossProfitP } from '@/lib/pnlFees';
 import Link from 'next/link';
 import type { Trade } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -281,16 +282,31 @@ export default function HomePage() {
   const verifyingRef = useRef<string | null>(null); // Track which address is being verified
 
   // Calculate total PnL for open trades (for warning banner)
+  // Applies zfp tiered performance fee when profitable (matches PnLScreen/TradeCard)
   const totalOpenPnL = React.useMemo(() => {
     return openTrades.reduce((sum, trade) => {
-      // Estimate PnL based on current prices
-      const currentPrice = prices[trade.pair]?.price;
-      if (!currentPrice) return sum;
-      const pnlPercentage = trade.isLong 
-        ? ((currentPrice - trade.openPrice) / trade.openPrice) * trade.leverage * 100
-        : ((trade.openPrice - currentPrice) / trade.openPrice) * trade.leverage * 100;
-      const pnl = (pnlPercentage / 100) * trade.collateral;
-      return sum + pnl;
+      try {
+        const currentPrice = prices[trade.pair]?.price;
+        if (!currentPrice || !Number.isFinite(currentPrice) || currentPrice <= 0) return sum;
+        if (!trade.openPrice || !Number.isFinite(trade.openPrice) || trade.openPrice <= 0) return sum;
+        if (!Number.isFinite(trade.collateral) || !Number.isFinite(trade.leverage)) return sum;
+
+        const grossPnlP = trade.isLong
+          ? ((currentPrice - trade.openPrice) / trade.openPrice) * trade.leverage * 100
+          : ((trade.openPrice - currentPrice) / trade.openPrice) * trade.leverage * 100;
+        const grossPnl = (grossPnlP / 100) * trade.collateral;
+        let pnl: number;
+        if (grossPnl > 0) {
+          const feeP = pnlFeeByGrossProfitP(grossPnlP, PNL_FEES.tierP, PNL_FEES.feesP);
+          pnl = grossPnl * (1 - feeP / 100);
+        } else {
+          pnl = grossPnl;
+        }
+        return sum + (Number.isFinite(pnl) ? pnl : 0);
+      } catch (err) {
+        console.warn('[totalOpenPnL] Failed for trade:', trade.pairIndex, trade.tradeIndex, err);
+        return sum;
+      }
     }, 0);
   }, [openTrades, prices]);
 

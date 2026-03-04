@@ -7,10 +7,15 @@
  */
 
 import { ASSETS } from './constants';
+import { PNL_FEES, pnlFeeByGrossProfitP } from './pnlFees';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const AVANTIS_PROXY_BASE = `${API_URL}/avantis`;
+
+// Direct Avantis API (used as fallback when proxy unreachable - e.g. backend not running)
+// Per AVANTISAPI.md: https://core.avantisfi.com/user-data
+const AVANTIS_CORE_BASE = 'https://core.avantisfi.com';
 
 // Decimal conversions
 const USDC_DECIMALS = 1e6;
@@ -69,13 +74,22 @@ function parsePosition(pos: AvantisPosition): Trade {
   };
 }
 
+function isFinitePositive(n: number): boolean {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
+}
+
 /**
  * Calculate PnL for a position
- * 
+ *
  * Formula (from Avantis):
- * - For LONG: PnL = collateral * leverage * (currentPrice - openPrice) / openPrice
- * - For SHORT: PnL = collateral * leverage * (openPrice - currentPrice) / openPrice
- * - Net PnL = PnL - rolloverFee (fees already accumulated by Avantis)
+ * - For LONG: grossPnl = collateral * leverage * (currentPrice - openPrice) / openPrice
+ * - For SHORT: grossPnl = collateral * leverage * (openPrice - currentPrice) / openPrice
+ *
+ * For zfp (isPnl) trades with profit: deduct tiered performance fee from gross.
+ * "The More You Win, the More You Keep" - higher ROI = lower fee %.
+ * Net = grossPnl * (1 - feeP/100) - rolloverFee
+ *
+ * For losses or non-zfp: Net = grossPnl - rolloverFee
  */
 function calculatePnL(
   pos: AvantisPosition,
@@ -85,36 +99,73 @@ function calculatePnL(
   const leverage = Number(pos.leverage) / LEVERAGE_DECIMALS;
   const openPrice = Number(pos.openPrice) / PRICE_DECIMALS;
   const rolloverFee = Number(pos.rolloverFee) / USDC_DECIMALS;
-  
-  // Position size
+
+  if (!isFinitePositive(openPrice)) {
+    console.warn('[calculatePnL] Invalid openPrice:', pos.openPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    return { pnl: 0, pnlPercentage: 0 };
+  }
+
+  if (!Number.isFinite(collateral) || collateral <= 0) {
+    console.warn('[calculatePnL] Invalid collateral:', pos.collateral, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    return { pnl: 0, pnlPercentage: 0 };
+  }
+
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+    console.warn('[calculatePnL] Invalid currentPrice:', currentPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    return { pnl: 0, pnlPercentage: 0 };
+  }
+
+  if (!Number.isFinite(leverage) || leverage <= 0) {
+    console.warn('[calculatePnL] Invalid leverage:', pos.leverage, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    return { pnl: 0, pnlPercentage: 0 };
+  }
+
   const positionSize = collateral * leverage;
-  
-  // Gross PnL calculation
   let grossPnl: number;
   if (pos.buy) {
-    // LONG: profit when price goes up
     grossPnl = positionSize * (currentPrice - openPrice) / openPrice;
   } else {
-    // SHORT: profit when price goes down
     grossPnl = positionSize * (openPrice - currentPrice) / openPrice;
   }
-  
-  // Net PnL = Gross PnL - Rollover Fee
-  const pnl = grossPnl - rolloverFee;
-  
-  // PnL percentage relative to collateral
-  const pnlPercentage = (pnl / collateral) * 100;
-  
-  return { pnl, pnlPercentage };
+
+  let pnl: number;
+  if (pos.isPnl && grossPnl > 0) {
+    const grossPnlP = (grossPnl / collateral) * 100;
+    const feeP = pnlFeeByGrossProfitP(grossPnlP, PNL_FEES.tierP, PNL_FEES.feesP);
+    pnl = grossPnl * (1 - feeP / 100) - rolloverFee;
+  } else {
+    pnl = grossPnl - rolloverFee;
+  }
+
+  const pnlPercentage = Number.isFinite(pnl) ? (pnl / collateral) * 100 : 0;
+  const safePnl = Number.isFinite(pnl) ? pnl : 0;
+
+  return { pnl: safePnl, pnlPercentage };
+}
+
+function isNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message?.toLowerCase() ?? '';
+  return (
+    error.name === 'TypeError' &&
+    (msg.includes('failed to fetch') ||
+      msg.includes('network request failed') ||
+      msg.includes('networkerror'))
+  );
 }
 
 /**
- * Fetch with timeout wrapper
+ * Fetch with timeout wrapper.
+ * Throws a clear error for network/connection failures (e.g. backend not running).
  */
-async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number = 10000,
+  context?: string
+): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
+
   try {
     const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
@@ -122,30 +173,70 @@ async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Request timeout - please check your connection');
+      throw new Error(
+        `Request timeout${context ? ` (${context})` : ''} - check your connection`
+      );
+    }
+    if (isNetworkError(error)) {
+      const hint =
+        url.startsWith('http://localhost') || url.includes('localhost')
+          ? ' Is the backend server running? (e.g. cd backend && uvicorn app.main:app)'
+          : ' Check your network and that the API URL is correct.';
+      throw new Error(
+        `Cannot reach API at ${url}${hint} Original: ${(error as Error).message}`
+      );
     }
     throw error;
   }
 }
 
 /**
- * Fetch user's open trades via backend proxy (Avantis API).
+ * Fetch user-data from Avantis. Tries backend proxy first; falls back to
+ * direct Avantis API if proxy is unreachable (e.g. backend not running).
+ */
+async function fetchUserData(traderAddress: string): Promise<AvantisUserDataResponse> {
+  const proxyUrl = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
+  const directUrl = `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`;
+
+  try {
+    const response = await fetchWithTimeout(proxyUrl, 15000, 'user-data via proxy');
+    if (!response.ok) {
+      throw new Error(`Avantis API error: ${response.status}`);
+    }
+    return await response.json();
+  } catch (proxyError) {
+    if (isNetworkError(proxyError) || (proxyError instanceof Error && proxyError.message.includes('Cannot reach API'))) {
+      console.warn('[avantisApi] Proxy unreachable, trying direct Avantis API:', (proxyError as Error).message);
+      try {
+        const response = await fetchWithTimeout(directUrl, 15000, 'user-data direct');
+        if (!response.ok) {
+          throw new Error(`Avantis API error: ${response.status}`);
+        }
+        return await response.json();
+      } catch (directError) {
+        console.error('[avantisApi] Direct Avantis API also failed:', directError);
+        throw proxyError;
+      }
+    }
+    throw proxyError;
+  }
+}
+
+/**
+ * Fetch user's open trades via backend proxy (or direct Avantis API fallback).
  */
 export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
-  const url = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
-  
-  const response = await fetchWithTimeout(url, 15000); // 15s
-  if (!response.ok) {
-    throw new Error(`Avantis API error: ${response.status}`);
+  const data = await fetchUserData(traderAddress);
+  const positions = data?.positions;
+  if (!Array.isArray(positions)) {
+    return [];
   }
-  
-  const data: AvantisUserDataResponse = await response.json();
-  
-  return data.positions.map(parsePosition);
+  return positions.map(parsePosition);
 }
 
 /**
  * Fetch user's positions with PnL from Avantis API.
+ * Uses backend proxy first; falls back to direct Avantis API if proxy unreachable.
  *
  * @param traderAddress - Trader's wallet address
  * @param prices - Map of pair name to current price (from Pyth)
@@ -154,34 +245,51 @@ export async function fetchPnL(
   traderAddress: string,
   prices: Record<string, { price: number; timestamp: number }>
 ): Promise<PnLData[]> {
-  const url = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
-  
-  const response = await fetchWithTimeout(url, 15000); // 15s
-  if (!response.ok) {
-    throw new Error(`Avantis API error: ${response.status}`);
+  let data: AvantisUserDataResponse;
+  try {
+    data = await fetchUserData(traderAddress);
+  } catch (e) {
+    console.error('[fetchPnL] Failed to fetch user-data:', e);
+    throw e;
   }
-  
-  const data: AvantisUserDataResponse = await response.json();
-  
-  return data.positions.map(pos => {
-    const trade = parsePosition(pos);
-    const pairName = trade.pair;
-    const pythPrice = prices[pairName]?.price;
-    const currentPrice = pythPrice ?? trade.openPrice;
 
-    if (!pythPrice) {
-      console.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL will show $0 until prices arrive`);
+  const positions = data?.positions;
+  if (!Array.isArray(positions)) {
+    console.warn('[fetchPnL] API returned no positions array, using empty list');
+    return [];
+  }
+
+  const results: PnLData[] = [];
+  for (const pos of positions) {
+    if (!pos || typeof pos !== 'object') {
+      console.warn('[fetchPnL] Skipping invalid position: malformed data');
+      continue;
     }
+    let trade: Trade;
+    try {
+      trade = parsePosition(pos);
+    } catch (parseErr) {
+      console.error('[fetchPnL] Failed to parse position:', parseErr);
+      continue;
+    }
+    try {
+      const pairName = trade.pair;
+      const pythPrice = prices[pairName]?.price;
+      const currentPrice = pythPrice ?? trade.openPrice;
 
-    const { pnl, pnlPercentage } = calculatePnL(pos, currentPrice);
+      if (!pythPrice) {
+        console.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL uses open price as fallback`);
+      }
 
-    return {
-      trade,
-      currentPrice,
-      pnl,
-      pnlPercentage,
-    };
-  });
+      const { pnl, pnlPercentage } = calculatePnL(pos, currentPrice);
+
+      results.push({ trade, currentPrice, pnl, pnlPercentage });
+    } catch (calcErr) {
+      console.error(`[fetchPnL] Failed to compute PnL for pairIndex=${trade.pairIndex} index=${trade.tradeIndex}:`, calcErr);
+      results.push({ trade, currentPrice: trade.openPrice, pnl: 0, pnlPercentage: 0 });
+    }
+  }
+  return results;
 }
 
 /**

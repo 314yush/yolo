@@ -118,14 +118,17 @@ export function useAvantisAPI() {
     }
   }, []);
 
-  // Get PnL for all positions - Direct from Avantis API + Pyth prices (no backend!)
+  // Get PnL for all positions - Via backend proxy (or direct Avantis API fallback) + Pyth prices
   const getPnL = useCallback(async (address: string) => {
     try {
       const currentPrices = useTradeStore.getState().prices;
       return await fetchPnL(address, currentPrices);
     } catch (error) {
-      console.error('[useAvantisAPI] Failed to fetch PnL:', error);
-      // Return empty array on error to prevent hanging
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('[useAvantisAPI] Failed to fetch PnL:', msg);
+      if (msg.includes('Cannot reach API') || msg.includes('backend')) {
+        console.warn('[useAvantisAPI] Hint: Start the backend with "cd backend && uvicorn app.main:app" to fix PnL updates.');
+      }
       return [];
     }
   }, []);
