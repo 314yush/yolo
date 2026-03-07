@@ -19,6 +19,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
   const { startSpin, stopSpin, playTick } = useSound();
   
   const animationRef = useRef<number | null>(null);
+  const spinCompleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [rotation1, setRotation1] = React.useState(0);
   const [rotation2, setRotation2] = React.useState(0);
   const [rotation3, setRotation3] = React.useState(0);
@@ -101,7 +102,8 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
         stopSpin();
         playTick();
         // Animation complete - 600ms delay (500ms + 100ms) before PnL transition for smoother UX
-        setTimeout(() => {
+        spinCompleteTimeoutRef.current = setTimeout(() => {
+          spinCompleteTimeoutRef.current = null;
           onSpinComplete();
         }, 600);
       } else {
@@ -124,13 +126,21 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
     showDirectionChip,
   ]);
 
-  // Cleanup animation on unmount
+  // Cleanup animation and timers on unmount
   useEffect(() => {
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
       }
+      if (spinCompleteTimeoutRef.current) {
+        clearTimeout(spinCompleteTimeoutRef.current);
+        spinCompleteTimeoutRef.current = null;
+      }
+      // Stop spin sound when navigating away during spin
+      stopSpin();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup only on unmount
   }, []);
 
   // Trigger spin when prop changes (from external button)

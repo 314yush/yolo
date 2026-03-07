@@ -93,6 +93,7 @@ async def get_total_volume(trader_address: str):
                     total += collateral * leverage
 
             # 2. Closed trades from portfolio history (paginate)
+            # Volume = position size = collateral * leverage (positionSizeUSDC is collateral, not position size)
             page = 1
             while True:
                 url = f"{AVANTIS_HISTORY_BASE}/{trader_address}/{page}"
@@ -106,13 +107,12 @@ async def get_total_volume(trader_address: str):
                 for item in data["portfolio"]:
                     args = item.get("event", {}).get("args", {})
                     t = args.get("t", {})
-                    psize = args.get("positionSizeUSDC") or t.get("positionSizeUSDC")
-                    if psize is None:
-                        # Fallback: collateral * leverage
-                        collateral = float(t.get("initialPosToken", 0))
-                        leverage = float(t.get("leverage", 0))
-                        psize = collateral * leverage
-                    if isinstance(psize, (int, float)):
+                    collateral = float(args.get("positionSizeUSDC") or t.get("initialPosToken") or 0)
+                    leverage = float(t.get("leverage") or 0)
+                    if leverage <= 0:
+                        leverage = 1.0  # avoid div by zero
+                    psize = collateral * leverage
+                    if isinstance(psize, (int, float)) and psize > 0:
                         total += float(psize)
                 page_count = data.get("pageCount", 0)
                 if page >= page_count:

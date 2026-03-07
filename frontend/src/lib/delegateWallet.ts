@@ -68,7 +68,7 @@ export function hasDelegateWallet(): boolean {
 }
 
 /**
- * Clear delegate wallet (for logout/reset)
+ * Clear delegate wallet (for logout/reset or when different user logs in)
  */
 export function clearDelegateWallet(): void {
   if (typeof window === 'undefined') {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useAvantisAPI } from './useAvantisAPI';
+import { logTradeOpen } from '@/lib/activityApi';
 import type { Trade, PnLData } from '@/types';
 
 interface TradeWithPnL {
@@ -11,11 +12,13 @@ interface TradeWithPnL {
 }
 
 export function useOpenTrades() {
-  const { userAddress, setOpenTrades, updateActivePositions, incrementVolume } = useTradeStore();
+  const { userAddress, setOpenTrades, updateActivePositions, incrementVolume, popPendingOpenTxHash } = useTradeStore();
   const { getTrades, getPnL } = useAvantisAPI();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   // Track which trades we've already counted for volume (by pairIndex-tradeIndex)
   const countedTradesRef = useRef<Set<string>>(new Set());
+  // Track which trades we've already logged to activity API
+  const loggedTradesRef = useRef<Set<string>>(new Set());
 
   const fetchTrades = useCallback(async () => {
     if (!userAddress) {
@@ -45,13 +48,32 @@ export function useOpenTrades() {
         };
       });
 
-      // Check for new trades and increment volume for them
+      // Check for new trades: increment volume and log to activity API
       trades.forEach((trade) => {
         const tradeKey = `${trade.pairIndex}-${trade.tradeIndex}`;
         if (!countedTradesRef.current.has(tradeKey)) {
-          // New trade discovered - increment volume
           incrementVolume(trade.collateral, trade.leverage);
           countedTradesRef.current.add(tradeKey);
+        }
+        // Log to activity API when we have a pending open tx hash (FIFO)
+        if (!loggedTradesRef.current.has(tradeKey)) {
+          const txHash = popPendingOpenTxHash();
+          if (txHash && userAddress) {
+            loggedTradesRef.current.add(tradeKey);
+            logTradeOpen({
+              wallet: userAddress,
+              pair: trade.pair,
+              pairIndex: trade.pairIndex,
+              tradeIndex: trade.tradeIndex,
+              direction: trade.isLong ? 'LONG' : 'SHORT',
+              leverage: trade.leverage,
+              collateral: trade.collateral,
+              entryPrice: trade.openPrice,
+              tpPrice: trade.tp,
+              liqPrice: trade.liquidationPrice || undefined,
+              txHash,
+            });
+          }
         }
       });
 
@@ -64,13 +86,13 @@ export function useOpenTrades() {
       console.error('[useOpenTrades] Failed to fetch trades:', error);
       return [];
     }
-  }, [userAddress, getTrades, getPnL, setOpenTrades, updateActivePositions]);
+  }, [userAddress, getTrades, getPnL, setOpenTrades, updateActivePositions, incrementVolume, popPendingOpenTxHash]);
 
   // Fetch on mount and poll for updates
   useEffect(() => {
     if (!userAddress) {
-      // Reset counted trades when user changes
       countedTradesRef.current.clear();
+      loggedTradesRef.current.clear();
       return;
     }
 

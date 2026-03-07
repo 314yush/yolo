@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats } from '@/types';
 import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constants';
-import { loadSettings } from '@/lib/settings';
+import { loadSettings, DEFAULT_SETTINGS } from '@/lib/settings';
 import { loadStats, saveStats, incrementVolume } from '@/lib/stats';
 import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
 import { isCommoditiesMarketOpen } from '@/lib/marketHours';
@@ -54,6 +54,10 @@ interface TradeState {
   lastKnownPnLPercentage: number | null; // Track last PnL % to detect liquidation
   setLastKnownPnLPercentage: (percentage: number | null) => void;
   
+  // Take profit hit state (position closed at profit by TP target)
+  isTakeProfitHit: boolean;
+  setIsTakeProfitHit: (hit: boolean) => void;
+  
   // Intentional close flag - prevents false liquidation detection during flip/close
   isIntentionalClose: boolean;
   setIsIntentionalClose: (intentional: boolean) => void;
@@ -90,6 +94,11 @@ interface TradeState {
   pendingTradeHashes: Set<`0x${string}`>;
   addPendingTradeHash: (hash: `0x${string}`) => void;
   removePendingTradeHash: (hash: `0x${string}`) => void;
+
+  // Pending OPEN tx hashes for activity log-open (FIFO - only open txs, not close)
+  pendingOpenTxHashes: `0x${string}`[];
+  addPendingOpenTxHash: (hash: `0x${string}`) => void;
+  popPendingOpenTxHash: () => `0x${string}` | undefined;
 
   // Settings
   settings: Settings;
@@ -145,6 +154,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   pnlData: null,
   isLiquidated: false,
   lastKnownPnLPercentage: null,
+  isTakeProfitHit: false,
   isIntentionalClose: false,
   txHash: null,
   isExecuting: false,
@@ -174,6 +184,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
     return new Set<`0x${string}`>();
   })(),
+  pendingOpenTxHashes: [],
   // Fast trading confirmation state
   confirmationStage: 'none',
   confirmationTimestamp: null,
@@ -193,11 +204,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     if (typeof window !== 'undefined') {
       return loadSettings();
     }
-    return {
-      collateral: DEFAULT_COLLATERAL,
-      audioEnabled: true,
-      musicEnabled: true, // Music plays by default
-    };
+    return DEFAULT_SETTINGS;
   })(),
   tradeStats: {
     totalTrades: 0,
@@ -232,6 +239,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   },
   setIsLiquidated: (isLiquidated) => set({ isLiquidated }),
   setLastKnownPnLPercentage: (lastKnownPnLPercentage) => set({ lastKnownPnLPercentage }),
+  setIsTakeProfitHit: (isTakeProfitHit) => set({ isTakeProfitHit }),
   setIsIntentionalClose: (isIntentionalClose) => set({ isIntentionalClose }),
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
@@ -307,6 +315,17 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     newSet.delete(hash);
     return { pendingTradeHashes: newSet };
   }),
+  addPendingOpenTxHash: (hash) => set((state) => ({
+    pendingOpenTxHashes: [...state.pendingOpenTxHashes, hash],
+  })),
+  popPendingOpenTxHash: () => {
+    const state = get();
+    const hashes = state.pendingOpenTxHashes;
+    if (hashes.length === 0) return undefined;
+    const [head, ...rest] = hashes;
+    set({ pendingOpenTxHashes: rest });
+    return head;
+  },
   setSettings: (settings) => {
     set({ settings });
     // Also update collateral when settings change
@@ -436,6 +455,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     pnlData: null,
     isLiquidated: false,
     lastKnownPnLPercentage: null,
+    isTakeProfitHit: false,
     isIntentionalClose: false,
     txHash: null,
     isExecuting: false,

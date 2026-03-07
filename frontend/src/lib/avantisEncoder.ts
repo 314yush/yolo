@@ -13,6 +13,7 @@
  */
 
 import { encodeFunctionData } from 'viem';
+import { PNL_FEES, grossPnlPForNetPnlP } from './pnlFees';
 
 // Contract addresses (Base Mainnet)
 export const AVANTIS_CONTRACTS = {
@@ -187,6 +188,7 @@ export interface FlipTradeParams {
   leverage: number;
   currentIsLong: boolean;  // Current direction (will flip to opposite)
   currentPrice: number;    // For open tx
+  takeProfitPercent?: number;  // TP % (default 200)
 }
 
 export interface FlipTradeResult {
@@ -230,18 +232,33 @@ function scaleUSDC(amount: number): bigint {
 }
 
 /**
- * Calculate take profit multiplier for 200% gain
- * For LONG: TP = entryPrice * (1 + 2/leverage) → multiplier = 1 + 2/leverage
- * For SHORT: TP = entryPrice * (1 - 2/leverage) → multiplier = 1 - 2/leverage
- * 
- * This represents a 200% profit gain relative to leverage.
- * Example: With 250x leverage, a 0.8% price move = 200% profit
+ * Calculate take profit price multiplier for ZFP trades.
+ * TP is based on NET PnL (after tiered performance fee), not gross.
+ * Solves for the price at which user's displayed net PnL hits target %.
+ *
+ * Avantis tierP = "Trader ROI %" (net). We look up fee at target net tier,
+ * then gross = net/(1-fee/100), then price multiplier from that gross.
+ *
+ * @param isLong - Trade direction
+ * @param leverage - Position leverage
+ * @param targetNetPnlP - Target net PnL % (e.g. 50 = user sees 50% profit when TP hits)
  */
+export function calculateTakeProfitMultiplier(
+  isLong: boolean,
+  leverage: number,
+  targetNetPnlP: number = 200
+): number {
+  const grossPnlP = grossPnlPForNetPnlP(targetNetPnlP, PNL_FEES.tierP, PNL_FEES.feesP);
+  const ratio = grossPnlP / (100 * leverage);
+  return isLong ? 1 + ratio : 1 - ratio;
+}
+
+/** @deprecated Use calculateTakeProfitMultiplier with targetNetPnlP=200 */
 export function calculate200PercentGainMultiplier(
   isLong: boolean,
   leverage: number
 ): number {
-  return isLong ? 1 + 2 / leverage : 1 - 2 / leverage;
+  return calculateTakeProfitMultiplier(isLong, leverage, 200);
 }
 
 /**
@@ -397,7 +414,7 @@ export function validatePositionSize(
  * Close current position, then open opposite direction
  */
 export function buildFlipTradeTxs(params: FlipTradeParams): FlipTradeResult {
-  const { trader, pairIndex, tradeIndex, collateral, leverage, currentIsLong, currentPrice } = params;
+  const { trader, pairIndex, tradeIndex, collateral, leverage, currentIsLong, currentPrice, takeProfitPercent = 200 } = params;
 
   // 1. Build close tx
   const closeTx = buildCloseTradeTx({
@@ -415,7 +432,7 @@ export function buildFlipTradeTxs(params: FlipTradeParams): FlipTradeResult {
     leverage,
     isLong: !currentIsLong,  // Flip direction
     openPrice: currentPrice,
-    takeProfitMultiplier: calculate200PercentGainMultiplier(!currentIsLong, leverage),
+    takeProfitMultiplier: calculateTakeProfitMultiplier(!currentIsLong, leverage, takeProfitPercent),
   });
 
   return { closeTx, openTx };

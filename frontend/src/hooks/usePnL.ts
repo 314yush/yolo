@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useAvantisAPI } from './useAvantisAPI';
 import { saveClosedTrade } from '@/lib/closedTrades';
+import { logTradeCloseByPosition } from '@/lib/activityApi';
 import { debug } from '@/lib/debug';
 
 interface UsePnLOptions {
@@ -14,7 +15,7 @@ interface UsePnLOptions {
 export function usePnL(options: UsePnLOptions = {}) {
   const { enabled = true, interval = 2000 } = options;
   
-  const { userAddress, currentTrade, pnlData, setPnLData, setIsLiquidated, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose } = useTradeStore();
+  const { userAddress, currentTrade, pnlData, setPnLData, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose } = useTradeStore();
   const { getPnL } = useAvantisAPI();
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -34,6 +35,7 @@ export function usePnL(options: UsePnLOptions = {}) {
   const getPnLRef = useRef(getPnL);
   const setPnLDataRef = useRef(setPnLData);
   const setIsLiquidatedRef = useRef(setIsLiquidated);
+  const setIsTakeProfitHitRef = useRef(setIsTakeProfitHit);
   const lastKnownPnLPercentageRef = useRef(lastKnownPnLPercentage);
   const rememberedPairIndexRef = useRef(rememberedPairIndex);
   const rememberedTradeIndexRef = useRef(rememberedTradeIndex);
@@ -54,11 +56,12 @@ export function usePnL(options: UsePnLOptions = {}) {
     getPnLRef.current = getPnL;
     setPnLDataRef.current = setPnLData;
     setIsLiquidatedRef.current = setIsLiquidated;
+    setIsTakeProfitHitRef.current = setIsTakeProfitHit;
     lastKnownPnLPercentageRef.current = lastKnownPnLPercentage;
     rememberedPairIndexRef.current = rememberedPairIndex;
     rememberedTradeIndexRef.current = rememberedTradeIndex;
     isIntentionalCloseRef.current = isIntentionalClose;
-  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setIsLiquidated, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose]);
+  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose]);
 
   const fetchPnL = useCallback(async (isRetry = false): Promise<void> => {
     const userAddr = userAddressRef.current;
@@ -148,11 +151,14 @@ export function usePnL(options: UsePnLOptions = {}) {
             setIsLiquidatedRef.current(true);
             
             // Update PnL data with final values (at liquidation, typically -85%)
-            // Ensure we show the correct liquidation PnL
+            const liqPct = Math.min(currentPnL.pnlPercentage, -85);
+            const liqPnl = (trade.collateral * liqPct) / 100;
             const finalPnLData = {
               ...currentPnL,
-              pnlPercentage: Math.min(currentPnL.pnlPercentage, -85), // Cap at -85% for liquidation
-              pnl: (trade.collateral * currentPnL.pnlPercentage / 100), // Recalculate PnL at liquidation
+              pnlPercentage: liqPct,
+              pnl: liqPnl,
+              grossPnl: liqPnl,  // For losses, gross ≈ net (no tiered fee)
+              grossPnlPercentage: liqPct,
             };
             setPnLDataRef.current(finalPnLData);
             
@@ -161,6 +167,15 @@ export function usePnL(options: UsePnLOptions = {}) {
             if (userAddr && trade) {
               try {
                 saveClosedTrade(userAddr, trade, finalPnLData, {
+                  isLiquidated: true,
+                });
+                logTradeCloseByPosition({
+                  wallet: userAddr,
+                  pairIndex: trade.pairIndex,
+                  tradeIndex: trade.tradeIndex,
+                  exitPrice: currentPnL.currentPrice,
+                  pnl: finalPnLData.grossPnl,
+                  closedAt: new Date().toISOString(),
                   isLiquidated: true,
                 });
               } catch (error) {
@@ -196,33 +211,46 @@ export function usePnL(options: UsePnLOptions = {}) {
           return;
         }
         
-        // If we previously had PnL data and it was near -85%, the position was likely liquidated
-        // Add 3s grace period to avoid false liquidation when user clicks Close (race with poll)
+        // Position disappeared - could be liquidation, take-profit hit, or manual close
+        // Add 3s grace period to avoid false detection (API race with Close tx)
         const lastPnL = lastKnownPnLPercentageRef.current;
         const lastPnLData = pnlDataRef.current;
         const userAddr = userAddressRef.current;
         const trade = currentTradeRef.current;
+        const now = Date.now();
         
-        if (lastPnL !== null && lastPnL <= -84 && lastPnLData && userAddr && trade) {
-          const now = Date.now();
-          if (positionDisappearedAtRef.current === null) {
-            positionDisappearedAtRef.current = now;
+        if (positionDisappearedAtRef.current === null && lastPnL !== null && lastPnLData && userAddr && trade) {
+          positionDisappearedAtRef.current = now;
+        }
+        const elapsed = positionDisappearedAtRef.current ? now - positionDisappearedAtRef.current : 0;
+        
+        if (lastPnL !== null && lastPnL <= -84 && lastPnLData && userAddr && trade && elapsed >= LIQUIDATION_GRACE_MS) {
+          debug('[usePnL] Position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL, '- Marking as liquidated');
+          setIsLiquidatedRef.current(true);
+          try {
+            saveClosedTrade(userAddr, trade, lastPnLData, { isLiquidated: true });
+            logTradeCloseByPosition({
+              wallet: userAddr,
+              pairIndex: trade.pairIndex,
+              tradeIndex: trade.tradeIndex,
+              exitPrice: lastPnLData.currentPrice,
+              pnl: lastPnLData.grossPnl,
+              closedAt: new Date().toISOString(),
+              isLiquidated: true,
+            });
+          } catch (error) {
+            console.error('[usePnL] Failed to save liquidated trade:', error);
           }
-          const elapsed = now - positionDisappearedAtRef.current;
-          if (elapsed >= LIQUIDATION_GRACE_MS) {
-            debug('[usePnL] Position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL, '- Marking as liquidated');
-            setIsLiquidatedRef.current(true);
-            
-            try {
-              saveClosedTrade(userAddr, trade, lastPnLData, {
-                isLiquidated: true,
-              });
-            } catch (error) {
-              console.error('[usePnL] Failed to save liquidated trade:', error);
-            }
+        } else if (lastPnL !== null && lastPnL >= 50 && lastPnLData && userAddr && trade && elapsed >= LIQUIDATION_GRACE_MS) {
+          // Position closed at significant profit - take profit hit (or manual close at profit)
+          debug('[usePnL] Position disappeared at profit (after grace). Last PnL:', lastPnL, '- Marking as take profit hit');
+          setIsTakeProfitHitRef.current(true);
+          try {
+            saveClosedTrade(userAddr, trade, lastPnLData, { isLiquidated: false, isTakeProfitHit: true });
+          } catch (error) {
+            console.error('[usePnL] Failed to save closed trade (TP hit):', error);
           }
         }
-        // Trade might have been closed manually or liquidated - don't treat as error, just log
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -298,6 +326,7 @@ export function usePnL(options: UsePnLOptions = {}) {
         retryCountRef.current = 0;
         positionDisappearedAtRef.current = null;
         setIsLiquidatedRef.current(false);
+        setIsTakeProfitHitRef.current(false);
         
         // Fetch immediately
         fetchPnL();

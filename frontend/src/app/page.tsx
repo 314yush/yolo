@@ -25,16 +25,17 @@ import { ToastContainer } from '@/components/Toast';
 import { AbstractBackground } from '@/components/AbstractBackground';
 import { LandingPremium } from '@/components/LandingPremium';
 import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
-import { hasCompletedOnboarding, clearOnboardingStatus } from '@/lib/onboarding';
+import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
+import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
 import { clearLocalAccess } from '@/lib/access';
 import { vibrateDouble } from '@/lib/haptics';
 import { saveClosedTrade } from '@/lib/closedTrades';
+import { logTradeCloseByPosition, getOnboardingStatus } from '@/lib/activityApi';
 import { 
   buildCloseTradeTx as buildCloseTradeTxDirect,
   buildOpenTradeTx as buildOpenTradeTxDirect,
-  calculate200PercentGainMultiplier,
+  calculateTakeProfitMultiplier,
 } from '@/lib/avantisEncoder';
-import { PNL_FEES, pnlFeeByGrossProfitP } from '@/lib/pnlFees';
 import Link from 'next/link';
 import type { Trade } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -59,6 +60,7 @@ export default function HomePage() {
     setError,
     openTrades,
     addPendingTradeHash,
+    addPendingOpenTxHash,
     reset,
     toasts,
     removeToast,
@@ -82,8 +84,25 @@ export default function HomePage() {
           setUserAddress(address);
           // Load cached delegate status for this user
           loadDelegateStatusForUser(address);
-          // Check if onboarding is already completed
-          setIsOnboardingComplete(hasCompletedOnboarding(address));
+          // Check onboarding: localStorage first (fast), then backend API (for new device / cleared storage)
+          if (hasCompletedOnboarding(address)) {
+            setIsOnboardingComplete(true);
+            setIsReturningUser(true); // Completed before - skip deposit
+          } else {
+            setIsCheckingOnboarding(true);
+            try {
+              const completed = await getOnboardingStatus(address);
+              if (completed) {
+                setIsOnboardingComplete(true);
+                setIsReturningUser(true); // Completed before - skip deposit
+                markOnboardingComplete(address); // Cache locally for same-device fast path
+              }
+            } catch (err) {
+              console.warn('[page] getOnboardingStatus failed:', err);
+            } finally {
+              setIsCheckingOnboarding(false);
+            }
+          }
         }
 
         // CRITICAL FIX: Always verify on-chain delegate status if cache says setup is complete
@@ -157,12 +176,15 @@ export default function HomePage() {
         }
         loadDelegateStatusForUser(null);
         setIsOnboardingComplete(false);
+        setIsCheckingOnboarding(false);
+        setIsReturningUser(false);
         setIsDepositComplete(false);
+        reset();
       }
     }
 
     verifyDelegateStatus();
-  }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus]);
+  }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus, reset]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playWin, playLose } = useSound();
   const { balance: usdcBalance } = useUsdcBalance();
@@ -278,11 +300,12 @@ export default function HomePage() {
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
   const [isVerifyingDelegate, setIsVerifyingDelegate] = useState(false);
+  const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(false);
+  const [isReturningUser, setIsReturningUser] = useState(false);
   const [showInsufficientFundsModal, setShowInsufficientFundsModal] = useState(false);
   const verifyingRef = useRef<string | null>(null); // Track which address is being verified
 
-  // Calculate total PnL for open trades (for warning banner)
-  // Applies zfp tiered performance fee when profitable (matches PnLScreen/TradeCard)
+  // Calculate total gross PnL for open trades (for warning banner)
   const totalOpenPnL = React.useMemo(() => {
     return openTrades.reduce((sum, trade) => {
       try {
@@ -291,18 +314,11 @@ export default function HomePage() {
         if (!trade.openPrice || !Number.isFinite(trade.openPrice) || trade.openPrice <= 0) return sum;
         if (!Number.isFinite(trade.collateral) || !Number.isFinite(trade.leverage)) return sum;
 
-        const grossPnlP = trade.isLong
-          ? ((currentPrice - trade.openPrice) / trade.openPrice) * trade.leverage * 100
-          : ((trade.openPrice - currentPrice) / trade.openPrice) * trade.leverage * 100;
-        const grossPnl = (grossPnlP / 100) * trade.collateral;
-        let pnl: number;
-        if (grossPnl > 0) {
-          const feeP = pnlFeeByGrossProfitP(grossPnlP, PNL_FEES.tierP, PNL_FEES.feesP);
-          pnl = grossPnl * (1 - feeP / 100);
-        } else {
-          pnl = grossPnl;
-        }
-        return sum + (Number.isFinite(pnl) ? pnl : 0);
+        const positionSize = trade.collateral * trade.leverage;
+        const grossPnl = trade.isLong
+          ? positionSize * (currentPrice - trade.openPrice) / trade.openPrice
+          : positionSize * (trade.openPrice - currentPrice) / trade.openPrice;
+        return sum + (Number.isFinite(grossPnl) ? grossPnl : 0);
       } catch (err) {
         console.warn('[totalOpenPnL] Failed for trade:', trade.pairIndex, trade.tradeIndex, err);
         return sum;
@@ -377,9 +393,10 @@ export default function HomePage() {
         leverage: currentSelection.leverage.value,
         isLong: currentSelection.direction.isLong,
         openPrice: prices[`${currentSelection.asset.name}/USD`]?.price || 0,
-        takeProfitMultiplier: calculate200PercentGainMultiplier(
+        takeProfitMultiplier: calculateTakeProfitMultiplier(
           currentSelection.direction.isLong,
-          currentSelection.leverage.value
+          currentSelection.leverage.value,
+          useTradeStore.getState().settings.takeProfitPercent
         ),
       });
       const txEncodeTime = Date.now() - txBuildStart;
@@ -417,6 +434,7 @@ export default function HomePage() {
       
       // Add to pending trades for optimistic update
       addPendingTradeHash(hash);
+      addPendingOpenTxHash(hash);
       
       setStage('executing');
     } catch (err) {
@@ -435,6 +453,7 @@ export default function HomePage() {
     setStage,
     setError,
     addPendingTradeHash,
+    addPendingOpenTxHash,
     startConfirmation,
   ]);
 
@@ -454,6 +473,13 @@ export default function HomePage() {
       // Initialize with current selection as fallback
       if (storeState.selection && !storeState.currentTrade) {
         // Create a temporary trade object from selection for display
+        const openPrice = prices[`${storeState.selection.asset.name}/USD`]?.price || 0;
+        const tpPercent = storeState.settings.takeProfitPercent ?? 200;
+        const tpPrice = openPrice * calculateTakeProfitMultiplier(
+          storeState.selection.direction.isLong,
+          storeState.selection.leverage.value,
+          tpPercent
+        );
         const tempTrade: Trade = {
           tradeIndex: 0,
           pairIndex: storeState.selection.asset.pairIndex,
@@ -461,8 +487,8 @@ export default function HomePage() {
           collateral: collateral,
           leverage: storeState.selection.leverage.value,
           isLong: storeState.selection.direction.isLong,
-          openPrice: prices[`${storeState.selection.asset.name}/USD`]?.price || 0,
-          tp: 0,
+          openPrice,
+          tp: tpPrice,
           sl: 0,
           liquidationPrice: 0,
           openedAt: Math.floor(Date.now() / 1000),
@@ -473,6 +499,8 @@ export default function HomePage() {
           currentPrice: tempTrade.openPrice,
           pnl: 0,
           pnlPercentage: 0,
+          grossPnl: 0,
+          grossPnlPercentage: 0,
         });
       }
       setStage('pnl');
@@ -489,6 +517,13 @@ export default function HomePage() {
       if (currentState.txHash) {
         // Found txHash, show PnL screen immediately
         if (currentState.selection && !currentState.currentTrade) {
+          const openPrice = prices[`${currentState.selection.asset.name}/USD`]?.price || 0;
+          const tpPercent = currentState.settings.takeProfitPercent ?? 200;
+          const tpPrice = openPrice * calculateTakeProfitMultiplier(
+            currentState.selection.direction.isLong,
+            currentState.selection.leverage.value,
+            tpPercent
+          );
           const tempTrade: Trade = {
             tradeIndex: 0,
             pairIndex: currentState.selection.asset.pairIndex,
@@ -496,8 +531,8 @@ export default function HomePage() {
             collateral: collateral,
             leverage: currentState.selection.leverage.value,
             isLong: currentState.selection.direction.isLong,
-            openPrice: prices[`${currentState.selection.asset.name}/USD`]?.price || 0,
-            tp: 0,
+            openPrice,
+            tp: tpPrice,
             sl: 0,
             liquidationPrice: 0,
             openedAt: Math.floor(Date.now() / 1000),
@@ -508,6 +543,8 @@ export default function HomePage() {
             currentPrice: tempTrade.openPrice,
             pnl: 0,
             pnlPercentage: 0,
+            grossPnl: 0,
+            grossPnlPercentage: 0,
           });
         }
         setStage('pnl');
@@ -520,6 +557,13 @@ export default function HomePage() {
     // The useOpenTrades hook will continue polling in the background
     const finalState = useTradeStore.getState();
     if (finalState.selection) {
+      const openPrice = prices[`${finalState.selection.asset.name}/USD`]?.price || 0;
+      const tpPercent = finalState.settings.takeProfitPercent ?? 200;
+      const tpPrice = openPrice * calculateTakeProfitMultiplier(
+        finalState.selection.direction.isLong,
+        finalState.selection.leverage.value,
+        tpPercent
+      );
       const tempTrade: Trade = {
         tradeIndex: 0,
         pairIndex: finalState.selection.asset.pairIndex,
@@ -527,8 +571,8 @@ export default function HomePage() {
         collateral: collateral,
         leverage: finalState.selection.leverage.value,
         isLong: finalState.selection.direction.isLong,
-        openPrice: prices[`${finalState.selection.asset.name}/USD`]?.price || 0,
-        tp: 0,
+        openPrice,
+        tp: tpPrice,
         sl: 0,
         liquidationPrice: 0,
         openedAt: Math.floor(Date.now() / 1000),
@@ -539,6 +583,8 @@ export default function HomePage() {
         currentPrice: tempTrade.openPrice,
         pnl: 0,
         pnlPercentage: 0,
+        grossPnl: 0,
+        grossPnlPercentage: 0,
       });
       setStage('pnl');
     } else {
@@ -615,10 +661,20 @@ export default function HomePage() {
       // Save closed trade with current PnL data
       if (userAddress && currentTrade) {
         saveClosedTrade(userAddress, currentTrade, pnlData, { closeTxHash });
+        logTradeCloseByPosition({
+          wallet: userAddress,
+          pairIndex: currentTrade.pairIndex,
+          tradeIndex: currentTrade.tradeIndex,
+          exitPrice: pnlData?.currentPrice,
+          pnl: pnlData?.grossPnl,
+          closedAt: new Date().toISOString(),
+          txHash: closeTxHash,
+          isLiquidated: false,
+        });
       }
       
       // Show success toast with PnL
-      const pnl = pnlData?.pnl ?? 0;
+      const pnl = pnlData?.grossPnl ?? 0;
       const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
       showToast(`Closed! PnL: ${pnlStr}`, 'success');
       
@@ -640,6 +696,19 @@ export default function HomePage() {
   const handleRollAgain = useCallback(() => {
     reset();
   }, [reset]);
+
+  // Warn before closing tab/window when trade is in progress
+  useEffect(() => {
+    const shouldWarn =
+      stage === 'spinning' || stage === 'executing' || isClosing;
+    if (!shouldWarn) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [stage, isClosing]);
 
   // Loading state
   if (!ready) {
@@ -688,10 +757,20 @@ export default function HomePage() {
     );
   }
 
+  // Show loading while checking onboarding status from backend (new device / cleared storage)
+  if (isCheckingOnboarding) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
+        <div className="text-xl sm:text-2xl font-bold text-white mb-4">CHECKING...</div>
+        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   // Authenticated - check onboarding first (only if delegate not set up)
   // If delegate is already set up, skip onboarding (returning user)
-  // Check both state and localStorage to handle initial render correctly
-  const needsOnboarding = userAddress && !delegateStatus.isSetup && !hasCompletedOnboarding(userAddress) && !isOnboardingComplete;
+  // Backend API is source of truth for returning users (new device); localStorage is fast path for same device
+  const needsOnboarding = userAddress && !delegateStatus.isSetup && !isOnboardingComplete;
   if (needsOnboarding) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
@@ -700,7 +779,10 @@ export default function HomePage() {
           <LoginButton />
         </header>
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
-          <OnboardingFlow onComplete={() => setIsOnboardingComplete(true)} />
+          <OnboardingFlow onComplete={() => {
+            setIsReturningUser(false); // New user - they need deposit
+            setIsOnboardingComplete(true);
+          }} />
         </main>
       </div>
     );
@@ -717,7 +799,8 @@ export default function HomePage() {
   }
 
   // After onboarding: prompt to deposit USDC before setup (until they have enough and click Continue)
-  const needsDeposit = isOnboardingComplete && !delegateStatus.isSetup && !isSetupComplete &&
+  // Only for first-time new users - returning users skip deposit
+  const needsDeposit = isOnboardingComplete && !isReturningUser && !delegateStatus.isSetup && !isSetupComplete &&
     (usdcBalance === null || usdcBalance < DEFAULT_COLLATERAL || !isDepositComplete);
   if (needsDeposit) {
     return (
@@ -993,6 +1076,11 @@ export default function HomePage() {
             >
               <Link
                 href="/activity"
+                onClick={(e) => {
+                  if ((stage === 'spinning' || stage === 'executing') && !window.confirm('A trade is in progress. Leave this page anyway?')) {
+                    e.preventDefault();
+                  }
+                }}
                 className="relative p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
                 aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
               >
@@ -1010,6 +1098,11 @@ export default function HomePage() {
               </Link>
               <Link
                 href="/settings"
+                onClick={(e) => {
+                  if ((stage === 'spinning' || stage === 'executing') && !window.confirm('A trade is in progress. Leave this page anyway?')) {
+                    e.preventDefault();
+                  }
+                }}
                 className="p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
                 aria-label="Settings"
               >

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.models.schemas import HealthResponse
-from app.routers import delegate, trades, prices, access, admin, avantis_proxy
+from app.routers import delegate, trades, prices, access, admin, avantis_proxy, activity
 
 
 settings = get_settings()
@@ -52,6 +52,11 @@ app.include_router(delegate.router)
 app.include_router(trades.router)
 app.include_router(trades.trades_router)
 app.include_router(prices.router)
+# Activity tracking (requires DATABASE_URL)
+if settings.database_url:
+    app.include_router(activity.trades_log_router)
+    app.include_router(activity.activity_router)
+
 # Access codes require DATABASE_URL; when missing, use bypass (open access for dev)
 if settings.database_url:
     app.include_router(access.router)
