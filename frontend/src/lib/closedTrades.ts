@@ -43,6 +43,7 @@ export function saveClosedTrade(
     txHash?: `0x${string}`;
     closeTxHash?: `0x${string}`;
     isLiquidated?: boolean;
+    isTakeProfitHit?: boolean;
   }
 ): void {
   if (typeof window === 'undefined' || !address) {
@@ -60,15 +61,18 @@ export function saveClosedTrade(
   }
 
   try {
+    const grossPnl = Number.isFinite(Number(pnlData.grossPnl)) ? Number(pnlData.grossPnl) : 0;
+    const grossPnlPct = Number.isFinite(Number(pnlData.grossPnlPercentage)) ? Number(pnlData.grossPnlPercentage) : 0;
     const closedTrade: ClosedTrade = {
       ...trade,
       closedAt: Date.now(),
-      finalPnL: pnlData.pnl,
-      finalPnLPercentage: pnlData.pnlPercentage,
-      closePrice: pnlData.currentPrice,
+      finalPnL: grossPnl,
+      finalPnLPercentage: grossPnlPct,
+      closePrice: Number.isFinite(Number(pnlData.currentPrice)) ? Number(pnlData.currentPrice) : trade.openPrice,
       txHash: options?.txHash,
       closeTxHash: options?.closeTxHash,
       isLiquidated: options?.isLiquidated ?? false,
+      isTakeProfitHit: options?.isTakeProfitHit ?? false,
     };
 
     const existing = loadClosedTrades(address);

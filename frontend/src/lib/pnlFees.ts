@@ -65,3 +65,43 @@ export function pnlFeeByGrossProfitP(
 
   return feesP[lastIdx];
 }
+
+/**
+ * Solve for gross PnL % that yields a target net PnL % (after ZFP fees).
+ * netPnlP = grossPnlP × (1 - feeP(grossPnlP) / 100)
+ * Solves iteratively since feeP depends on grossPnlP (tier is gross-based).
+ *
+ * @param targetNetPnlP - Desired net PnL % (e.g. 50 = user sees 50% profit when TP hits)
+ * @param tierP - Fee tier thresholds (gross ROI % at each tier)
+ * @param feesP - Fee % at each tier (taken from gross profit)
+ * @returns Gross PnL % needed to achieve target net %
+ */
+export function grossPnlPForNetPnlP(
+  targetNetPnlP: number,
+  tierP: readonly number[],
+  feesP: readonly number[]
+): number {
+  if (!isFiniteNumber(targetNetPnlP) || targetNetPnlP <= 0) {
+    return targetNetPnlP;
+  }
+  if (tierP.length !== feesP.length || tierP.length === 0) {
+    return targetNetPnlP;
+  }
+
+  // Fixed-point iteration: gross = targetNet / (1 - feeP(gross)/100)
+  let gross = targetNetPnlP;
+  for (let i = 0; i < 50; i++) {
+    const feeP = pnlFeeByGrossProfitP(gross, tierP, feesP);
+    const factor = 1 - feeP / 100;
+    if (factor <= 0 || !Number.isFinite(factor)) {
+      return gross;
+    }
+    const nextGross = targetNetPnlP / factor;
+    if (!Number.isFinite(nextGross)) return gross;
+    if (Math.abs(nextGross - gross) < 0.01) {
+      return nextGross;
+    }
+    gross = nextGross;
+  }
+  return gross;
+}

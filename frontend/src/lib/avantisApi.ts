@@ -94,7 +94,7 @@ function isFinitePositive(n: number): boolean {
 function calculatePnL(
   pos: AvantisPosition,
   currentPrice: number
-): { pnl: number; pnlPercentage: number } {
+): { pnl: number; pnlPercentage: number; grossPnl: number; grossPnlPercentage: number } {
   const collateral = Number(pos.collateral) / USDC_DECIMALS;
   const leverage = Number(pos.leverage) / LEVERAGE_DECIMALS;
   const openPrice = Number(pos.openPrice) / PRICE_DECIMALS;
@@ -102,22 +102,22 @@ function calculatePnL(
 
   if (!isFinitePositive(openPrice)) {
     console.warn('[calculatePnL] Invalid openPrice:', pos.openPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
-    return { pnl: 0, pnlPercentage: 0 };
+    return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
   if (!Number.isFinite(collateral) || collateral <= 0) {
     console.warn('[calculatePnL] Invalid collateral:', pos.collateral, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
-    return { pnl: 0, pnlPercentage: 0 };
+    return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
   if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
     console.warn('[calculatePnL] Invalid currentPrice:', currentPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
-    return { pnl: 0, pnlPercentage: 0 };
+    return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
   if (!Number.isFinite(leverage) || leverage <= 0) {
     console.warn('[calculatePnL] Invalid leverage:', pos.leverage, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
-    return { pnl: 0, pnlPercentage: 0 };
+    return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
   const positionSize = collateral * leverage;
@@ -139,8 +139,9 @@ function calculatePnL(
 
   const pnlPercentage = Number.isFinite(pnl) ? (pnl / collateral) * 100 : 0;
   const safePnl = Number.isFinite(pnl) ? pnl : 0;
+  const grossPnlPercentage = Number.isFinite(grossPnl) ? (grossPnl / collateral) * 100 : 0;
 
-  return { pnl: safePnl, pnlPercentage };
+  return { pnl: safePnl, pnlPercentage, grossPnl, grossPnlPercentage };
 }
 
 function isNetworkError(error: unknown): boolean {
@@ -281,12 +282,12 @@ export async function fetchPnL(
         console.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL uses open price as fallback`);
       }
 
-      const { pnl, pnlPercentage } = calculatePnL(pos, currentPrice);
+      const { pnl, pnlPercentage, grossPnl, grossPnlPercentage } = calculatePnL(pos, currentPrice);
 
-      results.push({ trade, currentPrice, pnl, pnlPercentage });
+      results.push({ trade, currentPrice, pnl, pnlPercentage, grossPnl, grossPnlPercentage });
     } catch (calcErr) {
       console.error(`[fetchPnL] Failed to compute PnL for pairIndex=${trade.pairIndex} index=${trade.tradeIndex}:`, calcErr);
-      results.push({ trade, currentPrice: trade.openPrice, pnl: 0, pnlPercentage: 0 });
+      results.push({ trade, currentPrice: trade.openPrice, pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 });
     }
   }
   return results;
@@ -371,9 +372,17 @@ export async function fetchClosedTrades(
       const pair = asset ? asset.name + '/USD' : `PAIR_${t.pairIndex}/USD`;
       
       // Avantis history: closed collateral is args.positionSizeUSDC (fallback to initialPosToken)
-      const collateral = args.positionSizeUSDC > 0 ? args.positionSizeUSDC : t.initialPosToken;
-      const finalPnL = item._grossPnl;
-      const finalPnLPercentage = collateral > 0 ? (finalPnL / collateral) * 100 : 0;
+      const collateral = Math.max(args.positionSizeUSDC > 0 ? args.positionSizeUSDC : t.initialPosToken, 1e-10);
+      // _grossPnl can be missing in some API responses; fallback: usdcSentToTrader - collateral
+      const rawGrossPnl = (item as { _grossPnl?: number })._grossPnl;
+      const finalPnL = Number.isFinite(Number(rawGrossPnl))
+        ? Number(rawGrossPnl)
+        : (Number.isFinite(args.usdcSentToTrader) && Number.isFinite(collateral)
+          ? args.usdcSentToTrader - collateral
+          : 0);
+      const finalPnLPercentage = Number.isFinite(finalPnL / collateral)
+        ? (finalPnL / collateral) * 100
+        : 0;
       
       // _feeInfo can be absent in some records. Treat missing as not-liquidated.
       const isLiquidated = (args._feeInfo?.liquidationFee ?? 0) > 0;

@@ -4,17 +4,23 @@ import React, { useEffect, useState } from 'react';
 import { useFundWallet, usePrivy, useWallets } from '@privy-io/react-auth';
 import { useRouter } from 'next/navigation';
 import { base } from 'viem/chains';
-import { useTradeStore } from '@/store/tradeStore';
 import {
   COLLATERAL_PRESETS,
   MAX_COLLATERAL,
   MIN_COLLATERAL,
+  TAKE_PROFIT_PRESETS,
+  MAX_TAKE_PROFIT,
+  MIN_TAKE_PROFIT,
   formatWalletAddress,
   loadSettings,
   saveSettings,
 } from '@/lib/settings';
 import { loadStats } from '@/lib/stats';
 import { AvantisFooter } from '@/components/AvantisFooter';
+import { SettingsTooltip } from '@/components/SettingsTooltip';
+import { useUsdcBalance } from '@/hooks/useUsdcBalance';
+import { useWithdrawUsdc } from '@/hooks/useWithdrawUsdc';
+import { useTradeStore } from '@/store/tradeStore';
 import type { Settings } from '@/types';
 
 export default function SettingsPage() {
@@ -22,13 +28,20 @@ export default function SettingsPage() {
   const { user } = usePrivy();
   const { fundWallet } = useFundWallet();
   const { wallets } = useWallets();
-  const { userAddress, setSettings, setCollateral, setTradeStats } = useTradeStore();
-  // Use lazy initialization to avoid setState in effect
+  const { userAddress, setSettings, setCollateral, setTradeStats, setTxHash } = useTradeStore();
   const [localSettings, setLocalSettings] = useState<Settings>(() => loadSettings());
   const [customInputValue, setCustomInputValue] = useState<string>('');
   const [customInputError, setCustomInputError] = useState<string | null>(null);
+  const [customTpInputValue, setCustomTpInputValue] = useState<string>('');
+  const [customTpInputError, setCustomTpInputError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('');
+  const [withdrawToAddress, setWithdrawToAddress] = useState<string>('');
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+
+  const { balance: privyBalance, isLoading: privyBalanceLoading, refetch: refetchPrivyBalance } = useUsdcBalance();
+  const { withdraw, isPending: isWithdrawPending, error: withdrawApiError, clearError: clearWithdrawError } = useWithdrawUsdc();
 
   const walletAddress = user?.wallet?.address ?? userAddress ?? '';
   const displayAddress = formatWalletAddress(walletAddress, 6, 4);
@@ -63,17 +76,46 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    // Sync loaded settings to store (localSettings already initialized)
     const loadedSettings = loadSettings();
     setSettings(loadedSettings);
     setCollateral(loadedSettings.collateral);
-    
     const loadedStats = loadStats(userAddress ?? undefined);
     setTradeStats(loadedStats);
   }, [userAddress, setSettings, setCollateral, setTradeStats]);
 
   const handleCollateralChange = (value: number) => {
     persistSettings({ ...localSettings, collateral: value });
+  };
+
+  const handleTakeProfitChange = (value: number) => {
+    persistSettings({ ...localSettings, takeProfitPercent: value });
+  };
+
+  const handleCustomTpInput = (value: string) => {
+    setCustomTpInputValue(value);
+    setCustomTpInputError(null);
+    if (value === '') return;
+    if (!/^\d+$/.test(value)) {
+      setCustomTpInputError('Whole numbers only');
+      return;
+    }
+    const num = parseInt(value, 10);
+    if (num < MIN_TAKE_PROFIT) {
+      setCustomTpInputError(`Min ${MIN_TAKE_PROFIT}%`);
+      return;
+    }
+    if (num > MAX_TAKE_PROFIT) {
+      setCustomTpInputError(`Max ${MAX_TAKE_PROFIT}%`);
+      return;
+    }
+    handleTakeProfitChange(num);
+  };
+
+  const handleCustomTpBlur = () => {
+    if (customTpInputValue === '' || customTpInputError) {
+      setCustomTpInputValue('');
+      setCustomTpInputError(null);
+    }
   };
 
   const handleAudioToggle = (enabled: boolean) => {
@@ -100,344 +142,288 @@ export default function SettingsPage() {
     try {
       await fundWallet({
         address: walletAddress,
-        options: {
-          chain: base,
-          asset: 'USDC',
-        },
+        options: { chain: base, asset: 'USDC' },
       });
     } catch (error) {
       console.error('Failed to open fund wallet flow:', error);
     }
   };
 
+  const handleWithdrawAmountChange = (value: string) => {
+    setWithdrawAmount(value);
+    setWithdrawError(null);
+    clearWithdrawError();
+  };
+
+  const handleMaxWithdraw = () => {
+    if (privyBalance !== null && privyBalance > 0) {
+      setWithdrawAmount(privyBalance.toFixed(2));
+      setWithdrawError(null);
+      clearWithdrawError();
+    }
+  };
+
+  const handleWithdrawToAddressChange = (value: string) => {
+    setWithdrawToAddress(value);
+    setWithdrawError(null);
+    clearWithdrawError();
+  };
+
+  const handleWithdraw = async () => {
+    if (!walletAddress || !withdrawToAddress.trim()) return;
+    const amount = parseFloat(withdrawAmount);
+    if (Number.isNaN(amount) || amount <= 0) {
+      setWithdrawError('Enter a valid amount');
+      return;
+    }
+    if (privyBalance !== null && amount > privyBalance) {
+      setWithdrawError('Amount exceeds balance');
+      return;
+    }
+    setWithdrawError(null);
+    clearWithdrawError();
+    const txHashResult = await withdraw(amount, withdrawToAddress.trim() as `0x${string}`);
+    if (txHashResult) {
+      setTxHash(txHashResult);
+      setWithdrawAmount('');
+      setWithdrawToAddress('');
+      refetchPrivyBalance();
+    }
+  };
+
+  const withdrawAmountNum = parseFloat(withdrawAmount);
+  const isWithdrawToAddressValid = withdrawToAddress.trim().length > 0 && /^0x[a-fA-F0-9]{40}$/.test(withdrawToAddress.trim());
+  const isWithdrawValid =
+    !Number.isNaN(withdrawAmountNum) &&
+    withdrawAmountNum > 0 &&
+    privyBalance !== null &&
+    withdrawAmountNum <= privyBalance &&
+    isWithdrawToAddressValid;
+
   const handleCustomCollateralInput = (value: string) => {
     setCustomInputValue(value);
     setCustomInputError(null);
-
-    // Allow empty input (user clearing the field)
-    if (value === '') {
-      return;
-    }
-
-    // Check for non-numeric characters
+    if (value === '') return;
     if (!/^\d+$/.test(value)) {
       setCustomInputError('Whole numbers only');
       return;
     }
-
     const num = parseInt(value, 10);
-
-    // Validate range
     if (num < MIN_COLLATERAL) {
-      setCustomInputError(`Minimum $${MIN_COLLATERAL}`);
+      setCustomInputError(`Min $${MIN_COLLATERAL}`);
       return;
     }
-
     if (num > MAX_COLLATERAL) {
-      setCustomInputError(`Maximum $${MAX_COLLATERAL}`);
+      setCustomInputError(`Max $${MAX_COLLATERAL}`);
       return;
     }
-
-    // Valid input - apply it
     handleCollateralChange(num);
   };
 
   const handleCustomCollateralBlur = () => {
-    // On blur, if the input is empty or invalid, reset to current collateral
     if (customInputValue === '' || customInputError) {
       setCustomInputValue('');
       setCustomInputError(null);
     }
   };
 
-  // Check if current collateral matches a preset
   const isCustomValue = !COLLATERAL_PRESETS.some((preset) => preset === localSettings.collateral);
 
+  const btnClass = 'py-2 px-3 text-xs font-black uppercase border-2 border-[#CCFF00] text-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black';
+  const btnPrimaryClass = 'py-2 px-3 text-xs font-black uppercase border-2 border-black text-black bg-[#CCFF00] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black';
+
   return (
-    <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full">
-      {/* Header - Improved consistency */}
-      <header className="w-full mb-6 sm:mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <button
-            onClick={handleBack}
-            className="text-[#CCFF00] text-sm sm:text-base font-bold touch-manipulation min-h-[44px] flex items-center px-3 sm:px-4 py-2 border-4 border-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
-            style={{ boxShadow: '4px 4px 0px 0px rgba(204, 255, 0, 0.5)' }}
-            aria-label="Go back"
-          >
-            <svg
-              className="w-4 h-4 mr-1.5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
-            <span className="whitespace-nowrap">BACK</span>
-          </button>
-          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-black uppercase tracking-tight">Settings</h1>
-          <div className="w-16 sm:w-20" />
-        </div>
+    <div className="h-dvh min-h-dvh bg-black flex flex-col px-3 sm:px-4 py-3 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full overflow-hidden">
+      {/* Compact header */}
+      <header className="shrink-0 flex items-center justify-between mb-3">
+        <button
+          onClick={handleBack}
+          className={`${btnClass} min-w-[88px]`}
+          style={{ boxShadow: '3px 3px 0px 0px rgba(204, 255, 0, 0.5)' }}
+          aria-label="Go back"
+        >
+          BACK
+        </button>
+        <h1 className="text-[#CCFF00] text-lg font-black uppercase tracking-tight">Settings</h1>
+        <span className={`text-[10px] font-bold uppercase ${saveStatus === 'saved' ? 'text-[#CCFF00]' : 'text-white/40'}`} aria-live="polite" title={saveStatus === 'saved' ? 'Settings saved to device' : 'Settings synced with app'}>
+          {saveStatus === 'saved' ? 'Saved' : 'Synced'}
+        </span>
       </header>
 
-      {/* Settings content */}
-      <main className="flex-1 flex flex-col gap-8 sm:gap-10 max-w-md mx-auto w-full overflow-y-auto min-h-0 pb-4">
-        {/* ACCOUNT */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-white text-lg sm:text-xl font-black uppercase tracking-wide">Account</h2>
-            <span
-              className={`text-xs sm:text-sm font-bold uppercase tracking-wide transition-colors ${
-                saveStatus === 'saved' ? 'text-[#CCFF00]' : 'text-white/40'
-              }`}
-              aria-live="polite"
-            >
-              {saveStatus === 'saved' ? 'Saved' : 'Synced'}
-            </span>
+      {/* Variation C: Dashboard - single page, no scroll */}
+      <main className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+        {/* Hero stats strip: Balance | Stake | TP */}
+        <div className="brutal-card p-3 grid grid-cols-3 gap-2 shrink-0">
+          <div className="text-center border-r-2 border-white/10 pr-2">
+            <SettingsTooltip text="USDC balance in your Privy wallet. Available for trading or withdrawal." inline>
+              <p className="text-[#CCFF00] text-[10px] uppercase font-bold">Balance</p>
+            </SettingsTooltip>
+            {!walletAddress ? (
+              <p className="text-white/40 text-xs font-bold">—</p>
+            ) : privyBalanceLoading ? (
+              <p className="text-white/40 text-sm font-black animate-pulse">...</p>
+            ) : (
+              <p className="text-[#CCFF00] text-base sm:text-lg font-black leading-none">${privyBalance !== null ? privyBalance.toFixed(2) : '0'}</p>
+            )}
+          </div>
+          <div className="text-center border-r-2 border-white/10 pr-2">
+            <SettingsTooltip text="Your default bet per spin. The USDC you put at risk when opening a trade." inline>
+              <p className="text-[#CCFF00] text-[10px] uppercase font-bold">Stake</p>
+            </SettingsTooltip>
+            <p className="text-[#CCFF00] text-base sm:text-lg font-black leading-none">${localSettings.collateral}</p>
+          </div>
+          <div className="text-center">
+            <SettingsTooltip text="Take Profit %. Net profit target (after fees) for new trades. Position closes automatically when reached." inline>
+              <p className="text-[#CCFF00] text-[10px] uppercase font-bold">TP %</p>
+            </SettingsTooltip>
+            <p className="text-[#CCFF00] text-base sm:text-lg font-black leading-none">{localSettings.takeProfitPercent}%</p>
+          </div>
+        </div>
+
+        {/* Wallet + Actions row */}
+        <div className="brutal-card p-3 space-y-2 shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1" title="Your Privy embedded wallet address. Holds USDC for trading.">
+              <p className="text-[#CCFF00] text-[10px] uppercase font-bold truncate">{displayAddress || '--'}</p>
+              <span className="text-[10px] font-bold uppercase border border-[#CCFF00]/50 text-[#CCFF00] bg-[#CCFF00]/10 px-1.5 py-0.5" title="Privy embedded wallet – gasless, secure, no seed phrase.">{walletProviderLabel}</span>
+            </div>
+            <div className="flex gap-1.5 shrink-0">
+              <button onClick={handleCopyWalletAddress} disabled={!walletAddress} className={btnClass} title="Copy full wallet address">
+                {copyStatus === 'copied' ? 'Copied' : 'Copy'}
+              </button>
+              <button onClick={handleFundWallet} disabled={!walletAddress} className={btnPrimaryClass} title="Add USDC to your wallet via Privy">
+                Fund
+              </button>
+            </div>
           </div>
 
-          <div className="brutal-card p-4 sm:p-5 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-white/50 text-xs uppercase font-bold tracking-wide">Wallet Address</p>
-                <p className="text-white text-lg sm:text-xl font-black mt-1 break-all">{displayAddress || '--'}</p>
+          {/* Withdraw - compact 2 rows */}
+          {walletAddress && (
+            <div className="pt-2 border-t border-white/10 space-y-1.5">
+              <div className="flex gap-1.5">
+                <div className="relative flex-1 min-w-0">
+                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-white/45 font-bold text-sm">$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={withdrawAmount}
+                    onChange={(e) => handleWithdrawAmountChange(e.target.value)}
+                    placeholder="0"
+                    className="w-full py-2 pl-6 pr-2 text-sm font-black font-mono bg-[#11151b] text-white placeholder-white/25 border-2 border-white/15 focus:outline-none focus:ring-2 focus:ring-[#CCFF00]"
+                    aria-label="Amount to withdraw"
+                  />
+                </div>
+                <button onClick={handleMaxWithdraw} disabled={privyBalance === null || privyBalance <= 0} className={btnClass} title="Use your full available balance">
+                  Max
+                </button>
+                <button onClick={handleWithdraw} disabled={!isWithdrawValid || isWithdrawPending} className={btnPrimaryClass} title="Send USDC to the recipient address. Gas sponsored.">
+                  {isWithdrawPending ? '…' : 'Send'}
+                </button>
               </div>
-              <span className="px-2.5 py-1 text-xs font-bold uppercase border-2 border-[#CCFF00]/50 text-[#CCFF00] bg-[#CCFF00]/10">
-                {walletProviderLabel}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {linkedAccountTypes.length > 0 ? (
-                linkedAccountTypes.map((accountType) => (
-                  <span
-                    key={accountType}
-                    className="px-2.5 py-1 text-[11px] sm:text-xs font-bold uppercase border-2 border-white/20 text-white/70 bg-white/5"
-                  >
-                    {accountType.replace(/_/g, ' ')}
-                  </span>
-                ))
-              ) : (
-                <span className="px-2.5 py-1 text-[11px] sm:text-xs font-bold uppercase border-2 border-white/20 text-white/70 bg-white/5">
-                  Wallet login
-                </span>
+              <input
+                type="text"
+                value={withdrawToAddress}
+                onChange={(e) => handleWithdrawToAddressChange(e.target.value)}
+                placeholder="To: 0x..."
+                className="w-full py-2 px-2 text-xs font-mono bg-[#11151b] text-white placeholder-white/25 border-2 border-white/15 focus:outline-none focus:ring-2 focus:ring-[#CCFF00]"
+                aria-label="Recipient address"
+              />
+              {(withdrawError || withdrawApiError) && (
+                <p className="text-[#FF006E] text-[10px] font-bold" role="alert">{withdrawError || withdrawApiError}</p>
               )}
             </div>
+          )}
+        </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <button
-                onClick={handleCopyWalletAddress}
-                disabled={!walletAddress}
-                className="py-3 px-4 text-sm sm:text-base font-black uppercase border-4 border-[#CCFF00] text-[#CCFF00] bg-black hover:bg-[#CCFF00] hover:text-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
-              >
-                {copyStatus === 'copied' ? 'Copied' : 'Copy address'}
-              </button>
-              <button
-                onClick={handleFundWallet}
-                disabled={!walletAddress}
-                className="py-3 px-4 text-sm sm:text-base font-black uppercase border-4 border-black text-black bg-[#CCFF00] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
-              >
-                Fund wallet
-              </button>
+        {/* Collateral + Take Profit - compact grid */}
+        <div className="brutal-card p-3 space-y-2 shrink-0">
+          <div className="flex items-center justify-between">
+            <SettingsTooltip label="Collateral" text="The margin backing your leveraged position. Same as Stake – sets position size (Collateral × Leverage)." />
+            <div className="relative w-16">
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-white/45 font-bold text-xs">$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={customInputValue}
+                onChange={(e) => handleCustomCollateralInput(e.target.value)}
+                onBlur={handleCustomCollateralBlur}
+                placeholder={String(localSettings.collateral)}
+                className={`w-full py-1.5 pl-5 pr-1 text-xs font-black font-mono bg-[#11151b] text-white placeholder-white/25 border focus:outline-none focus:ring-2 focus:ring-[#CCFF00] ${customInputError ? 'border-[#FF006E]' : 'border-white/15'}`}
+                aria-label="Custom collateral"
+              />
             </div>
           </div>
-        </section>
-        
-        {/* COLLATERAL SIZE - Control panel redesign */}
-        <section className="space-y-4">
-          <div className="flex items-end justify-between">
-            <h2 className="text-white text-lg sm:text-xl font-black uppercase tracking-wide">Collateral Size</h2>
-            <div className="text-[11px] sm:text-xs uppercase tracking-widest text-white/40 font-bold">Trade sizing</div>
-          </div>
-
-          <div className="rounded-sm border-2 border-[#CCFF00]/30 bg-linear-to-b from-[#0d1117] to-[#090c10] p-4 sm:p-5 shadow-[0_0_0_1px_rgba(204,255,0,0.12),0_14px_40px_rgba(0,0,0,0.45)] space-y-4">
-            <div className="rounded-sm border border-[#CCFF00]/25 bg-black/60 px-4 py-3">
-              <p className="text-[11px] sm:text-xs uppercase tracking-[0.2em] text-[#CCFF00]/65 font-bold">Current Stake</p>
-              <div className="mt-1 flex items-end justify-between">
-                <p className="text-[#CCFF00] text-4xl sm:text-5xl font-black leading-none">${localSettings.collateral}</p>
-                <p className="text-white/40 text-xs sm:text-sm font-bold uppercase">USDC</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2.5 sm:gap-3">
+          <div className="grid grid-cols-4 gap-1">
             {COLLATERAL_PRESETS.map((preset) => {
               const isSelected = localSettings.collateral === preset;
               return (
                 <button
                   key={preset}
-                  onClick={() => {
-                    handleCollateralChange(preset);
-                    setCustomInputValue('');
-                    setCustomInputError(null);
-                  }}
-                  className={`
-                    relative overflow-hidden py-3 sm:py-4 text-sm sm:text-base font-black touch-manipulation min-h-[56px] sm:min-h-[64px]
-                    border-2 transition-all font-mono
-                    focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black
-                    ${isSelected
-                      ? 'bg-[#CCFF00] text-black border-[#CCFF00] shadow-[0_0_20px_rgba(204,255,0,0.28)]'
-                      : 'bg-[#151a21] text-white border-white/15 hover:border-[#CCFF00]/40 hover:bg-[#1b212a] hover:-translate-y-px'
-                    }
-                  `}
+                  onClick={() => { handleCollateralChange(preset); setCustomInputValue(''); setCustomInputError(null); }}
+                  className={`py-2 text-xs font-black touch-manipulation border-2 transition-all ${isSelected ? 'bg-[#CCFF00] text-black border-[#CCFF00]' : 'bg-[#151a21] text-white border-white/15 hover:border-[#CCFF00]/40'}`}
                   aria-pressed={isSelected}
-                  aria-label={`Set collateral to $${preset}`}
                 >
                   ${preset}
                 </button>
               );
             })}
-            </div>
-
-            {/* Custom Collateral Input */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-white/70 text-xs sm:text-sm font-bold uppercase tracking-wide">
-                  Custom Amount
-                </label>
-                <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold uppercase tracking-wide text-white/45">
-                  <span>Min ${MIN_COLLATERAL}</span>
-                  <span>•</span>
-                  <span>Max ${MAX_COLLATERAL}</span>
-                </div>
-              </div>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/45 font-black text-lg">$</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={customInputValue}
-                  onChange={(e) => handleCustomCollateralInput(e.target.value)}
-                  onBlur={handleCustomCollateralBlur}
-                  placeholder={isCustomValue ? String(localSettings.collateral) : 'Type amount'}
-                  className={`
-                    w-full rounded-sm py-3.5 sm:py-4 pl-9 pr-4 text-lg sm:text-xl font-black font-mono
-                    bg-[#11151b] text-white placeholder-white/25
-                    border-2 transition-all
-                    focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black
-                    ${customInputError
-                      ? 'border-[#FF006E] shadow-[0_0_0_1px_rgba(255,0,110,0.2)]'
-                      : isCustomValue
-                        ? 'border-[#CCFF00] shadow-[0_0_0_1px_rgba(204,255,0,0.15)]'
-                        : 'border-white/15'
-                    }
-                  `}
-                  aria-label="Enter custom collateral amount"
-                  aria-describedby={customInputError ? 'collateral-error' : 'collateral-hint'}
-                />
-              </div>
-            </div>
-            {customInputError ? (
-              <p id="collateral-error" className="text-[#FF006E] text-xs sm:text-sm font-bold" role="alert">
-                {customInputError}
-              </p>
-            ) : (
-              <p id="collateral-hint" className="text-white/40 text-xs sm:text-sm">
-                Whole numbers only. Updates instantly.
-              </p>
-            )}
           </div>
-        </section>
+        </div>
 
-        {/* AUDIO - Segmented switch redesign */}
-        <section className="space-y-4">
-          <div className="flex items-end justify-between">
-            <h2 className="text-white text-lg sm:text-xl font-black uppercase tracking-wide">Audio</h2>
-            <div className="text-[11px] sm:text-xs uppercase tracking-widest text-white/40 font-bold">Output control</div>
+        <div className="brutal-card p-3 space-y-2 shrink-0">
+          <div className="flex items-center justify-between">
+            <SettingsTooltip label="Take Profit %" text="Net profit % (after fees) to auto-close. Applied to all new trades. Min 50%, max 500%." />
+            <input
+              type="text"
+              inputMode="numeric"
+              value={customTpInputValue}
+              onChange={(e) => handleCustomTpInput(e.target.value)}
+              onBlur={handleCustomTpBlur}
+              placeholder={String(localSettings.takeProfitPercent)}
+              className={`w-14 py-1.5 px-2 text-xs font-black font-mono bg-[#11151b] text-white placeholder-white/25 border focus:outline-none focus:ring-2 focus:ring-[#CCFF00] ${customTpInputError ? 'border-[#FF006E]' : 'border-white/15'}`}
+              aria-label="Custom TP %"
+            />
           </div>
-          
-          {/* Sound Effects Toggle */}
-          <div className="rounded-sm border-2 border-white/15 bg-linear-to-b from-[#0e1420] to-[#0a0f17] p-4 sm:p-5">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="text-white font-bold text-base sm:text-lg mb-1 uppercase tracking-wide">Sound Effects</div>
-                <div className="text-white/50 text-xs sm:text-sm leading-relaxed">Wheel, flip, win/loss feedback</div>
+          <div className="grid grid-cols-4 gap-1">
+            {TAKE_PROFIT_PRESETS.map((preset) => {
+              const isSelected = localSettings.takeProfitPercent === preset;
+              return (
+                <button
+                  key={preset}
+                  onClick={() => { handleTakeProfitChange(preset); setCustomTpInputValue(''); setCustomTpInputError(null); }}
+                  className={`py-2 text-xs font-black touch-manipulation border-2 transition-all ${isSelected ? 'bg-[#CCFF00] text-black border-[#CCFF00]' : 'bg-[#151a21] text-white border-white/15 hover:border-[#CCFF00]/40'}`}
+                  aria-pressed={isSelected}
+                >
+                  {preset}%
+                </button>
+              );
+            })}
+          </div>
+          {customTpInputError && <p className="text-[#FF006E] text-[10px] font-bold" role="alert">{customTpInputError}</p>}
+        </div>
+
+        {/* Audio - single row */}
+        <div className="brutal-card p-3 shrink-0">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <SettingsTooltip label="SFX" text="Sound effects: wheel spin, flip, win/loss feedback." />
+              <div className="flex border-2 border-[#CCFF00]/35 bg-black/40 p-0.5">
+                <button onClick={() => handleAudioToggle(true)} className={`px-2 py-1 text-[10px] font-black uppercase ${localSettings.audioEnabled ? 'bg-[#CCFF00] text-black' : 'text-[#CCFF00]'}`} aria-pressed={localSettings.audioEnabled}>ON</button>
+                <button onClick={() => handleAudioToggle(false)} className={`px-2 py-1 text-[10px] font-black uppercase ${!localSettings.audioEnabled ? 'bg-[#CCFF00] text-black' : 'text-[#CCFF00]'}`} aria-pressed={!localSettings.audioEnabled}>OFF</button>
               </div>
-              <div className="shrink-0 w-full sm:w-auto rounded-sm border-2 border-[#CCFF00]/35 bg-black/40 p-1 grid grid-cols-2 gap-1 min-w-[160px]">
-                <button
-                  onClick={() => handleAudioToggle(true)}
-                  className={`
-                    py-2.5 px-4 text-sm font-black uppercase transition-all
-                    focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black
-                    ${localSettings.audioEnabled
-                      ? 'bg-[#CCFF00] text-black'
-                      : 'text-[#CCFF00] hover:bg-[#CCFF00]/10'
-                    }
-                  `}
-                  aria-pressed={localSettings.audioEnabled}
-                  aria-label="Enable sound effects"
-                >
-                  ON
-                </button>
-                <button
-                  onClick={() => handleAudioToggle(false)}
-                  className={`
-                    py-2.5 px-4 text-sm font-black uppercase transition-all
-                    focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black
-                    ${!localSettings.audioEnabled
-                      ? 'bg-[#CCFF00] text-black'
-                      : 'text-[#CCFF00] hover:bg-[#CCFF00]/10'
-                    }
-                  `}
-                  aria-pressed={!localSettings.audioEnabled}
-                  aria-label="Disable sound effects"
-                >
-                  OFF
-                </button>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <SettingsTooltip label="Music" text="Background music during gameplay." />
+              <div className="flex border-2 border-[#CCFF00]/35 bg-black/40 p-0.5">
+                <button onClick={() => handleMusicToggle(true)} className={`px-2 py-1 text-[10px] font-black uppercase ${localSettings.musicEnabled ? 'bg-[#CCFF00] text-black' : 'text-[#CCFF00]'}`} aria-pressed={localSettings.musicEnabled}>ON</button>
+                <button onClick={() => handleMusicToggle(false)} className={`px-2 py-1 text-[10px] font-black uppercase ${!localSettings.musicEnabled ? 'bg-[#CCFF00] text-black' : 'text-[#CCFF00]'}`} aria-pressed={!localSettings.musicEnabled}>OFF</button>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Music Toggle */}
-          <div className="rounded-sm border-2 border-white/15 bg-linear-to-b from-[#0e1420] to-[#0a0f17] p-4 sm:p-5">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="text-white font-bold text-base sm:text-lg mb-1 uppercase tracking-wide">Background Music</div>
-                <div className="text-white/50 text-xs sm:text-sm leading-relaxed">Ambient loop during gameplay</div>
-              </div>
-              <div className="shrink-0 w-full sm:w-auto rounded-sm border-2 border-[#CCFF00]/35 bg-black/40 p-1 grid grid-cols-2 gap-1 min-w-[160px]">
-                <button
-                  onClick={() => handleMusicToggle(true)}
-                  className={`
-                    py-2.5 px-4 text-sm font-black uppercase transition-all
-                    focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black
-                    ${localSettings.musicEnabled
-                      ? 'bg-[#CCFF00] text-black'
-                      : 'text-[#CCFF00] hover:bg-[#CCFF00]/10'
-                    }
-                  `}
-                  aria-pressed={localSettings.musicEnabled}
-                  aria-label="Enable background music"
-                >
-                  ON
-                </button>
-                <button
-                  onClick={() => handleMusicToggle(false)}
-                  className={`
-                    py-2.5 px-4 text-sm font-black uppercase transition-all
-                    focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black
-                    ${!localSettings.musicEnabled
-                      ? 'bg-[#CCFF00] text-black'
-                      : 'text-[#CCFF00] hover:bg-[#CCFF00]/10'
-                    }
-                  `}
-                  aria-pressed={!localSettings.musicEnabled}
-                  aria-label="Disable background music"
-                >
-                  OFF
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-
+        <AvantisFooter />
       </main>
-
-      {/* Footer */}
-      <AvantisFooter />
     </div>
   );
 }

@@ -5,10 +5,16 @@ const STORAGE_KEY = 'yolo_settings';
 export const MIN_COLLATERAL = 2;
 export const MAX_COLLATERAL = 1000;
 
+export const DEFAULT_TAKE_PROFIT_PERCENT = 200;
+export const MIN_TAKE_PROFIT = 50;
+export const MAX_TAKE_PROFIT = 500;
+
 export const COLLATERAL_PRESETS = [5, 10, 25, 50, 100, 250, 500, 1000] as const;
+export const TAKE_PROFIT_PRESETS = [100, 150, 200, 300] as const;
 
 export const DEFAULT_SETTINGS: Settings = {
   collateral: DEFAULT_COLLATERAL,
+  takeProfitPercent: DEFAULT_TAKE_PROFIT_PERCENT,
   audioEnabled: true,
   musicEnabled: true, // Music plays by default on landing page
 };
@@ -19,6 +25,10 @@ function parseBoolean(value: unknown, fallback: boolean): boolean {
 
 export function clampCollateral(value: number): number {
   return Math.max(MIN_COLLATERAL, Math.min(MAX_COLLATERAL, value));
+}
+
+export function clampTakeProfitPercent(value: number): number {
+  return Math.max(MIN_TAKE_PROFIT, Math.min(MAX_TAKE_PROFIT, Math.round(value)));
 }
 
 export function formatWalletAddress(address: string, start = 6, end = 4): string {
@@ -43,6 +53,9 @@ export function loadSettings(): Settings {
       collateral: typeof parsed.collateral === 'number'
         ? clampCollateral(parsed.collateral)
         : DEFAULT_COLLATERAL,
+      takeProfitPercent: typeof parsed.takeProfitPercent === 'number'
+        ? clampTakeProfitPercent(parsed.takeProfitPercent)
+        : DEFAULT_TAKE_PROFIT_PERCENT,
       audioEnabled: parseBoolean(parsed.audioEnabled, DEFAULT_SETTINGS.audioEnabled),
       musicEnabled: parseBoolean(parsed.musicEnabled, DEFAULT_SETTINGS.musicEnabled),
     };

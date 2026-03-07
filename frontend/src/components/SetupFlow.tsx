@@ -6,6 +6,7 @@ import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { useBatchedSetup } from '@/hooks/useBatchedSetup';
+import { markOnboardingCompleteApi } from '@/lib/activityApi';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { CONTRACTS, CHAIN_CONFIG } from '@/lib/constants';
 import { debug } from '@/lib/debug';
@@ -261,6 +262,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             setHasCheckedStatus(true);
             setStep('complete');
             setIsCheckingStatus(false);
+            markOnboardingCompleteApi(userAddress); // Backend: record onboarding complete for new-device sync
             onSetupComplete();
             return;
           } else {
@@ -410,6 +412,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
             usdcApproved: true,
           });
           setStep('complete');
+          markOnboardingCompleteApi(userAddress); // Backend: record onboarding complete for new-device sync
           onSetupComplete();
         } else {
           // Delegate setup failed

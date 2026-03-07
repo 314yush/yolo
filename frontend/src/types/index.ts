@@ -68,14 +68,17 @@ export interface ClosedTrade extends Trade {
   txHash?: `0x${string}`; // Transaction hash for opening the trade
   closeTxHash?: `0x${string}`; // Transaction hash for closing the trade
   isLiquidated?: boolean; // Whether the trade was liquidated vs manually closed
+  isTakeProfitHit?: boolean; // Whether the trade was closed by TP target (vs manual close)
 }
 
-// PnL data
+// PnL data - gross PnL shown everywhere; net kept for internal use
 export interface PnLData {
   trade: Trade;
   currentPrice: number;
   pnl: number;
   pnlPercentage: number;
+  grossPnl: number;
+  grossPnlPercentage: number;
 }
 
 // App state
@@ -98,6 +101,7 @@ export interface DelegateStatus {
 // Settings
 export interface Settings {
   collateral: number; // $5-$1000
+  takeProfitPercent: number; // TP % (default 200), applied to all new trades
   audioEnabled: boolean;
   musicEnabled: boolean;
 }

@@ -15,7 +15,7 @@ interface LoginButtonProps {
 export function LoginButton({ label = 'SIGN IN', variant = 'default' }: LoginButtonProps) {
   const { login, logout, authenticated, user, ready } = usePrivy();
   const { fundWallet } = useFundWallet();
-  const { setUserAddress } = useTradeStore();
+  const { setUserAddress, reset } = useTradeStore();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -62,6 +62,12 @@ export function LoginButton({ label = 'SIGN IN', variant = 'default' }: LoginBut
     } catch (error) {
       console.error('Failed to copy address:', error);
     }
+  }
+
+  async function handleLogout() {
+    reset();
+    // Don't clear delegate wallet - same user logging back in should reuse it
+    await logout();
   }
 
   async function handleFundWallet() {
@@ -161,7 +167,7 @@ export function LoginButton({ label = 'SIGN IN', variant = 'default' }: LoginBut
 
         {/* Logout Button - Clean icon-only */}
         <button
-          onClick={logout}
+          onClick={handleLogout}
           className="group p-2.5 bg-black/60 text-white/70 border-2 border-white/20 hover:border-white/40 hover:text-white touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center transition-all duration-200 backdrop-blur-sm"
           style={{
             boxShadow: '2px 2px 0px 0px rgba(255, 255, 255, 0.1)',

@@ -3,6 +3,7 @@
 import React, { memo, useEffect, useMemo, useRef } from 'react';
 import {
   createChart,
+  createSeriesMarkers,
   CrosshairMode,
   IChartApi,
   IPriceLine,
@@ -23,27 +24,35 @@ interface PriceChartProps {
   assetPair: string | null;
   entryPrice?: number | null;
   liquidationPrice?: number | null;
+  targetPrice?: number | null;
   height?: number;
   pnl?: number;
   resolution?: Resolution;
   stream?: PricePoint[];
 }
 
-const STREAM_SYNC_MS = 1000;
-const VISIBLE_POINTS = 300; // 5 minutes at 1-second cadence
-const RIGHT_OFFSET_BARS = 14;
+const STREAM_SYNC_MS = 1000; // 5x faster updates
+const VISIBLE_POINTS = 100; // ~1.7 min – tighter window, more "price running" feel
+const RIGHT_OFFSET_BARS = 2; // Price at right edge – line runs left-to-right across screen
 const VERTICAL_PADDING_RATIO = 0.2;
 const MIN_RANGE_RATIO = 0.0015;
 const RANGE_SMOOTHING_ALPHA = 0.22;
 
+/** Chart Y-axis range presets:
+ * - default: range follows price movement only
+ * - fullReferenceLines: range always includes entry, liquidation, and target (all lines visible)
+ */
+const CHART_RANGE_PRESET = 'default' as 'default' | 'fullReferenceLines';
+
 const COLORS = {
   background: '#0B0F14',
-  scaleText: 'rgba(226, 232, 240, 0.34)',
-  grid: 'rgba(255,255,255,0.025)',
-  lineUp: '#2CCB6F',
-  lineDown: '#F04452',
-  entry: 'rgba(148, 163, 184, 0.40)',
-  liquidation: 'rgba(240, 68, 82, 0.58)',
+  scaleText: 'rgba(226, 232, 240, 0.5)',
+  grid: 'rgba(255,255,255,0.04)',
+  lineUp: '#CCFF00',   // Lime - brand
+  lineDown: '#FF006E', // Hot pink - brand
+  entry: 'rgba(204, 255, 0, 0.6)',
+  liquidation: 'rgba(255, 0, 110, 0.7)',
+  target: 'rgba(204, 255, 0, 0.85)',
 };
 
 function formatPrice(price: number): string {
@@ -68,6 +77,7 @@ function PriceChartComponent({
   assetPair,
   entryPrice = null,
   liquidationPrice = null,
+  targetPrice = null,
   height = 140,
   pnl = 0,
   stream,
@@ -77,6 +87,8 @@ function PriceChartComponent({
   const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const entryLineRef = useRef<IPriceLine | null>(null);
   const liqLineRef = useRef<IPriceLine | null>(null);
+  const targetLineRef = useRef<IPriceLine | null>(null);
+  const seriesMarkersRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const previousLineColorRef = useRef<string>(COLORS.lineUp);
   const lastLogicalRangeToRef = useRef<number | null>(null);
@@ -149,9 +161,10 @@ function PriceChartComponent({
 
     const series = chart.addSeries(LineSeries, {
       color: initialLineColor,
-      lineWidth: 2,
+      lineWidth: 3,
       priceLineVisible: false,
-      lastValueVisible: false,
+      lastValueVisible: true,
+      pointMarkersVisible: false,
       crosshairMarkerVisible: false,
       priceFormat: {
         type: 'price',
@@ -162,6 +175,8 @@ function PriceChartComponent({
     chartRef.current = chart;
     seriesRef.current = series;
     previousLineColorRef.current = initialLineColor;
+    // Type assertion: lightweight-charts Time generic mismatch between series and plugin API
+    seriesMarkersRef.current = createSeriesMarkers(series, []) as NonNullable<typeof seriesMarkersRef.current>;
 
     resizeObserverRef.current = new ResizeObserver(() => {
       const nextWidth = Math.max(container.clientWidth || 0, 200);
@@ -174,11 +189,16 @@ function PriceChartComponent({
         resizeObserverRef.current.disconnect();
         resizeObserverRef.current = null;
       }
+      if (seriesMarkersRef.current) {
+        seriesMarkersRef.current.detach();
+        seriesMarkersRef.current = null;
+      }
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
       entryLineRef.current = null;
       liqLineRef.current = null;
+      targetLineRef.current = null;
       lastLogicalRangeToRef.current = null;
       seriesBufferRef.current = [];
       streamCursorRef.current = 0;
@@ -209,6 +229,15 @@ function PriceChartComponent({
       liqLineRef.current = null;
     }
 
+    if (targetLineRef.current) {
+      try {
+        seriesRef.current.removePriceLine(targetLineRef.current);
+      } catch {
+        // no-op
+      }
+      targetLineRef.current = null;
+    }
+
     if (entryPrice && entryPrice > 0) {
       entryLineRef.current = seriesRef.current.createPriceLine({
         price: entryPrice,
@@ -230,7 +259,18 @@ function PriceChartComponent({
         title: 'Liq',
       });
     }
-  }, [entryPrice, liquidationPrice]);
+
+    if (targetPrice && targetPrice > 0) {
+      targetLineRef.current = seriesRef.current.createPriceLine({
+        price: targetPrice,
+        color: COLORS.target,
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: 'Target',
+      });
+    }
+  }, [entryPrice, liquidationPrice, targetPrice]);
 
   useEffect(() => {
     if (!assetPair || !seriesRef.current || !chartRef.current) return;
@@ -328,8 +368,15 @@ function PriceChartComponent({
       seriesRef.current.setData(visibleData);
 
       const values = visibleData.map(point => point.value);
-      const rawMin = Math.min(...values);
-      const rawMax = Math.max(...values);
+      const refPrices =
+        CHART_RANGE_PRESET === 'fullReferenceLines'
+          ? [entryPrice, liquidationPrice, targetPrice].filter(
+              (p): p is number => typeof p === 'number' && p > 0
+            )
+          : [];
+      const allValues = [...values, ...refPrices];
+      const rawMin = Math.min(...allValues);
+      const rawMax = Math.max(...allValues);
       const latestValue = values[values.length - 1];
       const baseRange = Math.max(rawMax - rawMin, Math.abs(latestValue) * MIN_RANGE_RATIO);
       const paddedMin = rawMin - baseRange * VERTICAL_PADDING_RATIO;
@@ -352,6 +399,17 @@ function PriceChartComponent({
       const latestPoint = visibleData[visibleData.length - 1];
       applyLineColor(latestPoint.value);
 
+      const markerColor = previousLineColorRef.current;
+      seriesMarkersRef.current?.setMarkers([
+        {
+          time: latestPoint.time,
+          position: 'atPriceMiddle' as const,
+          price: latestPoint.value,
+          shape: 'circle' as const,
+          color: markerColor,
+        },
+      ]);
+
       const logicalTo = visibleData.length;
       if (lastLogicalRangeToRef.current !== logicalTo) {
         chartRef.current.timeScale().setVisibleLogicalRange({
@@ -367,7 +425,7 @@ function PriceChartComponent({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [assetPair, stream, pnl, entryPrice]);
+  }, [assetPair, stream, pnl, entryPrice, liquidationPrice, targetPrice]);
 
   useEffect(() => {
     if (!chartRef.current) return;

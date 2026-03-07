@@ -1,14 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { usePrivy } from '@privy-io/react-auth';
-import { useTradeStore } from '@/store/tradeStore';
+import { useEffect, useState, useCallback } from 'react';
+import { useDelegateWallet } from '@/hooks/useDelegateWallet';
 import { publicClient } from '@/lib/viemClient';
 import { CONTRACTS } from '@/lib/constants';
 import { formatUnits } from 'viem';
 
-// ERC20 balanceOf ABI
-const ERC20_ABI = [
+const ERC20_BALANCE_ABI = [
   {
     constant: true,
     inputs: [{ name: '_owner', type: 'address' }],
@@ -18,21 +16,18 @@ const ERC20_ABI = [
   },
 ] as const;
 
-const BALANCE_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const BALANCE_POLL_INTERVAL_MS = 3000;
 
-export function useUsdcBalance() {
-  const { authenticated, user } = usePrivy();
-  const txHash = useTradeStore((s) => s.txHash);
+export function useDelegateUsdcBalance() {
+  const { delegateAddress } = useDelegateWallet();
   const [balance, setBalance] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const prevTxHashRef = useRef<`0x${string}` | null>(null);
 
   const fetchBalance = useCallback(async () => {
-    const userAddress = user?.wallet?.address as `0x${string}` | undefined;
-    
-    if (!authenticated || !userAddress) {
+    if (!delegateAddress) {
       setBalance(null);
+      setError(null);
       return;
     }
 
@@ -42,32 +37,22 @@ export function useUsdcBalance() {
     try {
       const balanceBigInt = (await publicClient.readContract({
         address: CONTRACTS.USDC,
-        abi: ERC20_ABI,
+        abi: ERC20_BALANCE_ABI,
         functionName: 'balanceOf',
-        args: [userAddress],
+        args: [delegateAddress],
       })) as bigint;
 
-      // USDC has 6 decimals
       const balanceFormatted = parseFloat(formatUnits(balanceBigInt, 6));
       setBalance(balanceFormatted);
     } catch (err) {
-      console.error('Error fetching USDC balance:', err);
+      console.error('Error fetching delegate USDC balance:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch balance');
       setBalance(null);
     } finally {
       setIsLoading(false);
     }
-  }, [authenticated, user]);
+  }, [delegateAddress]);
 
-  // Refetch immediately when txHash changes (trade/close submitted)
-  useEffect(() => {
-    if (txHash && txHash !== prevTxHashRef.current) {
-      prevTxHashRef.current = txHash;
-      fetchBalance();
-    }
-  }, [txHash, fetchBalance]);
-
-  // Fetch balance on mount and poll (pause when tab hidden)
   useEffect(() => {
     fetchBalance();
 

@@ -7,7 +7,8 @@ import { useAvantisAPI } from './useAvantisAPI';
 import { useTxSigner } from './useTxSigner';
 import { useSound } from './useSound';
 import { saveClosedTrade } from '@/lib/closedTrades';
-import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, AVANTIS_CONTRACTS, calculate200PercentGainMultiplier } from '@/lib/avantisEncoder';
+import { logTradeCloseByPosition } from '@/lib/activityApi';
+import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculateTakeProfitMultiplier, AVANTIS_CONTRACTS } from '@/lib/avantisEncoder';
 import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
 import { publicClient } from '@/lib/viemClient';
@@ -24,6 +25,7 @@ export function useFlipTrade() {
     selection, 
     addPendingTradeHash, 
     removePendingTradeHash, 
+    addPendingOpenTxHash,
     showToast,
     prices,           // Real-time Pyth prices
     setIsIntentionalClose, // Prevent false liquidation detection
@@ -147,6 +149,16 @@ export function useFlipTrade() {
       // Close position first
       const { hash: closeTxHash } = await signAndWait(closeTx);
       saveClosedTrade(userAddress, trade, finalPnL, { closeTxHash });
+      logTradeCloseByPosition({
+        wallet: userAddress,
+        pairIndex: trade.pairIndex,
+        tradeIndex: trade.tradeIndex,
+        exitPrice: finalPnL?.currentPrice,
+        pnl: finalPnL?.grossPnl,
+        closedAt: new Date().toISOString(),
+        txHash: closeTxHash,
+        isLiquidated: false,
+      });
 
       // Wait a moment for the close to settle
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -202,9 +214,10 @@ export function useFlipTrade() {
         leverage: trade.leverage,
         isLong: !trade.isLong, // Flip direction
         openPrice: currentPrice, // Use current price
-        takeProfitMultiplier: calculate200PercentGainMultiplier(
+        takeProfitMultiplier: calculateTakeProfitMultiplier(
           !trade.isLong,
-          trade.leverage
+          trade.leverage,
+          useTradeStore.getState().settings.takeProfitPercent
         ),
       });
 
@@ -213,6 +226,7 @@ export function useFlipTrade() {
 
       // Add to pending trades for tracking
       addPendingTradeHash(hash);
+      addPendingOpenTxHash(hash);
 
       // 3. Poll aggressively for the new trade (similar to handleSpinComplete)
       let attempts = 0;
@@ -245,6 +259,8 @@ export function useFlipTrade() {
             currentPrice: flippedTrade.openPrice,
             pnl: 0,
             pnlPercentage: 0,
+            grossPnl: 0,
+            grossPnlPercentage: 0,
           });
           
           // Update selection to reflect the flipped trade's direction, asset, and leverage
@@ -369,6 +385,7 @@ export function useFlipTrade() {
     selection,
     addPendingTradeHash,
     removePendingTradeHash,
+    addPendingOpenTxHash,
     showToast,
     prices,
     playFlip,
