@@ -11,7 +11,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: 'brutal-button bg-[var(--color-brand)] text-black',
+  primary: 'brutal-button bg-[#CCFF00] text-black',
   danger: 'brutal-button-danger',
   secondary: 'brutal-button-secondary',
   ghost: 'bg-transparent text-white border-2 border-white/20 hover:border-white/40 transition-colors',

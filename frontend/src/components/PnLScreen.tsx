@@ -613,7 +613,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
               aria-busy={isClosing}
               className={`flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black font-black font-mono uppercase ${
                 isProfit
-                  ? 'brutal-button bg-[var(--color-brand)] text-black'
+                  ? 'brutal-button bg-[#CCFF00] text-black'
                   : 'brutal-button brutal-button-danger'
               }`}
               style={{

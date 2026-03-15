@@ -19,7 +19,7 @@ export function EmptyState({ icon, message, cta }: EmptyStateProps) {
       {cta && (
         <button
           onClick={cta.onClick}
-          className="brutal-button bg-[var(--color-brand)] text-black px-6 py-3 font-bold uppercase min-h-[44px] touch-manipulation"
+          className="brutal-button bg-[#CCFF00] text-black px-6 py-3 font-bold uppercase min-h-[44px] touch-manipulation"
         >
           {cta.label}
         </button>

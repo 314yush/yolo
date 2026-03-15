@@ -32,14 +32,14 @@ export function StatsPanel({
         <div
           className="mb-4 p-4 border-4"
           style={{
-            borderColor: aggregateStats.totalPnL >= 0 ? 'var(--color-brand)' : 'var(--color-danger)',
+            borderColor: aggregateStats.totalPnL >= 0 ? '#CCFF00' : 'var(--color-danger)',
             backgroundColor: aggregateStats.totalPnL >= 0 ? 'rgba(204, 255, 0, 0.1)' : 'rgba(255, 0, 110, 0.1)',
           }}
         >
           <div className="flex items-center justify-between">
             <div>
               <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Total P&L</div>
-              <div className="font-black text-2xl font-mono" style={{ color: aggregateStats.totalPnL >= 0 ? 'var(--color-brand)' : 'var(--color-danger)' }}>
+              <div className="font-black text-2xl font-mono" style={{ color: aggregateStats.totalPnL >= 0 ? '#CCFF00' : 'var(--color-danger)' }}>
                 {aggregateStats.totalPnL >= 0 ? '+' : '-'}${Math.abs(aggregateStats.totalPnL).toFixed(2)}
               </div>
             </div>
@@ -64,13 +64,13 @@ export function StatsPanel({
         <div className="flex items-center justify-end gap-4 text-xs sm:text-sm min-w-0">
           <div className="text-center shrink-0">
             <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Trades</div>
-            <div className="text-[var(--color-brand)] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
+            <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
               {mounted ? (activityStats?.total_trades ?? tradeStats.totalTrades) : 0}
             </div>
           </div>
           <div className="text-center shrink-0">
             <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Volume</div>
-            <div className="text-[var(--color-brand)] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
+            <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
               {mounted ? `$${(activityStats?.total_volume ?? historicVolume ?? tradeStats.totalVolume ?? computedVolume).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '$0'}
             </div>
           </div>
