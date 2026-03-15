@@ -12,7 +12,6 @@ import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
 // Confirmation stages for fast trading feedback
 export type ConfirmationStage = 
   | 'none'           // No active confirmation
-  | 'broadcasting'   // TX being broadcast
   | 'submitted'      // TX submitted to mempool
   | 'picked_up'      // Keeper picked up order (Pusher: OrderPickedUpForExecution)
   | 'preconfirmed'   // Flashblock preconfirmation (Pusher: ExecutionConfirmedInFlashblock)
