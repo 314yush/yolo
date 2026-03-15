@@ -6,7 +6,9 @@ import { usePusherEvents } from './usePusherEvents';
 import { debug } from '@/lib/debug';
 import { publicClient } from '@/lib/viemClient';
 
-const POLLING_INTERVAL_MS = 50; // 50ms polling (10x faster than before)
+// Exponential backoff: fast initially, backs off to 1s
+// Total time to exhaust schedule: ~2.3s, then stays at 1s
+const BACKOFF_SCHEDULE_MS = [50, 50, 100, 100, 200, 200, 500, 1000];
 const CONFIRMATION_TIMEOUT_MS = 30000; // 30 second timeout
 
 interface UseFastConfirmationOptions {
@@ -69,7 +71,10 @@ export function useFastConfirmation(
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isConfirmingRef = useRef(false);
-  const hasFiredOnConfirmedRef = useRef(false);
+  // Atomic confirmation resolution — only one source (Pusher or polling) can resolve
+  const resolvedRef = useRef(false);
+  // Session nonce — tag each confirmation session with txHash to ignore stale events
+  const sessionNonceRef = useRef<string>('');
 
   // Calculate latency
   const latencyMs = confirmationTimestamp 
@@ -79,7 +84,7 @@ export function useFastConfirmation(
   // Stop all polling and timeouts
   const cleanup = useCallback(() => {
     if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
+      clearTimeout(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
     }
     if (timeoutRef.current) {
@@ -97,23 +102,35 @@ export function useFastConfirmation(
     setConfirmationTimestamp(null);
   }, [cleanup, setConfirmationStage, setConfirmationTimestamp]);
 
+  // Atomic confirmation — prevents race between Pusher and polling
+  const resolveConfirmation = useCallback((source: 'pusher' | 'polling', elapsed: number) => {
+    if (resolvedRef.current) return;
+    resolvedRef.current = true;
+    debug(`[FastConfirmation] Resolved via ${source} in ${elapsed}ms`);
+    setConfirmationStage('confirmed');
+    onConfirmed?.(elapsed);
+    cleanup();
+  }, [setConfirmationStage, onConfirmed, cleanup]);
+
   // Start confirmation process
   const startConfirmation = useCallback((txHash: `0x${string}`) => {
     // Clean up any previous confirmation
     cleanup();
-    
+
     // Clear Pusher events from previous trades
     pusher.clearEvents();
-    
+
+    resolvedRef.current = false;
+    sessionNonceRef.current = txHash; // Tag this session
+
     // Set initial state
     currentTxHashRef.current = txHash;
     isConfirmingRef.current = true;
-    hasFiredOnConfirmedRef.current = false;
     setConfirmationStage('submitted');
     setConfirmationTimestamp(Date.now());
-    
+
     debug(`[FastConfirmation] Starting confirmation for ${txHash}`);
-    
+
     // Set timeout
     timeoutRef.current = setTimeout(() => {
       if (isConfirmingRef.current) {
@@ -123,85 +140,88 @@ export function useFastConfirmation(
         cleanup();
       }
     }, CONFIRMATION_TIMEOUT_MS);
-    
-    // Start aggressive polling as backup
-    pollingIntervalRef.current = setInterval(async () => {
+
+    // Start polling with exponential backoff as backup
+    const attemptRef = { current: 0 };
+
+    async function pollReceipt() {
       if (!isConfirmingRef.current || !currentTxHashRef.current) {
         return;
       }
-      
+
       try {
         const receipt = await publicClient.getTransactionReceipt({
           hash: currentTxHashRef.current,
         });
-        
+
         if (receipt) {
           const elapsed = Date.now() - (confirmationTimestamp || Date.now());
-          
+
           if (receipt.status === 'success') {
             debug(`[FastConfirmation] Receipt confirmed (polling) in ${elapsed}ms`);
-            // Only fire onConfirmed once (prevents duplicate toasts from race with Pusher)
-            if (!hasFiredOnConfirmedRef.current) {
-              hasFiredOnConfirmedRef.current = true;
-              setConfirmationStage('confirmed');
-              onConfirmed?.(elapsed);
-            }
-            cleanup();
+            resolveConfirmation('polling', elapsed);
           } else {
             console.error('[FastConfirmation] Transaction reverted');
             setConfirmationStage('failed');
             onFailed?.('Transaction reverted');
             cleanup();
           }
+          return; // Don't schedule next poll
         }
       } catch {
         // Receipt not available yet, continue polling
       }
-    }, POLLING_INTERVAL_MS);
-    
+
+      // Schedule next poll with backoff
+      if (isConfirmingRef.current) {
+        const delay = BACKOFF_SCHEDULE_MS[Math.min(attemptRef.current++, BACKOFF_SCHEDULE_MS.length - 1)];
+        pollingIntervalRef.current = setTimeout(pollReceipt, delay) as unknown as NodeJS.Timeout;
+      }
+    }
+
+    // Start first poll
+    pollingIntervalRef.current = setTimeout(pollReceipt, BACKOFF_SCHEDULE_MS[0]) as unknown as NodeJS.Timeout;
+
   }, [
-    cleanup, 
-    pusher, 
-    setConfirmationStage, 
-    setConfirmationTimestamp, 
+    cleanup,
+    pusher,
+    setConfirmationStage,
+    setConfirmationTimestamp,
     confirmationTimestamp,
     confirmationStage,
-    onConfirmed, 
-    onFailed
+    onConfirmed,
+    onFailed,
+    resolveConfirmation
   ]);
 
   // React to Pusher events
   useEffect(() => {
     if (!isConfirmingRef.current) return;
-    
+    // Ignore events if no active session (prevents stale event processing)
+    if (!sessionNonceRef.current) return;
+
     const elapsed = confirmationTimestamp ? Date.now() - confirmationTimestamp : 0;
-    
+
     // Order picked up
     if (pusher.hasPickedUp && confirmationStage === 'submitted') {
       debug(`[FastConfirmation] Order picked up (Pusher) in ${elapsed}ms`);
       setConfirmationStage('picked_up');
       onPickedUp?.();
     }
-    
+
     // Flashblock preconfirmation
     if (pusher.hasPreconfirmed && ['submitted', 'picked_up'].includes(confirmationStage)) {
       debug(`[FastConfirmation] Preconfirmed (Pusher) in ${elapsed}ms`);
       setConfirmationStage('preconfirmed');
       onPreconfirmed?.();
     }
-    
+
     // Order filled
     if (pusher.hasFilled && confirmationStage !== 'confirmed' && confirmationStage !== 'failed') {
       debug(`[FastConfirmation] Confirmed (Pusher) in ${elapsed}ms`);
-      // Only fire onConfirmed once (prevents duplicate toasts from race with polling)
-      if (!hasFiredOnConfirmedRef.current) {
-        hasFiredOnConfirmedRef.current = true;
-        setConfirmationStage('confirmed');
-        onConfirmed?.(elapsed);
-      }
-      cleanup();
+      resolveConfirmation('pusher', elapsed);
     }
-    
+
     // Order canceled
     if (pusher.hasCanceled && confirmationStage !== 'confirmed' && confirmationStage !== 'failed') {
       debug(`[FastConfirmation] Failed/Canceled (Pusher) in ${elapsed}ms`);
@@ -209,10 +229,10 @@ export function useFastConfirmation(
       onFailed?.('Order canceled');
       cleanup();
     }
-    
+
   }, [
     pusher.hasPickedUp,
-    pusher.hasPreconfirmed, 
+    pusher.hasPreconfirmed,
     pusher.hasFilled,
     pusher.hasCanceled,
     confirmationStage,
@@ -223,6 +243,7 @@ export function useFastConfirmation(
     onConfirmed,
     onFailed,
     cleanup,
+    resolveConfirmation,
   ]);
 
   // Cleanup on unmount
