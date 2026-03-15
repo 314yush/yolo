@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
+import { useCountUp } from '@/hooks/useCountUp';
 import { usePnL } from '@/hooks/usePnL';
 import { useFlipTrade } from '@/hooks/useFlipTrade';
 import { usePrebuiltCloseTx } from '@/hooks/usePrebuiltCloseTx';
@@ -13,6 +14,7 @@ import confetti from 'canvas-confetti';
 import { PriceChart } from './PriceChart';
 import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
 import { calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
+import { computeClientPnL } from '@/lib/pnlFees';
 import { X, ArrowUpDown, Dice5, Loader2, ChevronDown } from 'lucide-react';
 
 // Chart colors matching PriceChart component
@@ -80,16 +82,34 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   usePrebuiltCloseTx();
   usePrebuiltFlipTx();
   
-  // Start PnL polling
-  usePnL({ enabled: true, interval: 1000 });
+  // Start PnL polling — 500ms when placeholder for faster Avantis discovery
+  const pollInterval = currentTrade?.tradeIndex === 0 ? 500 : 1000;
+  usePnL({ enabled: true, interval: pollInterval });
   
   // Get real-time Pyth price for the current asset
   const assetPair = pnlData?.trade?.pair ?? currentTrade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
   const pythCurrentPrice = assetPair ? prices[assetPair]?.price ?? null : null;
 
-  // Confetti when PnL first crosses 100%
+  // Instant client-side PnL when we have placeholder trade (tradeIndex 0) + Pyth price
+  // No Avantis wait — compute net PnL with ZFP fee logic immediately
+  const isPlaceholder = currentTrade?.tradeIndex === 0;
+  const hasPricesForClientPnL = isPlaceholder && currentTrade && pythCurrentPrice && currentTrade.openPrice > 0;
+  const clientPnL = hasPricesForClientPnL
+    ? computeClientPnL(
+        currentTrade.collateral,
+        currentTrade.leverage,
+        currentTrade.isLong,
+        currentTrade.openPrice,
+        pythCurrentPrice,
+        true, // isPnl (ZFP)
+        0    // rolloverFee (new positions)
+      )
+    : null;
+
+  // Confetti when net PnL first crosses 100%
+  const displayPnlPercentage = clientPnL?.pnlPercentage ?? pnlData?.pnlPercentage ?? 0;
   useEffect(() => {
-    const pct = pnlData?.grossPnlPercentage ?? 0;
+    const pct = displayPnlPercentage;
     if (pct >= 100 && !hasTriggeredConfettiRef.current && !isLiquidated) {
       hasTriggeredConfettiRef.current = true;
       confetti({
@@ -99,7 +119,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         colors: ['#CCFF00', '#FF006E'],
       });
     }
-  }, [pnlData?.grossPnlPercentage, isLiquidated]);
+  }, [displayPnlPercentage, isLiquidated]);
 
   // Extra confetti burst when take profit is hit
   useEffect(() => {
@@ -115,8 +135,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   }, [isTakeProfitHit]);
 
   // Flash animation on PnL change
+  const displayPnl = clientPnL?.pnl ?? pnlData?.pnl ?? 0;
   useEffect(() => {
-    const currentPnl = pnlData?.grossPnl ?? 0;
+    const currentPnl = displayPnl;
     if (prevPnl !== null && prevPnl !== currentPnl) {
       setTimeout(() => {
         setIsFlashing(true);
@@ -130,7 +151,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         setPrevPnl(currentPnl);
       }, 0);
     }
-  }, [pnlData?.grossPnl, prevPnl]);
+  }, [displayPnl, prevPnl]);
 
   const handleFlip = async () => {
     if (!currentTrade) return;
@@ -149,30 +170,57 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
     }
   };
 
-  // Calculate display values - always show GROSS PnL (pre-fee, pre-rollover)
+  // Calculate display values - show NET PnL (what user keeps, after ZFP fees)
   let pnl: number;
   let pnlPercentage: number;
-  
+
   if (isLiquidated) {
     // Use last known PnL percentage, or default to -85% if not available
     pnlPercentage = lastKnownPnLPercentage !== null && lastKnownPnLPercentage <= -85
       ? lastKnownPnLPercentage
       : -85;
-    
+
     // Calculate PnL from percentage and collateral
     const collateral = currentTrade?.collateral ?? pnlData?.trade?.collateral ?? 0;
     pnl = (collateral * pnlPercentage) / 100;
   } else if (isTakeProfitHit) {
-    pnl = pnlData?.grossPnl ?? 0;
-    pnlPercentage = pnlData?.grossPnlPercentage ?? lastKnownPnLPercentage ?? 0;
+    pnl = pnlData?.pnl ?? 0;
+    pnlPercentage = pnlData?.pnlPercentage ?? lastKnownPnLPercentage ?? 0;
   } else {
-    pnl = pnlData?.grossPnl ?? 0;
-    pnlPercentage = pnlData?.grossPnlPercentage ?? 0;
+    // Use client-computed net PnL when placeholder, else Avantis net PnL
+    pnl = clientPnL?.pnl ?? pnlData?.pnl ?? 0;
+    pnlPercentage = clientPnL?.pnlPercentage ?? pnlData?.pnlPercentage ?? 0;
   }
   
   const isProfit = pnl >= 0;
   const color = isProfit ? '#CCFF00' : '#FF006E';
   const glowClass = isProfit ? 'pnl-glow-green' : 'pnl-glow-red';
+
+  // Animated PnL counter on mount
+  const animatedPnl = useCountUp({
+    end: Math.abs(pnl),
+    duration: 800,
+    decimals: 2,
+    prefix: pnl >= 0 ? '+$' : '-$',
+    enabled: !isConfirming,
+  });
+  const animatedPct = useCountUp({
+    end: Math.abs(pnlPercentage),
+    duration: 800,
+    decimals: 2,
+    prefix: pnlPercentage >= 0 ? '+' : '-',
+    enabled: !isConfirming,
+  });
+
+  // Big win scale effect for >100% PnL
+  const [bigWinScale, setBigWinScale] = useState(false);
+
+  useEffect(() => {
+    if (Math.abs(pnlPercentage) >= 100 && isProfit && !isConfirming) {
+      setBigWinScale(true);
+      setTimeout(() => setBigWinScale(false), 600);
+    }
+  }, [pnlPercentage, isProfit, isConfirming]);
 
   // Calculate liquidation distance
   const liqDistance = currentTrade ? Math.abs(100 + pnlPercentage) : 100;
@@ -436,27 +484,29 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
               )}
             </div>
             
-            {/* Main PnL - Still prominent but more compact */}
-            <div
-              className={`font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
-              style={{ 
-                color, 
-                letterSpacing: '-0.03em',
-                fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
-              }}
-            >
-              {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
+            {/* Main PnL - Animated counting */}
+            <div className={`transition-transform duration-300 ${bigWinScale ? 'scale-[1.2]' : 'scale-100'}`}>
+              <div
+                className={`font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
+                style={{
+                  color,
+                  letterSpacing: '-0.03em',
+                  fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
+                }}
+              >
+                {animatedPnl}
+              </div>
             </div>
-            
-            {/* Percentage - Inline with PnL */}
+
+            {/* Percentage - Animated counting */}
             <div
               className={`font-bold mt-1 ${glowClass} font-mono`}
-              style={{ 
+              style={{
                 color,
                 fontSize: 'clamp(1.25rem, 5vw, 2rem)',
               }}
             >
-              {isProfit ? '+' : '-'}{Math.abs(pnlPercentage).toFixed(2)}%
+              {animatedPct}%
             </div>
           </>
         )}
@@ -561,19 +611,25 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
               disabled={isClosing || isFlipping || !isOnline}
               aria-label={isClosing ? 'Closing trade...' : 'Close and take profit/loss'}
               aria-busy={isClosing}
-              className="brutal-button brutal-button-danger flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
+              className={`flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black font-black font-mono uppercase ${
+                isProfit
+                  ? 'brutal-button bg-[var(--color-brand)] text-black'
+                  : 'brutal-button brutal-button-danger'
+              }`}
               style={{
                 minHeight: '48px',
                 padding: '0.75rem 1rem',
                 fontSize: 'clamp(0.875rem, 2.5vw, 1rem)',
+                ...(isProfit ? { boxShadow: '0 0 20px rgba(204, 255, 0, 0.3)' } : {}),
               }}
             >
               {isClosing ? (
                 <Loader2 className="w-5 h-5 animate-spin" strokeWidth={2.5} />
+              ) : isProfit ? (
+                <span>CASH OUT +${Math.abs(pnl).toFixed(2)}</span>
               ) : (
-                <X className="w-5 h-5" strokeWidth={3} />
+                <span>CLOSE -${Math.abs(pnl).toFixed(2)}</span>
               )}
-              <span className="font-black font-mono uppercase">CLOSE</span>
             </button>
 
             {/* Flip button */}
