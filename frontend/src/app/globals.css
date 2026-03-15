@@ -1,22 +1,52 @@
 @import "tailwindcss";
 
 :root {
+  /* Brand */
+  --color-brand: #CCFF00;
+  --color-danger: #FF006E;
+  --color-bg: #000000;
+  --color-surface: #0B0F14;
+  --color-border: #1a1a2e;
+  --color-text: #FFFFFF;
+  --color-text-muted: rgba(255,255,255,0.5);
+
+  /* Legacy aliases (kept for backward compatibility during migration) */
   --color-primary: #CCFF00;
   --color-secondary: #FF006E;
   --color-background: #000000;
+  --color-warning: #FFD60A;
+
+  /* Assets */
   --color-btc: #FF9500;
   --color-eth: #627EEA;
   --color-sol: #14F195;
   --color-xrp: #00AAE4;
-  --color-warning: #FFD60A;
-  --color-danger: #FF006E;
-  
-  /* Spacing scale - 8/12/16/24 system */
-  --space-xs: 0.5rem;  /* 8px  - tight spacing (icon gaps, chip padding) */
-  --space-sm: 0.75rem; /* 12px - compact spacing (button padding, card gaps) */
-  --space-md: 1rem;    /* 16px - standard spacing (section padding) */
-  --space-lg: 1.5rem;  /* 24px - loose spacing (major sections) */
-  --space-xl: 2rem;    /* 32px - extra loose spacing */
+  --color-xau: #FFD700;
+  --color-xag: #C0C0C0;
+
+  /* Spacing scale */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+
+  /* Borders */
+  --border-thin: 2px;
+  --border-thick: 4px;
+  --border-brutal: 8px;
+  --shadow-brutal: 8px 8px 0px #000;
+  --shadow-brutal-sm: 4px 4px 0px #000;
+
+  /* Animation */
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+
+  /* Layout */
+  --nav-height: 72px;
+  --header-height: 48px;
+  --max-width: 28rem;
 }
 
 /* Neo-brutalist base styles */
