@@ -27,6 +27,7 @@ import { LandingPremium } from '@/components/LandingPremium';
 import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
 import { NavFooter } from '@/components/NavFooter';
 import { FinancialInfoBar } from '@/components/FinancialInfoBar';
+import { StageRouter } from '@/components/StageRouter';
 import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
 import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
 import { clearLocalAccess } from '@/lib/access';
@@ -913,103 +914,105 @@ export default function HomePage() {
         }}
       >
         {/* Live region for status updates */}
-        <div 
-          role="status" 
-          aria-live="polite" 
+        <div
+          role="status"
+          aria-live="polite"
           aria-atomic="true"
           className="sr-only"
           id="status-announcements"
         />
-        
-        {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
-          <section 
-            aria-label="Trade selection wheel" 
-            className="w-full h-full flex flex-col items-center justify-center"
-            style={{
-              padding: 'clamp(0.5rem, 2vh, 1rem)',
-              minHeight: 0,
-              overflow: 'hidden',
-            }}
-          >
-            {/* Simple inline text for open positions */}
-            {stage === 'idle' && openTrades.length > 0 && (
-              <div 
-                className="shrink-0 mb-2 text-center"
-                style={{
-                  fontSize: 'clamp(0.875rem, 2.5vw, 1rem)',
-                }}
+
+        <StageRouter stage={stage}>
+          {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
+            <section
+              aria-label="Trade selection wheel"
+              className="w-full h-full flex flex-col items-center justify-center"
+              style={{
+                padding: 'clamp(0.5rem, 2vh, 1rem)',
+                minHeight: 0,
+                overflow: 'hidden',
+              }}
+            >
+              {/* Simple inline text for open positions */}
+              {stage === 'idle' && openTrades.length > 0 && (
+                <div
+                  className="shrink-0 mb-2 text-center"
+                  style={{
+                    fontSize: 'clamp(0.875rem, 2.5vw, 1rem)',
+                  }}
+                >
+                  <span
+                    className="font-semibold font-mono"
+                    style={{
+                      color: totalOpenPnL >= 0 ? '#CCFF00' : '#FF006E',
+                    }}
+                  >
+                    {openTrades.length} open • {totalOpenPnL >= 0 ? '+' : ''}${totalOpenPnL.toFixed(2)} P&L
+                  </span>
+                  {' '}
+                  <a
+                    href="/activity"
+                    className="font-semibold underline hover:no-underline touch-manipulation font-mono"
+                    style={{
+                      color: totalOpenPnL >= 0 ? '#CCFF00' : '#FF006E',
+                    }}
+                    aria-label={`View ${openTrades.length} open position${openTrades.length !== 1 ? 's' : ''}`}
+                  >
+                    view
+                  </a>
+                </div>
+              )}
+              <div
+                className="w-full h-full flex items-center justify-center"
+                style={{ minHeight: 0 }}
               >
-                <span 
-                  className="font-semibold font-mono"
-                  style={{ 
-                    color: totalOpenPnL >= 0 ? '#CCFF00' : '#FF006E',
-                  }}
-                >
-                  {openTrades.length} open • {totalOpenPnL >= 0 ? '+' : ''}${totalOpenPnL.toFixed(2)} P&L
-                </span>
-                {' '}
-                <a 
-                  href="/activity" 
-                  className="font-semibold underline hover:no-underline touch-manipulation font-mono"
-                  style={{ 
-                    color: totalOpenPnL >= 0 ? '#CCFF00' : '#FF006E',
-                  }}
-                  aria-label={`View ${openTrades.length} open position${openTrades.length !== 1 ? 's' : ''}`}
-                >
-                  view
-                </a>
+                <PickerWheel
+                  onSpinStart={handleSpinStart}
+                  onSpinComplete={handleSpinComplete}
+                  triggerSpin={shouldSpin}
+                />
               </div>
-            )}
-            <div
-              className="w-full h-full flex items-center justify-center"
-              style={{ minHeight: 0 }}
+            </section>
+          )}
+
+          {stage === 'pnl' && (
+            <section
+              aria-label="Profit and loss display"
+              className="w-full h-full"
+              style={{
+                height: '100%',
+                minHeight: 0,
+                overflow: 'hidden',
+              }}
             >
-              <PickerWheel
-                onSpinStart={handleSpinStart}
-                onSpinComplete={handleSpinComplete}
-                triggerSpin={shouldSpin}
+              <PnLScreen
+                onClose={handleCloseTrade}
+                onRollAgain={handleRollAgain}
+                isClosing={isClosing}
               />
-            </div>
-          </section>
-        )}
+            </section>
+          )}
 
-        {stage === 'pnl' && (
-          <section 
-            aria-label="Profit and loss display"
-            className="w-full h-full"
-            style={{
-              height: '100%',
-              minHeight: 0,
-              overflow: 'hidden',
-            }}
-          >
-            <PnLScreen
-              onClose={handleCloseTrade}
-              onRollAgain={handleRollAgain}
-              isClosing={isClosing}
-            />
-          </section>
-        )}
-
-        {stage === 'error' && (
-          <section 
-            role="alert" 
-            aria-live="assertive"
-            className="flex flex-col items-center gap-6 sm:gap-8 text-center px-4 pb-24"
-          >
-            <h2 className="text-[#FF006E] text-3xl sm:text-4xl font-bold">ERROR</h2>
-            <p className="text-white/70 text-base sm:text-lg max-w-md">
-              Something went wrong. Please try again.
-            </p>
-            <button
-              onClick={reset}
-              className="px-8 sm:px-10 py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button bg-[#CCFF00] text-black min-h-[44px] touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black"
-              aria-label="Try again to reset and return to trading"
+          {stage === 'error' && (
+            <section
+              role="alert"
+              aria-live="assertive"
+              className="flex flex-col items-center gap-6 sm:gap-8 text-center px-4 pb-24"
             >
-              TRY AGAIN
-            </button>
-          </section>
-        )}
+              <h2 className="text-[#FF006E] text-3xl sm:text-4xl font-bold">ERROR</h2>
+              <p className="text-white/70 text-base sm:text-lg max-w-md">
+                Something went wrong. Please try again.
+              </p>
+              <button
+                onClick={reset}
+                className="px-8 sm:px-10 py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button bg-[#CCFF00] text-black min-h-[44px] touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black"
+                aria-label="Try again to reset and return to trading"
+              >
+                TRY AGAIN
+              </button>
+            </section>
+          )}
+        </StageRouter>
       </main>
 
       {/* Bottom Action Area - NavFooter with ROLL Button */}

@@ -12,6 +12,7 @@ import { vibrateMedium } from '@/lib/haptics';
 import { TradeCard } from '@/components/TradeCard';
 import { ToastContainer } from '@/components/Toast';
 import { AvantisFooter } from '@/components/AvantisFooter';
+import { StatsPanel } from '@/components/StatsPanel';
 import { saveClosedTrade, loadClosedTrades } from '@/lib/closedTrades';
 import { logTradeCloseByPosition, getActivityStats, getActivityTrades, type ActivityTrade } from '@/lib/activityApi';
 import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
@@ -70,6 +71,7 @@ export default function ActivityPage() {
   const [displayedClosedTradesCount, setDisplayedClosedTradesCount] = useState(12); // Default to 12 trades
   const [historicVolume, setHistoricVolume] = useState<number | null>(null);
   const [activityStats, setActivityStats] = useState<{ total_trades: number; total_volume: number; total_pnl: number; win_rate: number; open_trades: number } | null>(null);
+  const [activityApiError, setActivityApiError] = useState<string | null>(null);
 
   // Prevent hydration mismatch by only rendering stats after mount
   useEffect(() => {
@@ -82,6 +84,7 @@ export default function ActivityPage() {
       setIsLoadingTrades(false);
       setHistoricVolume(null);
       setActivityStats(null);
+      setActivityApiError(null);
     }
   }, [userAddress]);
 
@@ -97,16 +100,20 @@ export default function ActivityPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [flippingTradeIndex, closingTradeIndex]);
 
+  const [activityApiRetryTrigger, setActivityApiRetryTrigger] = useState(0);
+
   // Fetch stats from Activity API (primary), fallback to Avantis volume
   useEffect(() => {
     if (!userAddress) return;
 
     const loadStats = async () => {
+      setActivityApiError(null);
       const stats = await getActivityStats(userAddress);
       if (stats) {
         setActivityStats(stats);
+      } else {
+        setActivityApiError('Activity data temporarily unavailable. Check your connection.');
       }
-      // Fallback: historic volume from Avantis when Activity API has no data
       try {
         const vol = await getTotalVolume(userAddress);
         setHistoricVolume(vol);
@@ -116,14 +123,19 @@ export default function ActivityPage() {
     };
 
     loadStats();
-  }, [userAddress, getTotalVolume]);
+  }, [userAddress, getTotalVolume, activityApiRetryTrigger]);
 
-  // Calculate aggregate stats
-  const aggregateStats = React.useMemo(() => {
-    const totalPnL = tradesWithPnL.reduce((sum, item) => sum + (item.pnlData?.grossPnl ?? 0), 0);
-    const totalCollateral = tradesWithPnL.reduce((sum, item) => sum + item.trade.collateral, 0);
-    return { totalPnL, totalCollateral };
-  }, [tradesWithPnL]);
+  // Retry Activity API on visibility change (e.g. tab focused)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && userAddress) {
+        setActivityApiRetryTrigger((t) => t + 1);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [userAddress]);
+
 
   // Volume = sum of position sizes (collateral * leverage) for open + closed trades
   // Used as fallback when API stats are missing or stale
@@ -150,12 +162,17 @@ export default function ActivityPage() {
   // Load closed trades: Activity API primary, merge localStorage + Avantis for legacy/fallback
   useEffect(() => {
     if (!userAddress) return;
-    
+
     const loadAllClosedTrades = async () => {
       const mergedMap = new Map<string, ClosedTrade>();
 
       // Primary: Activity API
       const activityRes = await getActivityTrades(userAddress, 50, 0);
+      if (!activityRes) {
+        setActivityApiError('Activity data temporarily unavailable. Check your connection.');
+      } else {
+        setActivityApiError(null); // Clear error when API responds
+      }
       const activityClosed = activityRes?.trades
         ?.filter((t) => t.status === 'closed' || t.status === 'liquidated')
         .map(activityTradeToClosedTrade) ?? [];
@@ -203,9 +220,9 @@ export default function ActivityPage() {
       });
       setClosedTrades(merged);
     };
-    
+
     loadAllClosedTrades();
-  }, [userAddress, getClosedTrades]);
+  }, [userAddress, getClosedTrades, activityApiRetryTrigger]);
 
   // Note: Volume is incremented when trades are opened, not recalculated here
   // Volume = cumulative sum of position sizes (collateral * leverage) for all opened trades
@@ -327,7 +344,7 @@ export default function ActivityPage() {
 
       // Validate minimum position size before opening new trade
       // Avantis requires minimum position size of $100
-      const MIN_POSITION_SIZE_USD = 100.0;
+      const MIN_POSITION_SIZE_USD = 100;
       const positionSize = verifiedTrade.collateral * verifiedTrade.leverage;
       if (positionSize < MIN_POSITION_SIZE_USD) {
         const minCollateral = MIN_POSITION_SIZE_USD / verifiedTrade.leverage;
@@ -566,6 +583,20 @@ export default function ActivityPage() {
     <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full">
       {/* Header - Improved layout */}
       <header className="w-full mb-4 sm:mb-6">
+        {activityApiError && (
+          <div className="mb-4 p-3 border-4 border-[#FF006E] bg-[#FF006E]/10 flex items-center justify-between gap-3">
+            <p className="text-sm text-white/90">{activityApiError}</p>
+            <button
+              onClick={() => {
+                setActivityApiError(null);
+                setActivityApiRetryTrigger((t) => t + 1);
+              }}
+              className="shrink-0 px-3 py-1.5 text-xs font-bold border-2 border-[#FF006E] bg-black text-[#FF006E] hover:bg-[#FF006E] hover:text-black transition-colors"
+            >
+              RETRY
+            </button>
+          </div>
+        )}
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={() => {
@@ -595,75 +626,18 @@ export default function ActivityPage() {
           <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-black uppercase tracking-tight">Activity</h1>
           <div className="w-16 sm:w-20" />
         </div>
-        
-        {/* Aggregate Stats - Total PnL across all open positions */}
-        {mounted && tradesWithPnL.length > 0 && !showClosedTrades && (
-          <div 
-            className="mb-4 p-4 border-4"
-            style={{
-              borderColor: aggregateStats.totalPnL >= 0 ? '#CCFF00' : '#FF006E',
-              backgroundColor: aggregateStats.totalPnL >= 0 ? 'rgba(204, 255, 0, 0.1)' : 'rgba(255, 0, 110, 0.1)',
-            }}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Total P&L</div>
-                <div 
-                  className="font-black text-2xl font-mono"
-                  style={{ color: aggregateStats.totalPnL >= 0 ? '#CCFF00' : '#FF006E' }}
-                >
-                  {aggregateStats.totalPnL >= 0 ? '+' : '-'}${Math.abs(aggregateStats.totalPnL).toFixed(2)}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-white/50 text-xs uppercase tracking-wide mb-1">Collateral</div>
-                <div className="text-white font-bold text-lg font-mono">
-                  ${aggregateStats.totalCollateral.toFixed(2)}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Toggle and Stats - Improved layout */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
-          <div className="brutal-toggle shrink-0">
-            <button
-              onClick={() => setShowClosedTrades(false)}
-              className={`brutal-toggle-option ${!showClosedTrades ? 'active' : ''}`}
-              aria-pressed={!showClosedTrades}
-              aria-label="Show open trades"
-            >
-              OPEN {tradesWithPnL.length > 0 && `(${tradesWithPnL.length})`}
-            </button>
-            <button
-              onClick={() => setShowClosedTrades(true)}
-              className={`brutal-toggle-option ${showClosedTrades ? 'active' : ''}`}
-              aria-pressed={showClosedTrades}
-              aria-label="Show closed trades"
-            >
-              CLOSED {closedTrades.length > 0 && `(${closedTrades.length})`}
-            </button>
-          </div>
-          
-          {/* Compact Stats - Activity API primary, fallback to tradeStats + historicVolume */}
-          <div className="flex items-center justify-end gap-4 text-xs sm:text-sm min-w-0">
-            <div className="text-center shrink-0">
-              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Trades</div>
-              <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
-                {mounted ? (activityStats?.total_trades ?? tradeStats.totalTrades) : 0}
-              </div>
-            </div>
-            <div className="text-center shrink-0">
-              <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Volume</div>
-              <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
-                {mounted
-                  ? `$${(activityStats?.total_volume ?? historicVolume ?? tradeStats.totalVolume ?? computedVolume).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                  : '$0'}
-              </div>
-            </div>
-          </div>
-        </div>
+        <StatsPanel
+          tradesWithPnL={tradesWithPnL}
+          closedTradesCount={closedTrades.length}
+          showClosedTrades={showClosedTrades}
+          onToggle={setShowClosedTrades}
+          mounted={mounted}
+          activityStats={activityStats}
+          tradeStats={tradeStats}
+          historicVolume={historicVolume}
+          computedVolume={computedVolume}
+        />
       </header>
 
       {/* Trades List */}
