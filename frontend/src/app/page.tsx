@@ -25,6 +25,8 @@ import { ToastContainer } from '@/components/Toast';
 import { AbstractBackground } from '@/components/AbstractBackground';
 import { LandingPremium } from '@/components/LandingPremium';
 import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
+import { NavFooter } from '@/components/NavFooter';
+import { FinancialInfoBar } from '@/components/FinancialInfoBar';
 import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
 import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
 import { clearLocalAccess } from '@/lib/access';
@@ -36,12 +38,11 @@ import {
   buildOpenTradeTx as buildOpenTradeTxDirect,
   calculateTakeProfitMultiplier,
 } from '@/lib/avantisEncoder';
-import Link from 'next/link';
 import type { Trade } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { DEFAULT_COLLATERAL } from '@/lib/constants';
+import { DEFAULT_COLLATERAL, MIN_DEPOSIT } from '@/lib/constants';
 import { debug } from '@/lib/debug';
-import { Activity, Settings, Dice5, Loader2 } from 'lucide-react';
+import { Dice5, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
   const { authenticated, ready, user, login } = usePrivy();
@@ -211,21 +212,36 @@ export default function HomePage() {
           const positions = await getPnL(userAddress);
           if (positions.length === 0) return;
           
-          // If we have a currentTrade, verify it still exists
           if (currentTrade) {
+            // Placeholder (tradeIndex 0): match newest on same pair within 60s
+            if (currentTrade.tradeIndex === 0) {
+              const nowSec = Math.floor(Date.now() / 1000);
+              const recent = positions
+                .filter(
+                  (p) =>
+                    p.trade.pairIndex === currentTrade.pairIndex &&
+                    p.trade.openedAt >= nowSec - 60
+                )
+                .sort((a, b) => b.trade.openedAt - a.trade.openedAt);
+              const match = recent[0];
+              if (match) {
+                setCurrentTrade(match.trade);
+                setPnLData(match);
+              }
+              return;
+            }
+            // Real tradeIndex: verify it still exists
             const tradeStillExists = positions.some(
-              p => p.trade.pairIndex === currentTrade.pairIndex && 
-                   p.trade.tradeIndex === currentTrade.tradeIndex
+              (p) =>
+                p.trade.pairIndex === currentTrade.pairIndex &&
+                p.trade.tradeIndex === currentTrade.tradeIndex
             );
-            // If trade doesn't exist anymore, clear it so we can set a new one
             if (!tradeStillExists) {
               setCurrentTrade(null);
-              return; // Will retry on next interval
             }
-            // Trade exists, we're good
             return;
           }
-          
+
           // No currentTrade, set the newest one
           const sortedPositions = [...positions].sort((a, b) => b.trade.openedAt - a.trade.openedAt);
           const latestPosition = sortedPositions[0];
@@ -235,11 +251,12 @@ export default function HomePage() {
           console.error('Failed to auto-detect trade:', err);
         }
       };
-      
-      // Check immediately and then retry a few times
+
+      const isPlaceholder = currentTrade?.tradeIndex === 0;
+      const intervalMs = isPlaceholder ? 500 : 2000;
       checkForTrade();
-      const intervalId = setInterval(checkForTrade, 2000);
-      const timeoutId = setTimeout(() => clearInterval(intervalId), 10000); // Stop after 10s
+      const intervalId = setInterval(checkForTrade, intervalMs);
+      const timeoutId = setTimeout(() => clearInterval(intervalId), 10000);
       
       return () => {
         clearInterval(intervalId);
@@ -371,7 +388,7 @@ export default function HomePage() {
     }
 
     // Validate minimum position size ($100 minimum)
-    const MIN_POSITION_SIZE_USD = 100.0;
+    const MIN_POSITION_SIZE_USD = 100;
     const positionSize = collateral * currentSelection.leverage.value;
     if (positionSize < MIN_POSITION_SIZE_USD) {
       const minCollateral = MIN_POSITION_SIZE_USD / currentSelection.leverage.value;
@@ -801,7 +818,7 @@ export default function HomePage() {
   // After onboarding: prompt to deposit USDC before setup (until they have enough and click Continue)
   // Only for first-time new users - returning users skip deposit
   const needsDeposit = isOnboardingComplete && !isReturningUser && !delegateStatus.isSetup && !isSetupComplete &&
-    (usdcBalance === null || usdcBalance < DEFAULT_COLLATERAL || !isDepositComplete);
+    (usdcBalance === null || usdcBalance < MIN_DEPOSIT || !isDepositComplete);
   if (needsDeposit) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
@@ -869,29 +886,9 @@ export default function HomePage() {
         </header>
       )}
 
-      {/* Financial Info Bar - Compact and always visible */}
+      {/* Financial Info Bar */}
       {stage !== 'pnl' && (
-        <div className="w-full px-4 py-1.5 border-b-2 border-white/10 bg-black/50 backdrop-blur-sm relative z-10 shrink-0">
-          <div className="flex justify-center items-center gap-3 sm:gap-4 text-white/80 text-xs sm:text-sm font-mono">
-            <div className="flex items-center gap-1.5">
-              <span className="text-white/60 font-semibold">COLLATERAL:</span>
-              <span className="text-[#CCFF00] font-bold" aria-live="polite">
-                <span className="sr-only">Collateral: </span>${collateral}
-              </span>
-            </div>
-            <div className="w-1 h-1 rounded-full bg-white/40" aria-hidden="true" />
-            <div className="flex items-center gap-1.5">
-              <span className="text-white/60 font-semibold">BALANCE:</span>
-              <span className="text-[#CCFF00] font-bold" aria-live="polite">
-                <span className="sr-only">Balance: </span>
-                {usdcBalance !== null 
-                  ? `$${usdcBalance.toFixed(2)}`
-                  : '--'
-                }
-              </span>
-            </div>
-          </div>
-        </div>
+        <FinancialInfoBar collateral={collateral} usdcBalance={usdcBalance} />
       )}
 
       {/* Main content - No scroll for picker/pnl screens */}
@@ -1015,142 +1012,60 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* Bottom Action Area - STACKED: ROLL Button + Nav Bar */}
+      {/* Bottom Action Area - NavFooter with ROLL Button */}
       {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
-        <footer 
-          className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-40"
-          style={{ 
-            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          }}
-        >
-          <div className="px-4 pt-3 pb-2 max-w-md mx-auto space-y-2">
-            {/* ROLL Button - Top of stack */}
-            <div>
-              <button
-                onClick={() => {
-                  if (stage === 'idle' && delegateStatus.isSetup) {
-                    setShouldSpin(true);
-                    setTimeout(() => setShouldSpin(false), 100);
-                  }
-                }}
-                disabled={stage !== 'idle' || !delegateStatus.isSetup || !isOnline}
-                aria-label={
-                  !isOnline
-                    ? 'You are offline. Reconnect to trade'
-                    : !delegateStatus.isSetup 
-                    ? 'Please complete setup before trading'
-                    : stage === 'idle' 
-                    ? 'Spin the wheel to select trade parameters' 
-                    : 'Wheel is spinning, please wait'
+        <NavFooter
+          openTradesCount={openTrades.length}
+          showRollButton
+          rollButton={
+            <button
+              onClick={() => {
+                if (stage === 'idle' && delegateStatus.isSetup) {
+                  setShouldSpin(true);
+                  setTimeout(() => setShouldSpin(false), 100);
                 }
-                aria-busy={stage !== 'idle'}
-                className={`
-                  w-full py-4 text-2xl sm:text-3xl font-black brutal-button min-h-[56px] touch-manipulation
-                  transition-all duration-200 shadow-[0_8px_0px_0px_rgba(0,0,0,0.3)]
-                  focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black
-                  ${stage === 'idle'
-                    ? 'bg-[#CCFF00] text-black hover:shadow-[0_6px_0px_0px_rgba(0,0,0,0.3)] hover:translate-y-[2px] active:shadow-[0_2px_0px_0px_rgba(0,0,0,0.3)] active:translate-y-[6px]'
-                    : 'bg-gray-700 text-gray-400 cursor-not-allowed shadow-[0_4px_0px_0px_rgba(0,0,0,0.3)]'
-                  }
-                `}
-              >
-                {stage === 'idle' ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <Dice5 className="w-6 h-6 sm:w-7 sm:h-7" strokeWidth={3} />
-                    <span>ROLL</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center justify-center gap-2">
-                    <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" strokeWidth={2.5} />
-                    <span>SPINNING...</span>
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {/* Navigation Bar - Below ROLL button */}
-            <nav 
-              className="flex justify-around items-center py-1.5"
-              aria-label="Main navigation"
-              role="navigation"
+              }}
+              disabled={stage !== 'idle' || !delegateStatus.isSetup || !isOnline}
+              aria-label={
+                !isOnline
+                  ? 'You are offline. Reconnect to trade'
+                  : !delegateStatus.isSetup
+                  ? 'Please complete setup before trading'
+                  : stage === 'idle'
+                  ? 'Spin the wheel to select trade parameters'
+                  : 'Wheel is spinning, please wait'
+              }
+              aria-busy={stage !== 'idle'}
+              className={`
+                w-full py-4 text-2xl sm:text-3xl font-black brutal-button min-h-[56px] touch-manipulation
+                transition-all duration-200 shadow-[0_8px_0px_0px_rgba(0,0,0,0.3)]
+                focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black
+                ${stage === 'idle'
+                  ? 'bg-[#CCFF00] text-black hover:shadow-[0_6px_0px_0px_rgba(0,0,0,0.3)] hover:translate-y-[2px] active:shadow-[0_2px_0px_0px_rgba(0,0,0,0.3)] active:translate-y-[6px]'
+                  : 'bg-gray-700 text-gray-400 cursor-not-allowed shadow-[0_4px_0px_0px_rgba(0,0,0,0.3)]'
+                }
+              `}
             >
-              <Link
-                href="/activity"
-                onClick={(e) => {
-                  if ((stage === 'spinning' || stage === 'executing') && !window.confirm('A trade is in progress. Leave this page anyway?')) {
-                    e.preventDefault();
-                  }
-                }}
-                className="relative p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
-                aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
-              >
-                <Activity className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
-                {openTrades.length > 0 && (
-                  <span 
-                    className="absolute top-0 right-0 bg-[#FF006E] text-white text-xs font-black rounded-full w-5 h-5 flex items-center justify-center border-2 border-black animate-danger-pulse"
-                    style={{ fontSize: 'clamp(0.625rem, 1.5vw, 0.75rem)' }}
-                    aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}`}
-                  >
-                    <span className="sr-only">{openTrades.length}</span>
-                    <span aria-hidden="true">{openTrades.length}</span>
-                  </span>
-                )}
-              </Link>
-              <Link
-                href="/settings"
-                onClick={(e) => {
-                  if ((stage === 'spinning' || stage === 'executing') && !window.confirm('A trade is in progress. Leave this page anyway?')) {
-                    e.preventDefault();
-                  }
-                }}
-                className="p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
-                aria-label="Settings"
-              >
-                <Settings className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
-              </Link>
-            </nav>
-          </div>
-        </footer>
+              {stage === 'idle' ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Dice5 className="w-6 h-6 sm:w-7 sm:h-7" strokeWidth={3} />
+                  <span>ROLL</span>
+                </span>
+              ) : (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" strokeWidth={2.5} />
+                  <span>SPINNING...</span>
+                </span>
+              )}
+            </button>
+          }
+          warnOnNavigate={stage === 'spinning' || stage === 'executing'}
+        />
       )}
 
       {/* Bottom Navigation Bar - Only shown when not in trading stage */}
       {stage !== 'idle' && stage !== 'spinning' && stage !== 'executing' && stage !== 'pnl' && (
-        <nav 
-          className="fixed bottom-0 left-0 right-0 bg-black/95 border-t-4 border-[#CCFF00]/20 backdrop-blur-md z-30"
-          aria-label="Main navigation"
-          role="navigation"
-          style={{ 
-            height: 'calc(72px + env(safe-area-inset-bottom, 0px))',
-            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          }}
-        >
-          <div className="h-full flex justify-center items-center gap-6 px-4 max-w-md mx-auto">
-            <Link
-              href="/activity"
-              className="relative p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
-              aria-label={`Activity${openTrades.length > 0 ? `, ${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` : ''}`}
-            >
-              <Activity className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
-              {openTrades.length > 0 && (
-                <span 
-                  className="absolute -top-1 -right-1 bg-[#FF006E] text-white text-xs font-black rounded-full w-5 h-5 flex items-center justify-center border-2 border-black animate-danger-pulse"
-                  style={{ fontSize: '0.625rem' }}
-                  aria-label={`${openTrades.length} open trade${openTrades.length !== 1 ? 's' : ''}` }
-                >
-                  <span className="sr-only">{openTrades.length}</span>
-                  <span aria-hidden="true">{openTrades.length}</span>
-                </span>
-              )}
-            </Link>
-            <Link
-              href="/settings"
-              className="p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
-              aria-label="Settings"
-            >
-              <Settings className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
-            </Link>
-          </div>
-        </nav>
+        <NavFooter openTradesCount={openTrades.length} />
       )}
 
 
