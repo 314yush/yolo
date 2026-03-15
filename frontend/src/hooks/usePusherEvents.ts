@@ -1,13 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import Pusher, { Channel } from 'pusher-js';
+import { type Channel } from 'pusher-js';
+import { getPusher } from '@/lib/pusherClient';
 import { useTradeStore } from '@/store/tradeStore';
 import { debug } from '@/lib/debug';
-
-// Avantis Pusher credentials (public)
-const PUSHER_APP_KEY = 'f86bc7e9919fc938694a';
-const PUSHER_CLUSTER = 'mt1';
 
 // Event types from Avantis
 export type PusherEventType = 
@@ -36,6 +33,18 @@ export interface UsePusherEventsReturn {
 }
 
 /**
+ * Runtime validation for Avantis order events.
+ * Ensures the payload has the expected shape before processing.
+ */
+function isValidOrderEvent(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    ('orderId' in data || 'order_id' in data || 'tradeIndex' in data || 'trade_index' in data)
+  );
+}
+
+/**
  * Hook for subscribing to Avantis Pusher events for a wallet address.
  * 
  * Avantis broadcasts order lifecycle events via Pusher:
@@ -54,8 +63,7 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
   const [events, setEvents] = useState<PusherEvent[]>([]);
   const stage = useTradeStore((s) => s.stage);
   const prevStageRef = useRef<string>('idle');
-  
-  const pusherRef = useRef<Pusher | null>(null);
+
   const channelRef = useRef<Channel | null>(null);
 
   // Add event to list
@@ -88,16 +96,7 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
       return;
     }
 
-    // Enable Pusher logging in development
-    if (process.env.NODE_ENV === 'development') {
-      Pusher.logToConsole = true;
-    }
-
-    // Create Pusher instance
-    const pusher = new Pusher(PUSHER_APP_KEY, {
-      cluster: PUSHER_CLUSTER,
-      forceTLS: true,
-    });
+    const pusher = getPusher();
 
     // Connection state handlers
     pusher.connection.bind('connected', () => {
@@ -140,22 +139,37 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
 
     // Bind to Avantis order events
     channel.bind('OrderPickedUpForExecution', (data: unknown) => {
-      addEvent('OrderPickedUpForExecution', data);
+      if (isValidOrderEvent(data)) {
+        addEvent('OrderPickedUpForExecution', data);
+      } else {
+        debug('[Pusher] Invalid OrderPickedUpForExecution payload, ignoring', data);
+      }
     });
 
     channel.bind('ExecutionConfirmedInFlashblock', (data: unknown) => {
-      addEvent('ExecutionConfirmedInFlashblock', data);
+      if (isValidOrderEvent(data)) {
+        addEvent('ExecutionConfirmedInFlashblock', data);
+      } else {
+        debug('[Pusher] Invalid ExecutionConfirmedInFlashblock payload, ignoring', data);
+      }
     });
 
     channel.bind('OrderFilled', (data: unknown) => {
-      addEvent('OrderFilled', data);
+      if (isValidOrderEvent(data)) {
+        addEvent('OrderFilled', data);
+      } else {
+        debug('[Pusher] Invalid OrderFilled payload, ignoring', data);
+      }
     });
 
     channel.bind('OrderCanceled', (data: unknown) => {
-      addEvent('OrderCanceled', data);
+      if (isValidOrderEvent(data)) {
+        addEvent('OrderCanceled', data);
+      } else {
+        debug('[Pusher] Invalid OrderCanceled payload, ignoring', data);
+      }
     });
 
-    pusherRef.current = pusher;
     channelRef.current = channel;
 
     // Cleanup
@@ -163,8 +177,7 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
       debug(`[Pusher] Cleaning up, unsubscribing from ${channelName}`);
       channel.unbind_all();
       pusher.unsubscribe(channelName);
-      pusher.disconnect();
-      pusherRef.current = null;
+      // Do NOT disconnect — singleton manages the connection lifecycle
       channelRef.current = null;
     };
   }, [walletAddress, addEvent]);
