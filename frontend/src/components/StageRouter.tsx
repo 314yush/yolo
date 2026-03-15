@@ -22,16 +22,27 @@ const pnlVariants = {
 };
 
 /**
+ * Groups stages that share the same rendered content so AnimatePresence
+ * doesn't unmount/remount children during the trading flow
+ * (idle → spinning → executing all keep the PickerWheel alive).
+ */
+function getStageGroup(stage: AppStage): string {
+  if (stage === 'idle' || stage === 'spinning' || stage === 'executing') return 'trading';
+  return stage;
+}
+
+/**
  * Wraps stage content with AnimatePresence for smooth transitions.
  * Respects prefers-reduced-motion by disabling animations.
  */
 export function StageRouter({ stage, children }: StageRouterProps) {
-  const isPnl = stage === 'pnl';
+  const group = getStageGroup(stage);
+  const isPnl = group === 'pnl';
 
   return (
     <AnimatePresence mode="wait">
       <motion.div
-        key={stage}
+        key={group}
         variants={isPnl ? pnlVariants : variants}
         initial="initial"
         animate="animate"
