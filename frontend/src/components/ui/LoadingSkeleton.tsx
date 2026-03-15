@@ -11,7 +11,7 @@ interface LoadingSkeletonProps {
 export function LoadingSkeleton({ width = '100%', height = '1rem', className = '' }: LoadingSkeletonProps) {
   return (
     <div
-      className={`bg-white/5 ${className}`}
+      className={`animate-shimmer ${className}`}
       style={{ width, height, borderRadius: 0 }}
       aria-hidden="true"
     />

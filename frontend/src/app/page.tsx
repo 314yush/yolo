@@ -28,6 +28,7 @@ import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
 import { NavFooter } from '@/components/NavFooter';
 import { FinancialInfoBar } from '@/components/FinancialInfoBar';
 import { StageRouter } from '@/components/StageRouter';
+import { ProgressSteps } from '@/components/ui/ProgressSteps';
 import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
 import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
 import { clearLocalAccess } from '@/lib/access';
@@ -292,7 +293,7 @@ export default function HomePage() {
   });
   
   // Fast confirmation via Pusher events
-  const { startConfirmation } = useFastConfirmation(userAddress, {
+  const { startConfirmation, confirmationStage } = useFastConfirmation(userAddress, {
     onPickedUp: () => {},
     onPreconfirmed: () => {},
     onConfirmed: (latency) => {
@@ -972,6 +973,9 @@ export default function HomePage() {
                   triggerSpin={shouldSpin}
                 />
               </div>
+              {confirmationStage !== 'none' && confirmationStage !== 'confirmed' && (
+                <ProgressSteps stage={confirmationStage} />
+              )}
             </section>
           )}
 

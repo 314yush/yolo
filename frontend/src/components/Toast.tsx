@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 
 export interface Toast {
   id: string;
@@ -16,15 +16,22 @@ interface ToastProps {
 }
 
 function ToastItem({ toast, onClose }: ToastProps) {
+  const [isExiting, setIsExiting] = useState(false);
+
+  const handleClose = useCallback((id: string) => {
+    setIsExiting(true);
+    setTimeout(() => onClose(id), 200); // Match animation duration
+  }, [onClose]);
+
   useEffect(() => {
     if (toast.duration !== 0) {
       const timer = setTimeout(() => {
-        onClose(toast.id);
-      }, toast.duration || 5000); // Default 5 seconds
+        handleClose(toast.id);
+      }, toast.duration || 5000);
 
       return () => clearTimeout(timer);
     }
-  }, [toast.id, toast.duration, onClose]);
+  }, [toast.id, toast.duration, handleClose]);
 
   const bgColor = 
     toast.type === 'success' ? '#CCFF00' :
@@ -36,7 +43,7 @@ function ToastItem({ toast, onClose }: ToastProps) {
 
   return (
     <div
-      className="mb-3 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] animate-slide-in"
+      className={`mb-3 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] ${isExiting ? 'animate-slide-out' : 'animate-slide-in'}`}
       style={{ 
         backgroundColor: bgColor,
         borderColor: borderColor,
@@ -87,7 +94,7 @@ function ToastItem({ toast, onClose }: ToastProps) {
             <button
               onClick={() => {
                 toast.action?.onClick();
-                onClose(toast.id);
+                handleClose(toast.id);
               }}
               className="px-3 py-1.5 text-xs font-bold border-2 border-black hover:opacity-80 transition-opacity touch-manipulation"
               style={{
@@ -99,7 +106,7 @@ function ToastItem({ toast, onClose }: ToastProps) {
             </button>
           ) : null}
           <button
-            onClick={() => onClose(toast.id)}
+            onClick={() => handleClose(toast.id)}
             className="shrink-0 w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center border-2 border-black hover:opacity-80 transition-opacity touch-manipulation font-black"
             style={{
               backgroundColor: '#000000',
