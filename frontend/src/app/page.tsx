@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { usePrivy } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
@@ -28,7 +29,6 @@ import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
 import { NavFooter } from '@/components/NavFooter';
 import { FinancialInfoBar } from '@/components/FinancialInfoBar';
 import { StageRouter } from '@/components/StageRouter';
-import { ProgressSteps } from '@/components/ui/ProgressSteps';
 import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
 import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
 import { clearLocalAccess } from '@/lib/access';
@@ -273,6 +273,8 @@ export default function HomePage() {
   // Track if trade was confirmed via Pusher before wheel finished
   const tradeConfirmedRef = useRef(false);
   const confirmationLatencyRef = useRef<number | null>(null);
+  // Track when wheel spin animation finishes
+  const spinFinishedRef = useRef(false);
   // Track when spin started to filter out old trades
   const spinStartTimeRef = useRef<number | null>(null);
   // Track which trades we've already incremented volume for (by txHash)
@@ -305,7 +307,6 @@ export default function HomePage() {
       tradeConfirmedRef.current = true;
       confirmationLatencyRef.current = latency;
       vibrateDouble();
-      useTradeStore.getState().showToast('Trade opened!', 'success');
     },
     onFailed: (reason) => {
       setError(reason || 'Trade failed');
@@ -368,6 +369,7 @@ export default function HomePage() {
     // Reset confirmation tracking
     tradeConfirmedRef.current = false;
     confirmationLatencyRef.current = null;
+    spinFinishedRef.current = false;
     // Record spin start time to filter out old trades
     spinStartTimeRef.current = spinStartTime;
     
@@ -476,120 +478,24 @@ export default function HomePage() {
     startConfirmation,
   ]);
 
-  // Handle spin complete - show PnL immediately (optimistic UI)
-  const handleSpinComplete = useCallback(async () => {
-    if (!userAddress) {
-      setError('User address not available');
-      setStage('error');
-      return;
-    }
-    
-    // OPTIMISTIC UI: Show PnLScreen immediately if we have txHash
-    // This prevents the stuck spinning screen issue
+  // Transition to PnL — called when BOTH wheel finished AND confirmation received
+  const transitionToPnL = useCallback(() => {
     const storeState = useTradeStore.getState();
-    if (storeState.txHash) {
-      // We have a transaction hash, show PnL screen immediately
-      // Initialize with current selection as fallback
-      if (storeState.selection && !storeState.currentTrade) {
-        // Create a temporary trade object from selection for display
-        const openPrice = prices[`${storeState.selection.asset.name}/USD`]?.price || 0;
-        const tpPercent = storeState.settings.takeProfitPercent ?? 200;
-        const tpPrice = openPrice * calculateTakeProfitMultiplier(
-          storeState.selection.direction.isLong,
-          storeState.selection.leverage.value,
-          tpPercent
-        );
-        const tempTrade: Trade = {
-          tradeIndex: 0,
-          pairIndex: storeState.selection.asset.pairIndex,
-          pair: `${storeState.selection.asset.name}/USD`,
-          collateral: collateral,
-          leverage: storeState.selection.leverage.value,
-          isLong: storeState.selection.direction.isLong,
-          openPrice,
-          tp: tpPrice,
-          sl: 0,
-          liquidationPrice: 0,
-          openedAt: Math.floor(Date.now() / 1000),
-        };
-        setCurrentTrade(tempTrade);
-        setPnLData({
-          trade: tempTrade,
-          currentPrice: tempTrade.openPrice,
-          pnl: 0,
-          pnlPercentage: 0,
-          grossPnl: 0,
-          grossPnlPercentage: 0,
-        });
-      }
-      setStage('pnl');
-      // Continue polling in background via useOpenTrades hook
-      return;
-    }
-    
-    // If no txHash yet, wait briefly for it (max 2 seconds)
-    const WAIT_FOR_TX_TIMEOUT = 2000;
-    const waitStartTime = Date.now();
-    
-    while ((Date.now() - waitStartTime) < WAIT_FOR_TX_TIMEOUT) {
-      const currentState = useTradeStore.getState();
-      if (currentState.txHash) {
-        // Found txHash, show PnL screen immediately
-        if (currentState.selection && !currentState.currentTrade) {
-          const openPrice = prices[`${currentState.selection.asset.name}/USD`]?.price || 0;
-          const tpPercent = currentState.settings.takeProfitPercent ?? 200;
-          const tpPrice = openPrice * calculateTakeProfitMultiplier(
-            currentState.selection.direction.isLong,
-            currentState.selection.leverage.value,
-            tpPercent
-          );
-          const tempTrade: Trade = {
-            tradeIndex: 0,
-            pairIndex: currentState.selection.asset.pairIndex,
-            pair: `${currentState.selection.asset.name}/USD`,
-            collateral: collateral,
-            leverage: currentState.selection.leverage.value,
-            isLong: currentState.selection.direction.isLong,
-            openPrice,
-            tp: tpPrice,
-            sl: 0,
-            liquidationPrice: 0,
-            openedAt: Math.floor(Date.now() / 1000),
-          };
-          setCurrentTrade(tempTrade);
-          setPnLData({
-            trade: tempTrade,
-            currentPrice: tempTrade.openPrice,
-            pnl: 0,
-            pnlPercentage: 0,
-            grossPnl: 0,
-            grossPnlPercentage: 0,
-          });
-        }
-        setStage('pnl');
-        return;
-      }
-      await new Promise(resolve => setTimeout(resolve, 100)); // Check every 100ms
-    }
-    
-    // Fallback: If still no txHash after waiting, show PnL screen anyway
-    // The useOpenTrades hook will continue polling in the background
-    const finalState = useTradeStore.getState();
-    if (finalState.selection) {
-      const openPrice = prices[`${finalState.selection.asset.name}/USD`]?.price || 0;
-      const tpPercent = finalState.settings.takeProfitPercent ?? 200;
+    if (storeState.selection && !storeState.currentTrade) {
+      const openPrice = prices[`${storeState.selection.asset.name}/USD`]?.price || 0;
+      const tpPercent = storeState.settings.takeProfitPercent ?? 200;
       const tpPrice = openPrice * calculateTakeProfitMultiplier(
-        finalState.selection.direction.isLong,
-        finalState.selection.leverage.value,
+        storeState.selection.direction.isLong,
+        storeState.selection.leverage.value,
         tpPercent
       );
       const tempTrade: Trade = {
         tradeIndex: 0,
-        pairIndex: finalState.selection.asset.pairIndex,
-        pair: `${finalState.selection.asset.name}/USD`,
+        pairIndex: storeState.selection.asset.pairIndex,
+        pair: `${storeState.selection.asset.name}/USD`,
         collateral: collateral,
-        leverage: finalState.selection.leverage.value,
-        isLong: finalState.selection.direction.isLong,
+        leverage: storeState.selection.leverage.value,
+        isLong: storeState.selection.direction.isLong,
         openPrice,
         tp: tpPrice,
         sl: 0,
@@ -605,15 +511,53 @@ export default function HomePage() {
         grossPnl: 0,
         grossPnlPercentage: 0,
       });
-      setStage('pnl');
-    } else {
-      setError('Trade execution may have failed. Please check your wallet and try again.');
-      setStage('error');
     }
-    
-    // Background polling continues via useOpenTrades hook
-    // No need to poll here - PnLScreen will update when trade is confirmed
-  }, [userAddress, setCurrentTrade, setPnLData, setStage, setError, collateral, prices]);
+    setStage('pnl');
+  }, [prices, collateral, setCurrentTrade, setPnLData, setStage]);
+
+  // Handle spin complete — wheel animation finished
+  const handleSpinComplete = useCallback(async () => {
+    if (!userAddress) {
+      setError('User address not available');
+      setStage('error');
+      return;
+    }
+
+    spinFinishedRef.current = true;
+
+    // If confirmation already arrived while wheel was spinning, transition now
+    if (tradeConfirmedRef.current) {
+      transitionToPnL();
+      return;
+    }
+
+    // Otherwise wait for txHash at least
+    const storeState = useTradeStore.getState();
+    if (!storeState.txHash) {
+      const WAIT_FOR_TX_TIMEOUT = 3000;
+      const waitStart = Date.now();
+      while (Date.now() - waitStart < WAIT_FOR_TX_TIMEOUT) {
+        if (useTradeStore.getState().txHash) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      if (!useTradeStore.getState().txHash) {
+        setError('Trade execution may have failed. Please check your wallet and try again.');
+        setStage('error');
+        return;
+      }
+    }
+    // Wheel done, waiting for confirmation — effect below will handle it
+  }, [userAddress, setStage, setError, transitionToPnL]);
+
+  // When confirmation arrives: transition only if wheel already finished
+  useEffect(() => {
+    if (stage !== 'executing' || confirmationStage !== 'confirmed' || !userAddress) return;
+
+    if (spinFinishedRef.current) {
+      transitionToPnL();
+    }
+    // If spin hasn't finished, handleSpinComplete will call transitionToPnL when it does
+  }, [stage, confirmationStage, userAddress, transitionToPnL]);
 
   useEffect(() => {
     if (stage === 'pnl') {
@@ -763,7 +707,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
         <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
-          <h1 className="text-[#CCFF00] text-2xl sm:text-3xl font-black font-mono tracking-tighter">YOLO</h1>
+          <Link href="/" className="text-[#CCFF00] text-2xl sm:text-3xl font-black font-mono tracking-tighter hover:opacity-80 transition-opacity">YOLO</Link>
           <LoginButton />
         </header>
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
@@ -794,7 +738,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
         <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
-          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+          <Link href="/" className="text-[#CCFF00] text-xl sm:text-2xl font-bold hover:opacity-80 transition-opacity">YOLO</Link>
           <LoginButton />
         </header>
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
@@ -825,7 +769,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
         <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
-          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+          <Link href="/" className="text-[#CCFF00] text-xl sm:text-2xl font-bold hover:opacity-80 transition-opacity">YOLO</Link>
           <LoginButton />
         </header>
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
@@ -840,7 +784,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
         <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
-          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+          <Link href="/" className="text-[#CCFF00] text-xl sm:text-2xl font-bold hover:opacity-80 transition-opacity">YOLO</Link>
           <LoginButton />
         </header>
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
@@ -853,7 +797,7 @@ export default function HomePage() {
   // Main app
   return (
     <div 
-      className="bg-black flex flex-col relative w-full safe-area-top safe-area-bottom max-w-md mx-auto"
+      className="bg-black flex flex-col relative w-full safe-area-top safe-area-bottom max-w-lg mx-auto"
       style={{
         height: (stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') 
           ? '100dvh' 
@@ -865,7 +809,7 @@ export default function HomePage() {
           ? 'hidden' 
           : 'auto',
         // Enforce mobile constraints on desktop
-        maxWidth: '28rem', // 448px - mobile-first max width
+        maxWidth: '32rem', // 512px - desktop max width
         width: '100%',
       }}
     >
@@ -883,7 +827,7 @@ export default function HomePage() {
       {/* Header - Compact and always visible */}
       {stage !== 'pnl' && (
         <header className="w-full flex justify-between items-center px-4 py-2 relative z-50 shrink-0">
-          <h1 className="text-[#CCFF00] text-xl sm:text-2xl font-bold">YOLO</h1>
+          <Link href="/" className="text-[#CCFF00] text-xl sm:text-2xl font-bold hover:opacity-80 transition-opacity">YOLO</Link>
           <LoginButton />
         </header>
       )}
@@ -973,9 +917,6 @@ export default function HomePage() {
                   triggerSpin={shouldSpin}
                 />
               </div>
-              {confirmationStage !== 'none' && confirmationStage !== 'confirmed' && (
-                <ProgressSteps stage={confirmationStage} />
-              )}
             </section>
           )}
 

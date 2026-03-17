@@ -101,7 +101,7 @@ export function AccessCodeGate({ walletAddress, onAccessGranted }: AccessCodeGat
   };
 
   return (
-    <div className="w-full max-w-md mx-auto px-4">
+    <div className="w-full max-w-lg mx-auto px-4">
       {/* Card with neobrutalism styling */}
       <div className="bg-black border-2 border-white font-mono">
         {/* Header */}

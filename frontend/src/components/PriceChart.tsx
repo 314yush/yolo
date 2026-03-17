@@ -2,6 +2,7 @@
 
 import React, { memo, useEffect, useMemo, useRef } from 'react';
 import {
+  AreaSeries,
   createChart,
   createSeriesMarkers,
   CrosshairMode,
@@ -9,7 +10,6 @@ import {
   IPriceLine,
   ISeriesApi,
   LineData,
-  LineSeries,
   LineStyle,
   UTCTimestamp,
 } from 'lightweight-charts';
@@ -31,12 +31,12 @@ interface PriceChartProps {
   stream?: PricePoint[];
 }
 
-const STREAM_SYNC_MS = 1000; // 5x faster updates
-const VISIBLE_POINTS = 100; // ~1.7 min – tighter window, more "price running" feel
+const STREAM_SYNC_MS = 200; // 5x faster visual updates – feels alive
+const VISIBLE_POINTS = 60; // ~1 min window – tighter = more dramatic swings
 const RIGHT_OFFSET_BARS = 2; // Price at right edge – line runs left-to-right across screen
-const VERTICAL_PADDING_RATIO = 0.2;
-const MIN_RANGE_RATIO = 0.0015;
-const RANGE_SMOOTHING_ALPHA = 0.22;
+const VERTICAL_PADDING_RATIO = 0.12; // Less dead space – price fills the chart
+const MIN_RANGE_RATIO = 0.001; // Tighter range when flat
+const RANGE_SMOOTHING_ALPHA = 0.45; // Faster Y-axis response to moves
 
 /** Chart Y-axis range presets:
  * - default: range follows price movement only
@@ -46,10 +46,14 @@ const CHART_RANGE_PRESET = 'default' as 'default' | 'fullReferenceLines';
 
 const COLORS = {
   background: '#0B0F14',
-  scaleText: 'rgba(226, 232, 240, 0.5)',
+  scaleText: 'rgba(226, 232, 240, 0.7)',
   grid: 'rgba(255,255,255,0.04)',
   lineUp: '#CCFF00',   // Lime - brand
   lineDown: '#FF006E', // Hot pink - brand
+  areaTopUp: 'rgba(204, 255, 0, 0.28)',
+  areaBottomUp: 'rgba(204, 255, 0, 0.0)',
+  areaTopDown: 'rgba(255, 0, 110, 0.28)',
+  areaBottomDown: 'rgba(255, 0, 110, 0.0)',
   entry: 'rgba(204, 255, 0, 0.6)',
   liquidation: 'rgba(255, 0, 110, 0.7)',
   target: 'rgba(204, 255, 0, 0.85)',
@@ -84,7 +88,7 @@ function PriceChartComponent({
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const entryLineRef = useRef<IPriceLine | null>(null);
   const liqLineRef = useRef<IPriceLine | null>(null);
   const targetLineRef = useRef<IPriceLine | null>(null);
@@ -113,7 +117,7 @@ function PriceChartComponent({
         background: { color: 'transparent' },
         textColor: COLORS.scaleText,
         fontFamily: "var(--font-sans), ui-sans-serif, system-ui, sans-serif",
-        fontSize: 10,
+        fontSize: 11,
       },
       grid: {
         vertLines: { visible: false },
@@ -156,12 +160,19 @@ function PriceChartComponent({
       },
       localization: {
         priceFormatter: formatPrice,
+        timeFormatter: (time: UTCTimestamp) => {
+          const d = new Date(time * 1000);
+          return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        },
       },
     });
 
-    const series = chart.addSeries(LineSeries, {
-      color: initialLineColor,
+    const isUp = pnl >= 0;
+    const series = chart.addSeries(AreaSeries, {
+      lineColor: initialLineColor,
       lineWidth: 3,
+      topColor: isUp ? COLORS.areaTopUp : COLORS.areaTopDown,
+      bottomColor: isUp ? COLORS.areaBottomUp : COLORS.areaBottomDown,
       priceLineVisible: false,
       lastValueVisible: true,
       pointMarkersVisible: false,
@@ -242,7 +253,7 @@ function PriceChartComponent({
       entryLineRef.current = seriesRef.current.createPriceLine({
         price: entryPrice,
         color: COLORS.entry,
-        lineWidth: 1,
+        lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
         title: 'Entry',
@@ -264,7 +275,7 @@ function PriceChartComponent({
       targetLineRef.current = seriesRef.current.createPriceLine({
         price: targetPrice,
         color: COLORS.target,
-        lineWidth: 1,
+        lineWidth: 2,
         lineStyle: LineStyle.Solid,
         axisLabelVisible: true,
         title: 'Target',
@@ -320,6 +331,12 @@ function PriceChartComponent({
         appendPoint(latest.time, latest.price);
         lastKnownPriceRef.current = latest.price;
         lastEmittedSecondRef.current = latest.time;
+      } else if (latest.price !== lastKnownPriceRef.current) {
+        // Price changed but time already emitted (emitFlatThrough ran ahead).
+        // Update the current-second point and lastKnownPrice so future
+        // flat-fills use the fresh value instead of the stale one.
+        lastKnownPriceRef.current = latest.price;
+        appendPoint(lastEmittedSecondRef.current, latest.price);
       }
     };
 
@@ -330,7 +347,11 @@ function PriceChartComponent({
       const nextColor = isPositive ? COLORS.lineUp : COLORS.lineDown;
 
       if (previousLineColorRef.current === nextColor || !seriesRef.current) return;
-      seriesRef.current.applyOptions({ color: nextColor });
+      seriesRef.current.applyOptions({
+        lineColor: nextColor,
+        topColor: isPositive ? COLORS.areaTopUp : COLORS.areaTopDown,
+        bottomColor: isPositive ? COLORS.areaBottomUp : COLORS.areaBottomDown,
+      });
       previousLineColorRef.current = nextColor;
     };
 
@@ -434,7 +455,7 @@ function PriceChartComponent({
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-none"
+      className="relative w-full overflow-hidden"
       style={{ height, background: 'transparent' }}
       role="img"
       aria-label={`Price chart for ${assetPair || 'asset'} with entry and liquidation levels.`}

@@ -36,27 +36,35 @@ export function useAvantisAPI() {
     []
   );
 
-  // Check delegate status - Direct contract read (no backend!)
+  // Check delegate status - Direct contract read with retries (no backend!)
   const checkDelegateStatus = useCallback(
     async (trader: string) => {
-      try {
-        const delegateAddress = await publicClient.readContract({
-          address: AVANTIS_CONTRACTS.Trading,
-          abi: DELEGATIONS_ABI,
-          functionName: 'delegations',
-          args: [trader as `0x${string}`],
-        });
+      const MAX_RETRIES = 3;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const delegateAddress = await publicClient.readContract({
+            address: AVANTIS_CONTRACTS.Trading,
+            abi: DELEGATIONS_ABI,
+            functionName: 'delegations',
+            args: [trader as `0x${string}`],
+          });
 
-        const isSetup = delegateAddress !== '0x0000000000000000000000000000000000000000';
-        return {
-          isSetup,
-          delegateAddress: isSetup ? delegateAddress : null,
-          error: null,
-        };
-      } catch (error) {
-        console.error('Failed to check delegate status:', error);
-        return { isSetup: false, delegateAddress: null, error: 'Failed to read contract' };
+          const isSetup = delegateAddress !== '0x0000000000000000000000000000000000000000';
+          return {
+            isSetup,
+            delegateAddress: isSetup ? delegateAddress : null,
+            error: null,
+          };
+        } catch (error) {
+          if (attempt < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+            continue;
+          }
+          console.error('Failed to check delegate status after retries:', error);
+          return { isSetup: false, delegateAddress: null, error: 'Failed to read contract' };
+        }
       }
+      return { isSetup: false, delegateAddress: null, error: 'Failed to read contract' };
     },
     []
   );
@@ -83,26 +91,34 @@ export function useAvantisAPI() {
     []
   );
 
-  // Check USDC allowance - Direct contract read (no backend!)
+  // Check USDC allowance - Direct contract read with retries (no backend!)
   const checkUsdcAllowance = useCallback(
     async (trader: string): Promise<{ hasSufficient: boolean; allowance: number }> => {
-      try {
-        const allowance = await publicClient.readContract({
-          address: AVANTIS_CONTRACTS.USDC,
-          abi: ERC20_ALLOWANCE_ABI,
-          functionName: 'allowance',
-          args: [trader as `0x${string}`, AVANTIS_CONTRACTS.TradingStorage],
-        });
+      const MAX_RETRIES = 3;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const allowance = await publicClient.readContract({
+            address: AVANTIS_CONTRACTS.USDC,
+            abi: ERC20_ALLOWANCE_ABI,
+            functionName: 'allowance',
+            args: [trader as `0x${string}`, AVANTIS_CONTRACTS.TradingStorage],
+          });
 
-        // Convert from 6 decimals to human readable
-        const allowanceNumber = Number(allowance) / 1e6;
-        const hasSufficient = allowance >= MIN_SUFFICIENT_ALLOWANCE;
+          // Convert from 6 decimals to human readable
+          const allowanceNumber = Number(allowance) / 1e6;
+          const hasSufficient = allowance >= MIN_SUFFICIENT_ALLOWANCE;
 
-        return { hasSufficient, allowance: allowanceNumber };
-      } catch (error) {
-        console.error('Failed to check USDC allowance:', error);
-        return { hasSufficient: false, allowance: 0 };
+          return { hasSufficient, allowance: allowanceNumber };
+        } catch (error) {
+          if (attempt < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+            continue;
+          }
+          console.error('Failed to check USDC allowance after retries:', error);
+          return { hasSufficient: false, allowance: 0 };
+        }
       }
+      return { hasSufficient: false, allowance: 0 };
     },
     []
   );

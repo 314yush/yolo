@@ -135,7 +135,8 @@ export async function logTradeCloseByPosition(
 export async function getActivityStats(wallet: string): Promise<ActivityStats | null> {
   try {
     const res = await fetch(
-      `${API_BASE}/activity/stats?wallet=${encodeURIComponent(wallet)}`
+      `${API_BASE}/activity/stats?wallet=${encodeURIComponent(wallet)}`,
+      { signal: AbortSignal.timeout(5000) }
     );
     if (!res.ok) return null;
     return (await res.json()) as ActivityStats;
@@ -155,7 +156,8 @@ export async function getActivityTrades(
 ): Promise<ActivityTradesResponse | null> {
   try {
     const res = await fetch(
-      `${API_BASE}/activity/trades?wallet=${encodeURIComponent(wallet)}&limit=${limit}&offset=${offset}`
+      `${API_BASE}/activity/trades?wallet=${encodeURIComponent(wallet)}&limit=${limit}&offset=${offset}`,
+      { signal: AbortSignal.timeout(5000) }
     );
     if (!res.ok) return null;
     return (await res.json()) as ActivityTradesResponse;

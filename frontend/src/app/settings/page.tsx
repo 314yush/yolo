@@ -233,7 +233,7 @@ export default function SettingsPage() {
   const btnPrimaryClass = 'py-2 px-3 text-xs font-black uppercase border-2 border-black text-black bg-[#CCFF00] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black';
 
   return (
-    <div className="h-dvh min-h-dvh bg-black flex flex-col px-3 sm:px-4 py-3 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full overflow-hidden">
+    <div className="h-dvh min-h-dvh bg-black flex flex-col px-3 sm:px-4 py-3 font-mono safe-area-top safe-area-bottom max-w-lg mx-auto w-full overflow-hidden">
       {/* Compact header */}
       <header className="shrink-0 flex items-center justify-between mb-3">
         <button
@@ -262,8 +262,10 @@ export default function SettingsPage() {
               <p className="text-white/40 text-xs font-bold">—</p>
             ) : privyBalanceLoading ? (
               <p className="text-white/40 text-sm font-black animate-pulse">...</p>
+            ) : privyBalance !== null ? (
+              <p className="text-[#CCFF00] text-base sm:text-lg font-black leading-none">${privyBalance.toFixed(2)}</p>
             ) : (
-              <p className="text-[#CCFF00] text-base sm:text-lg font-black leading-none">${privyBalance !== null ? privyBalance.toFixed(2) : '0'}</p>
+              <div className="w-16 h-5 animate-shimmer rounded-sm mx-auto" />
             )}
           </div>
           <div className="text-center border-r-2 border-white/10 pr-2">

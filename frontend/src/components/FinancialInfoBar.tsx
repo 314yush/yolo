@@ -22,7 +22,7 @@ export function FinancialInfoBar({ collateral, usdcBalance }: FinancialInfoBarPr
           <span className="text-white/60 font-semibold">BALANCE:</span>
           <span className="text-[#CCFF00] font-bold" aria-live="polite">
             <span className="sr-only">Balance: </span>
-            {usdcBalance !== null ? `$${usdcBalance.toFixed(2)}` : '--'}
+            {usdcBalance !== null ? `$${usdcBalance.toFixed(2)}` : <span className="inline-block w-12 h-4 animate-shimmer rounded-sm align-middle" />}
           </span>
         </div>
       </div>

@@ -464,16 +464,16 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center p-4 sm:p-6 text-center max-w-md mx-auto w-full">
+    <div className="flex flex-col items-center justify-center p-4 sm:p-6 text-center max-w-lg mx-auto w-full">
       <div className="text-2xl sm:text-3xl font-bold text-[#CCFF00] mb-6 sm:mb-8">SETUP REQUIRED</div>
       
       {step === 'setup' && (
         <>
           <div className="text-white text-base sm:text-lg mb-4 leading-relaxed">
-            Enable trading by authorizing a delegate wallet and approving USDC spending.
+            Enable trading by authorizing a secure trading session and approving USDC spending.
           </div>
           <div className="text-white/60 text-sm sm:text-base mb-6 sm:mb-8 leading-relaxed">
-            This is a one-time setup on Base network. Your funds remain in your wallet. USDC approval is set to 10,000 USDC.
+            This is a one-time setup on Base network. Your funds remain in your wallet.
             {delegateStatus.delegateAddress && delegateStatus.delegateAddress.toLowerCase() !== delegateAddress?.toLowerCase() && (
               <div className="mt-3 p-3 bg-[#FFD60A]/10 border-2 border-[#FFD60A]/30 text-[#FFD60A] text-xs rounded-lg">
                 Found an old trading session. Setup will replace it automatically.
@@ -529,7 +529,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           {/* Helpful info about what will happen */}
           {!isProcessing && !isBatching && (
             <div className="mt-4 text-white/50 text-xs leading-relaxed">
-              This will set up your delegate wallet and approve USDC spending in a single transaction.
+              This will set up your secure trading session and approve USDC spending in a single transaction.
             </div>
           )}
         </>

@@ -46,7 +46,7 @@
   /* Layout */
   --nav-height: 72px;
   --header-height: 48px;
-  --max-width: 28rem;
+  --max-width: 32rem;
 }
 
 /* Neo-brutalist base styles */
@@ -69,7 +69,7 @@ body {
   /* Next.js root container */
   #__next {
     width: 100%;
-    max-width: 28rem; /* 448px - mobile-first constraint */
+    max-width: 32rem; /* 512px - desktop constraint */
     margin: 0 auto;
   }
 }
@@ -771,6 +771,93 @@ body {
   .price-chart-container canvas {
     filter: none !important;
   }
+}
+
+/* ============================================
+   MEGA CONTAINER — Merged hero + chart
+   ============================================ */
+
+.mega-container {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Ambient color wash — positive PnL */
+.mega-container.pnl-positive::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 120% 60% at 50% 30%, rgba(204,255,0,0.08) 0%, transparent 70%);
+  z-index: 0;
+}
+
+/* Ambient color wash — negative PnL */
+.mega-container.pnl-negative::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 120% 60% at 50% 30%, rgba(255,0,110,0.08) 0%, transparent 70%);
+  z-index: 0;
+}
+
+/* CRT scanline texture overlay */
+.scanline-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0.03;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(255,255,255,0.5) 2px,
+    rgba(255,255,255,0.5) 3px
+  );
+}
+
+/* Status badge — WINNING / LOSING pill */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 0;
+  border: 2px solid currentColor;
+}
+
+/* Pulsing status dot */
+@keyframes statusDotPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: statusDotPulse 1.2s ease-in-out infinite;
+}
+
+/* Info bar below mega-container */
+.info-bar {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 8px 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 /* ============================================

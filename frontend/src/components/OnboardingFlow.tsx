@@ -38,7 +38,7 @@ const screens: OnboardingScreen[] = [
   },
   {
     title: 'ZERO FEES, INSTANT TRADES',
-    description: 'We use a delegate wallet to execute trades instantly without gas fees. Your funds stay in your wallet—we never hold them. One-time setup, then trade freely.',
+    description: 'We use a secure trading session to execute trades instantly without gas fees. Your funds stay in your wallet—we never hold them. One-time setup, then trade freely.',
     icon: (
       <svg
         className="w-24 h-24 sm:w-32 sm:h-32 text-[#CCFF00]"
@@ -55,7 +55,7 @@ const screens: OnboardingScreen[] = [
   },
   {
     title: 'READY TO TRADE?',
-    description: 'Enable trading with a quick one-time setup. Authorize a delegate wallet and approve USDC spending—then start spinning and trading on Base.',
+    description: 'Enable trading with a quick one-time setup. Authorize a secure trading session and approve USDC spending—then start spinning and trading on Base.',
     icon: (
       <svg
         className="w-24 h-24 sm:w-32 sm:h-32 text-[#CCFF00]"
@@ -110,7 +110,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const isLastStep = currentStep === 2;
 
   return (
-    <div className="relative flex flex-col items-center justify-center p-6 sm:p-8 text-center max-w-md mx-auto w-full min-h-[60vh]">
+    <div className="relative flex flex-col items-center justify-center p-6 sm:p-8 text-center max-w-lg mx-auto w-full min-h-[60vh]">
       {/* Skip button - top right */}
       <button
         onClick={handleSkipClick}

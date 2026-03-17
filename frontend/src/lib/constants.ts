@@ -29,17 +29,18 @@ export const DIRECTIONS: Direction[] = [
   { name: 'SHORT', symbol: 'SHORT', color: '#FF006E', isLong: false },
 ];
 
-// Default collateral amount
-// Minimum position size is $100, so with max leverage (500x), minimum collateral is $0.20
-// We use $10 to provide a comfortable buffer and ensure trades succeed
-export const DEFAULT_COLLATERAL = 10; // $10 USDC (ensures $5,000 position at 500x, well above $100 minimum)
+// Minimum deposit to pass the deposit gate (first-time users)
+export const MIN_DEPOSIT = 5;
 
-// Animation timings (in ms) - Fast mode for instant trading
+// Default collateral amount when spinning
+export const DEFAULT_COLLATERAL = 10; // $10 USDC
+
+// Animation timings (in ms) - Slower spin builds anticipation
 export const WHEEL_TIMINGS = {
-  ASSET_STOP: 1000,       // 1s
-  LEVERAGE_STOP: 2000,    // 2s  
-  DIRECTION_STOP: 3000,   // 3s
-  TOTAL_DURATION: 3500,   // 3.5s total
+  ASSET_STOP: 2500,       // 2.5s
+  LEVERAGE_STOP: 4500,    // 4.5s
+  DIRECTION_STOP: 7000,   // 7s
+  TOTAL_DURATION: 7500,   // 7.5s total
 };
 
 // Colors

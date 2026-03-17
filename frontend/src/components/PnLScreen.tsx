@@ -15,13 +15,7 @@ import { PriceChart } from './PriceChart';
 import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
 import { calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
 import { computeClientPnL } from '@/lib/pnlFees';
-import { X, ArrowUpDown, Dice5, Loader2, ChevronDown } from 'lucide-react';
-
-// Chart colors matching PriceChart component
-const CHART_COLORS = {
-  entry: '#CCFF00',        // Lime Green for entry
-  liquidation: '#FF006E',  // Hot Pink for liquidation
-};
+import { ArrowUpDown, Dice5, Loader2 } from 'lucide-react';
 
 interface PnLScreenProps {
   onClose: () => void;
@@ -47,6 +41,15 @@ function getGamificationMessage(pnlPercentage: number, isConfirming: boolean, is
   return null;
 }
 
+// Format elapsed seconds into a human-readable timer string
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  if (m < 10) return `${m}:${s.toString().padStart(2, '0')}m`;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}m`;
+}
+
 export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const { selection, pnlData, currentTrade, prices, confirmationStage, txHash, isLiquidated, isTakeProfitHit, lastKnownPnLPercentage, showToast, settings } = useTradeStore();
   const { flipTrade, isFlipping } = useFlipTrade();
@@ -54,9 +57,10 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const { isOnline } = useNetworkStatus();
   const [prevPnl, setPrevPnl] = useState<number | null>(null);
   const [isFlashing, setIsFlashing] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const hasTriggeredConfettiRef = useRef(false);
   const hasTriggeredTPConfettiRef = useRef(false);
+  const megaContainerRef = useRef<HTMLDivElement>(null);
 
   // Reset confetti refs when trade changes
   useEffect(() => {
@@ -75,17 +79,34 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isFlipping]);
 
+  // Elapsed timer — ticks every 100ms from trade.openedAt
+  const displayTrade = pnlData?.trade ?? currentTrade;
+  useEffect(() => {
+    const openedAt = displayTrade?.openedAt;
+    if (!openedAt) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const openedAtMs = openedAt > 1e12 ? openedAt : openedAt * 1000;
+    const tick = () => {
+      setElapsedSeconds(Math.max(0, (Date.now() - openedAtMs) / 1000));
+    };
+    tick();
+    const id = setInterval(tick, 100);
+    return () => clearInterval(id);
+  }, [displayTrade?.openedAt]);
+
   // Check if trade is still confirming
   const isConfirming = confirmationStage !== 'none' && confirmationStage !== 'confirmed' && confirmationStage !== 'failed';
-  
+
   // Activate pre-building when trade exists
   usePrebuiltCloseTx();
   usePrebuiltFlipTx();
-  
+
   // Start PnL polling — 500ms when placeholder for faster Avantis discovery
   const pollInterval = currentTrade?.tradeIndex === 0 ? 500 : 1000;
   usePnL({ enabled: true, interval: pollInterval });
-  
+
   // Get real-time Pyth price for the current asset
   const assetPair = pnlData?.trade?.pair ?? currentTrade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
   const pythCurrentPrice = assetPair ? prices[assetPair]?.price ?? null : null;
@@ -191,7 +212,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
     pnl = clientPnL?.pnl ?? pnlData?.pnl ?? 0;
     pnlPercentage = clientPnL?.pnlPercentage ?? pnlData?.pnlPercentage ?? 0;
   }
-  
+
   const isProfit = pnl >= 0;
   const color = isProfit ? '#CCFF00' : '#FF006E';
   const glowClass = isProfit ? 'pnl-glow-green' : 'pnl-glow-red';
@@ -226,18 +247,14 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const liqDistance = currentTrade ? Math.abs(100 + pnlPercentage) : 100;
   const isNearLiq = liqDistance < 20;
 
-  // Get prices from trade data
-  const entryPrice = pnlData?.trade?.openPrice ?? currentTrade?.openPrice ?? null;
-  const liquidationPrice = pnlData?.trade?.liquidationPrice ?? currentTrade?.liquidationPrice ?? null;
+  // Reference lines: only show once real on-chain trade data is loaded.
+  // The optimistic trade has liquidationPrice: 0; real trades always have liqPrice > 0.
+  const rawLiqPrice = pnlData?.trade?.liquidationPrice ?? currentTrade?.liquidationPrice ?? 0;
+  const hasRealTradeData = rawLiqPrice > 0 || isLiquidated || isTakeProfitHit;
+  const entryPrice = hasRealTradeData ? (pnlData?.trade?.openPrice ?? currentTrade?.openPrice ?? null) : null;
+  const liquidationPrice = hasRealTradeData ? rawLiqPrice : null;
   const currentPrice = pythCurrentPrice ?? pnlData?.currentPrice ?? null;
-  
-  // Calculate liquidation price if not provided
-  const calculatedLiquidationPrice = liquidationPrice !== null && liquidationPrice > 0
-    ? liquidationPrice
-    : entryPrice !== null && entryPrice > 0
-    ? entryPrice * 0.15
-    : null;
-  
+
   // Target price: prefer tp from API when > 0, else compute from settings
   const takeProfitPercent = settings.takeProfitPercent ?? 200;
   const tradeForTarget = pnlData?.trade ?? currentTrade;
@@ -247,9 +264,8 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         ? apiTp
         : entryPrice * calculateTakeProfitMultiplier(tradeForTarget.isLong, tradeForTarget.leverage, takeProfitPercent))
     : null;
-  
+
   // Derive display values from actual trade data
-  const displayTrade = pnlData?.trade ?? currentTrade;
   const displayAsset = displayTrade ? ASSETS.find(a => a.pairIndex === displayTrade.pairIndex) : selection?.asset;
   const displayLeverage = displayTrade ? LEVERAGES.find(l => l.value === displayTrade.leverage) : selection?.leverage;
   const displayDirection = displayTrade ? DIRECTIONS.find(d => d.isLong === displayTrade.isLong) : selection?.direction;
@@ -257,8 +273,19 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   // Gamification message
   const gamificationMessage = getGamificationMessage(pnlPercentage, isConfirming, isNearLiq, liqDistance);
 
+  // Whether to show status badge + timer (hidden during special states)
+  const showStatusRow = !isLiquidated && !isTakeProfitHit && !isConfirming;
+
+  // Collateral for info bar
+  const collateral = displayTrade?.collateral ?? 0;
+  // Target PnL amount (net profit at TP)
+  const targetPnlAmount = collateral > 0 ? (collateral * takeProfitPercent) / 100 : null;
+
+  // Mega-container ambient glow class
+  const megaGlowClass = isLiquidated ? 'pnl-negative' : isTakeProfitHit ? 'pnl-positive' : isProfit ? 'pnl-positive' : 'pnl-negative';
+
   return (
-    <div 
+    <div
       className="bg-black w-full safe-area-top safe-area-bottom flex flex-col"
       style={{
         height: '100%',
@@ -268,332 +295,263 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         overflow: 'hidden',
       }}
     >
-      {/* 1. HERO: PnL Display - Compact, efficient layout */}
-      <div 
-        className={`flex flex-col items-center justify-center px-4 ${isFlashing ? 'animate-pnl-flash' : ''}`}
+      {/* Trade info strip — sits ABOVE the mega-container */}
+      <div
+        className="flex items-center justify-center gap-2 text-white/80 font-mono px-4"
         style={{
-          minHeight: '20vh',
-          paddingTop: 'max(env(safe-area-inset-top, 0px), 0.75rem)',
-          paddingBottom: '0.5rem',
+          fontSize: 'clamp(0.875rem, 2.5vw, 1rem)',
+          paddingTop: 'max(env(safe-area-inset-top, 0px), 0.5rem)',
+          paddingBottom: '0.25rem',
         }}
+      >
+        {displayAsset && (
+          <span className="flex items-center gap-1">
+            <span style={{ color: displayAsset.color }}>●</span>
+            <span>{displayAsset.name}</span>
+          </span>
+        )}
+        {displayLeverage && (
+          <>
+            <span className="text-white/40">•</span>
+            <span>{displayLeverage.name}</span>
+          </>
+        )}
+        {displayDirection && (
+          <>
+            <span className="text-white/40">•</span>
+            <span style={{ color: displayDirection.color }}>{displayDirection.name}</span>
+          </>
+        )}
+        {gamificationMessage && showStatusRow && (
+          <>
+            <span className="text-white/40">•</span>
+            <span
+              className={`font-bold ${isNearLiq ? 'animate-pulse' : ''}`}
+              style={{
+                color: isNearLiq ? '#FF006E' : '#CCFF00',
+                textShadow: isNearLiq
+                  ? '0 0 10px rgba(255, 0, 110, 0.8), 0 0 20px rgba(255, 0, 110, 0.4)'
+                  : 'none',
+              }}
+            >
+              {gamificationMessage}
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* MEGA CONTAINER — merged hero + chart as one seamless unit */}
+      <div
+        ref={megaContainerRef}
+        className={`mega-container ${megaGlowClass}`}
         role="status"
         aria-live="polite"
         aria-atomic="true"
       >
-        {isLiquidated ? (
-          <>
-            {/* Inline: Trade info */}
-            {displayAsset && (
-              <div 
-                className="flex items-center gap-2 mb-2 text-white/80 font-mono"
-                style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
-              >
-                <span className="flex items-center gap-1">
-                  <span style={{ color: displayAsset.color }}>●</span>
-                  <span>{displayAsset.name}</span>
-                </span>
-                {displayLeverage && (
-                  <>
-                    <span className="text-white/40">•</span>
-                    <span>{displayLeverage.name}</span>
-                  </>
-                )}
-                {displayDirection && (
-                  <>
-                    <span className="text-white/40">•</span>
-                    <span style={{ color: displayDirection.color }}>{displayDirection.name}</span>
-                  </>
-                )}
-              </div>
-            )}
-            
-            {/* Liquidation message - Compact */}
-            <div 
-              className="font-black leading-none font-mono text-[#FF006E] mb-2 animate-pulse"
-              style={{ fontSize: 'clamp(2rem, 8vw, 3.5rem)' }}
-            >
-              LIQUIDATED
-            </div>
-            
-            {/* Final PnL display */}
-            <div
-              className={`font-black ${glowClass} leading-none font-mono`}
-              style={{ 
-                color: '#FF006E', 
-                letterSpacing: '-0.03em',
-                fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
-              }}
-            >
-              -${Math.abs(pnl).toFixed(2)}
-            </div>
-            
-            {/* Final percentage */}
-            <div
-              className={`font-bold mt-1 ${glowClass} font-mono`}
-              style={{ 
-                color: '#FF006E',
-                fontSize: 'clamp(1.25rem, 5vw, 2rem)',
-              }}
-            >
-              {pnlPercentage.toFixed(2)}%
-            </div>
-            
-            {/* Liquidation explanation */}
-            <div 
-              className="text-white/70 mt-2 font-semibold font-mono text-center px-4"
-              style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
-            >
-              Position closed at -85% loss
-            </div>
-          </>
-        ) : isTakeProfitHit ? (
-          <>
-            {/* Inline: Trade info */}
-            {displayAsset && (
-              <div 
-                className="flex items-center gap-2 mb-2 text-white/80 font-mono"
-                style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
-              >
-                <span className="flex items-center gap-1">
-                  <span style={{ color: displayAsset.color }}>●</span>
-                  <span>{displayAsset.name}</span>
-                </span>
-                {displayLeverage && (
-                  <>
-                    <span className="text-white/40">•</span>
-                    <span>{displayLeverage.name}</span>
-                  </>
-                )}
-                {displayDirection && (
-                  <>
-                    <span className="text-white/40">•</span>
-                    <span style={{ color: displayDirection.color }}>{displayDirection.name}</span>
-                  </>
-                )}
-              </div>
-            )}
-            
-            {/* Take profit message - celebratory */}
-            <div 
-              className="font-black leading-none font-mono text-[#CCFF00] mb-2"
-              style={{ fontSize: 'clamp(2rem, 8vw, 3.5rem)' }}
-            >
-              TAKE PROFIT!
-            </div>
-            
-            {/* Final PnL display - green */}
-            <div
-              className={`font-black pnl-glow-green leading-none font-mono`}
-              style={{ 
-                color: '#CCFF00', 
-                letterSpacing: '-0.03em',
-                fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
-              }}
-            >
-              +${pnl.toFixed(2)}
-            </div>
-            
-            {/* Final percentage */}
-            <div
-              className={`font-bold mt-1 pnl-glow-green font-mono`}
-              style={{ 
-                color: '#CCFF00',
-                fontSize: 'clamp(1.25rem, 5vw, 2rem)',
-              }}
-            >
-              +{pnlPercentage.toFixed(2)}%
-            </div>
-            
-            {/* TP explanation */}
-            <div 
-              className="text-white/70 mt-2 font-semibold font-mono text-center px-4"
-              style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
-            >
-              Target reached · Position closed
-            </div>
-          </>
-        ) : isConfirming ? (
-          <>
-            <div 
-              className="font-black leading-none font-mono text-white/60 mb-4"
-              style={{ fontSize: 'clamp(2.5rem, 10vw, 4.5rem)' }}
-            >
-              CONFIRMING...
-            </div>
-            <div 
-              className="border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin"
-              style={{ width: 'clamp(2rem, 6vw, 3rem)', height: 'clamp(2rem, 6vw, 3rem)' }}
-            />
-            {txHash && (
-              <div 
-                className="text-white/40 mt-4 font-mono"
-                style={{ fontSize: 'clamp(0.625rem, 1.5vw, 0.75rem)' }}
-              >
-                {txHash.slice(0, 10)}...{txHash.slice(-8)}
-              </div>
-            )}
-            {gamificationMessage && (
-              <div 
-                className="text-[#CCFF00] mt-4 font-bold font-mono"
-                style={{ fontSize: 'clamp(1rem, 3vw, 1.25rem)' }}
-              >
-                {gamificationMessage}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {/* Inline: Trade info + Gamification - Compact header */}
-            <div 
-              className="flex items-center gap-2 mb-2 text-white/80 font-mono flex-wrap justify-center"
-              style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
-            >
-              {displayAsset && (
-                <span className="flex items-center gap-1">
-                  <span style={{ color: displayAsset.color }}>●</span>
-                  <span>{displayAsset.name}</span>
-                </span>
-              )}
-              {displayLeverage && (
-                <>
-                  <span className="text-white/40">•</span>
-                  <span>{displayLeverage.name}</span>
-                </>
-              )}
-              {displayDirection && (
-                <>
-                  <span className="text-white/40">•</span>
-                  <span style={{ color: displayDirection.color }}>{displayDirection.name}</span>
-                </>
-              )}
-              {gamificationMessage && (
-                <>
-                  <span className="text-white/40">•</span>
-                  <span 
-                    className={`font-bold ${isNearLiq ? 'animate-pulse' : ''}`}
-                    style={{ 
-                      color: isNearLiq ? '#FF006E' : '#CCFF00',
-                      textShadow: isNearLiq 
-                        ? '0 0 10px rgba(255, 0, 110, 0.8), 0 0 20px rgba(255, 0, 110, 0.4)' 
-                        : 'none',
-                    }}
-                  >
-                    {gamificationMessage}
-                  </span>
-                </>
-              )}
-            </div>
-            
-            {/* Main PnL - Animated counting */}
-            <div className={`transition-transform duration-300 ${bigWinScale ? 'scale-[1.2]' : 'scale-100'}`}>
+        {/* Scanline CRT overlay */}
+        <div className="scanline-overlay" />
+
+        {/* Hero section — PnL numbers */}
+        <div className={`relative z-[5] text-center pt-2 px-4 ${isFlashing ? 'animate-pnl-flash' : ''}`}>
+          {/* Status row: badge (left) + timer (right) */}
+          {showStatusRow && (
+            <div className="flex items-center justify-between mb-2">
               <div
-                className={`font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
+                className="status-badge font-mono"
+                style={{ color }}
+              >
+                <span className="status-dot" />
+                <span>{isProfit ? 'WINNING' : 'LOSING'}</span>
+              </div>
+              <div
+                className="font-mono font-bold text-white/60"
+                style={{ fontSize: '0.8rem' }}
+              >
+                ⏱ {formatElapsed(elapsedSeconds)}
+              </div>
+            </div>
+          )}
+
+          {isLiquidated ? (
+            <>
+              <div
+                className="font-black leading-none font-mono text-[#FF006E] mb-2 animate-pulse"
+                style={{ fontSize: 'clamp(2rem, 8vw, 3.5rem)' }}
+              >
+                LIQUIDATED
+              </div>
+              <div
+                className={`font-black ${glowClass} leading-none font-mono`}
                 style={{
-                  color,
+                  color: '#FF006E',
                   letterSpacing: '-0.03em',
                   fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
                 }}
               >
-                {animatedPnl}
+                -${Math.abs(pnl).toFixed(2)}
               </div>
-            </div>
+              <div
+                className={`font-bold mt-1 ${glowClass} font-mono`}
+                style={{
+                  color: '#FF006E',
+                  fontSize: 'clamp(1.25rem, 5vw, 2rem)',
+                }}
+              >
+                {pnlPercentage.toFixed(2)}%
+              </div>
+              <div
+                className="text-white/70 mt-1 font-semibold font-mono text-center"
+                style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
+              >
+                Position closed at -85% loss
+              </div>
+            </>
+          ) : isTakeProfitHit ? (
+            <>
+              <div
+                className="font-black leading-none font-mono text-[#CCFF00] mb-2"
+                style={{ fontSize: 'clamp(2rem, 8vw, 3.5rem)' }}
+              >
+                TAKE PROFIT!
+              </div>
+              <div
+                className="font-black pnl-glow-green leading-none font-mono"
+                style={{
+                  color: '#CCFF00',
+                  letterSpacing: '-0.03em',
+                  fontSize: 'clamp(2.5rem, 10vw, 4.5rem)',
+                }}
+              >
+                +${pnl.toFixed(2)}
+              </div>
+              <div
+                className="font-bold mt-1 pnl-glow-green font-mono"
+                style={{
+                  color: '#CCFF00',
+                  fontSize: 'clamp(1.25rem, 5vw, 2rem)',
+                }}
+              >
+                +{pnlPercentage.toFixed(2)}%
+              </div>
+              <div
+                className="text-white/70 mt-1 font-semibold font-mono text-center"
+                style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
+              >
+                Target reached · Position closed
+              </div>
+            </>
+          ) : isConfirming ? (
+            <>
+              <div
+                className="font-black leading-none font-mono text-white/60 mb-4"
+                style={{ fontSize: 'clamp(2.5rem, 10vw, 4.5rem)' }}
+              >
+                CONFIRMING...
+              </div>
+              <div
+                className="border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin mx-auto"
+                style={{ width: 'clamp(2rem, 6vw, 3rem)', height: 'clamp(2rem, 6vw, 3rem)' }}
+              />
+              {txHash && (
+                <div
+                  className="text-white/40 mt-4 font-mono"
+                  style={{ fontSize: 'clamp(0.625rem, 1.5vw, 0.75rem)' }}
+                >
+                  {txHash.slice(0, 10)}...{txHash.slice(-8)}
+                </div>
+              )}
+              {gamificationMessage && (
+                <div
+                  className="text-[#CCFF00] mt-4 font-bold font-mono"
+                  style={{ fontSize: 'clamp(1rem, 3vw, 1.25rem)' }}
+                >
+                  {gamificationMessage}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* Main PnL — big dollar amount */}
+              <div className={`transition-transform duration-300 ${bigWinScale ? 'scale-[1.2]' : 'scale-100'}`}>
+                <div
+                  className={`font-black animate-pnl-pulse ${glowClass} leading-none font-mono`}
+                  style={{
+                    color,
+                    letterSpacing: '-0.03em',
+                    fontSize: 'clamp(3rem, 12vw, 4.5rem)',
+                  }}
+                >
+                  {animatedPnl}
+                </div>
+              </div>
 
-            {/* Percentage - Animated counting */}
-            <div
-              className={`font-bold mt-1 ${glowClass} font-mono`}
-              style={{
-                color,
-                fontSize: 'clamp(1.25rem, 5vw, 2rem)',
-              }}
-            >
-              {animatedPct}%
-            </div>
-          </>
-        )}
-      </div>
+              {/* Percentage */}
+              <div
+                className={`font-bold mt-1 ${glowClass} font-mono`}
+                style={{
+                  color,
+                  fontSize: 'clamp(1.25rem, 5vw, 2rem)',
+                }}
+              >
+                {animatedPct}%
+              </div>
 
-      {/* 2. Compact Info Row - Entry → Current */}
-      <div 
-        className="px-4 py-1.5"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '0.25rem',
-        }}
-      >
-        {/* Entry → Current price */}
-        {(entryPrice != null || currentPrice != null) && (
-          <div 
-            className="flex items-center justify-center gap-2 font-mono text-white font-semibold"
-            style={{ fontSize: 'clamp(0.875rem, 2.5vw, 1rem)' }}
-          >
-            <span className="text-white/60">Entry:</span>
-            <span className="text-white font-bold">
-              ${entryPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
-            </span>
-            <span className="text-white/60">→</span>
-            <span className="text-white/60">Now:</span>
-            <span className="font-bold" style={{ color }}>
-              ${currentPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
-            </span>
-          </div>
-        )}
-        
-        {/* Progressive disclosure toggle */}
-        <button
-          onClick={() => setShowDetails(!showDetails)}
-          className="text-white/70 font-semibold font-mono flex items-center gap-1 hover:text-white transition-colors touch-manipulation"
-          style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)', minHeight: '44px', padding: '0.5rem' }}
-        >
-          <span>{showDetails ? 'Hide' : 'Show'} details</span>
-          <ChevronDown 
-            className={`w-4 h-4 transition-transform duration-200 ${showDetails ? 'rotate-180' : ''}`}
-            strokeWidth={2}
+              {/* Compact price row: entry → current */}
+              {(entryPrice != null && currentPrice != null) && (
+                <div
+                  className="flex items-center justify-center gap-2 font-mono text-white/70 mt-1"
+                  style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
+                >
+                  <span>${entryPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}</span>
+                  <span className="text-white/40">→</span>
+                  <span style={{ color }}>
+                    ${currentPrice?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? '--'}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Chart section — fills remaining space, no padding, no border */}
+        <div className="flex-1 w-full overflow-hidden" style={{ minHeight: '120px' }}>
+          <PriceChart
+            assetPair={assetPair}
+            entryPrice={entryPrice}
+            liquidationPrice={liquidationPrice}
+            targetPrice={targetPrice}
+            height={typeof window !== 'undefined' ? Math.max(160, window.innerHeight * 0.3) : 200}
+            pnl={pnl}
           />
-        </button>
-        
-        {/* Progressive disclosure content */}
-        {showDetails && (
-          <div 
-            className="flex flex-col items-center gap-1 text-white/80 font-semibold font-mono animate-fade-in"
-            style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
-          >
-            {targetPrice && (
-              <div>
-                Target: ${targetPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })} 
-                <span className="text-[#CCFF00]/60"> ({takeProfitPercent}% net)</span>
-              </div>
-            )}
-            {liquidationPrice && (
-              <div>
-                Liq: ${liquidationPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              </div>
-            )}
+        </div>
+      </div>
+
+      {/* Info bar — Collateral / Target / Liq */}
+      <div className="info-bar font-mono text-white/70">
+        <div className="flex flex-col items-center">
+          <span className="text-white/40" style={{ fontSize: '0.65rem' }}>Collateral</span>
+          <span className="text-white font-bold" style={{ fontSize: '0.8rem' }}>
+            ${collateral.toFixed(2)}
+          </span>
+        </div>
+        {targetPnlAmount != null && (
+          <div className="flex flex-col items-center">
+            <span className="text-white/40" style={{ fontSize: '0.65rem' }}>Target</span>
+            <span className="font-bold" style={{ fontSize: '0.8rem', color: '#CCFF00' }}>
+              +${targetPnlAmount.toFixed(2)}
+            </span>
           </div>
         )}
+        <div className="flex flex-col items-center">
+          <span className="text-white/40" style={{ fontSize: '0.65rem' }}>Liq</span>
+          <span className="font-bold" style={{ fontSize: '0.8rem', color: '#FF006E' }}>
+            -${collateral.toFixed(2)}
+          </span>
+        </div>
       </div>
 
-      {/* 3. Chart Widget - Expanded for better visibility */}
+      {/* Action Buttons */}
       <div
-        className="w-full overflow-hidden px-4 flex-1"
-        style={{
-          minHeight: '220px',
-          maxHeight: 'min(300px, 40vh)',
-        }}
-      >
-        <PriceChart
-          assetPair={assetPair}
-          entryPrice={entryPrice}
-          liquidationPrice={liquidationPrice}
-          targetPrice={targetPrice}
-          height={Math.min(280, typeof window !== 'undefined' ? window.innerHeight * 0.4 : 280)}
-          pnl={pnl}
-        />
-      </div>
-
-      {/* 5. Action Buttons - Compact spacing */}
-      <div 
         className="mt-auto px-4"
         style={{
           paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))',

@@ -5,7 +5,7 @@ import { usePrivy } from '@privy-io/react-auth';
 import { useFundWallet } from '@privy-io/react-auth';
 import { base } from 'viem/chains';
 import { useUsdcBalance } from '@/hooks/useUsdcBalance';
-import { DEFAULT_COLLATERAL } from '@/lib/constants';
+import { MIN_DEPOSIT } from '@/lib/constants';
 
 interface DepositUSDCProps {
   onDeposited: () => void;
@@ -17,7 +17,7 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
   const { balance, isLoading } = useUsdcBalance();
   const userAddress = user?.wallet?.address;
 
-  const hasEnoughBalance = balance !== null && balance >= DEFAULT_COLLATERAL;
+  const hasEnoughBalance = balance !== null && balance >= MIN_DEPOSIT;
 
   const handleFundWallet = useCallback(async () => {
     if (!userAddress) return;
@@ -28,7 +28,7 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
         options: {
           chain: base,
           asset: 'USDC',
-          amount: String(DEFAULT_COLLATERAL),
+          amount: String(MIN_DEPOSIT),
         },
       });
     } catch (error) {
@@ -37,7 +37,7 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
   }, [fundWallet, userAddress]);
 
   return (
-    <div className="relative flex flex-col items-center justify-center p-6 sm:p-8 text-center max-w-md mx-auto w-full min-h-[60vh]">
+    <div className="relative flex flex-col items-center justify-center p-6 sm:p-8 text-center max-w-lg mx-auto w-full min-h-[60vh]">
       {/* Icon */}
       <div className="mb-6 sm:mb-8 flex items-center justify-center">
         <svg
@@ -60,7 +60,7 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
 
       {/* Description */}
       <p className="text-white/80 text-base sm:text-lg mb-6 leading-relaxed max-w-sm">
-        Add at least ${DEFAULT_COLLATERAL} USDC to your wallet on Base. You&apos;ll need it for collateral when you spin.
+        Add at least ${MIN_DEPOSIT} USDC to your wallet on Base. You&apos;ll need it for collateral when you spin.
       </p>
 
       {/* Balance display */}

@@ -34,7 +34,7 @@ export function useBatchedSetup() {
     userAddress: string
   ): Promise<BatchedSetupResult> => {
     if (!delegateAddress) {
-      return { success: false, error: 'Delegate wallet not initialized' };
+      return { success: false, error: 'Secure trading session not initialized' };
     }
 
     const userWallet = wallets?.find((w) =>
@@ -82,7 +82,7 @@ export function useBatchedSetup() {
       }
 
       // 1. setDelegate - Privy sponsors gas
-      setSetupStatus('Ready to sign. Setting up delegate wallet...');
+      setSetupStatus('Ready to sign. Setting up secure trading session...');
       const setDelegateResult = await sendTransaction(
         {
           to: delegateTx.to as `0x${string}`,

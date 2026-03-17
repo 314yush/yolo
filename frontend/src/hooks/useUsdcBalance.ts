@@ -30,7 +30,7 @@ export function useUsdcBalance() {
 
   const fetchBalance = useCallback(async () => {
     const userAddress = user?.wallet?.address as `0x${string}` | undefined;
-    
+
     if (!authenticated || !userAddress) {
       setBalance(null);
       return;
@@ -39,24 +39,33 @@ export function useUsdcBalance() {
     setIsLoading(true);
     setError(null);
 
-    try {
-      const balanceBigInt = (await publicClient.readContract({
-        address: CONTRACTS.USDC,
-        abi: ERC20_ABI,
-        functionName: 'balanceOf',
-        args: [userAddress],
-      })) as bigint;
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const balanceBigInt = (await publicClient.readContract({
+          address: CONTRACTS.USDC,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [userAddress],
+        })) as bigint;
 
-      // USDC has 6 decimals
-      const balanceFormatted = parseFloat(formatUnits(balanceBigInt, 6));
-      setBalance(balanceFormatted);
-    } catch (err) {
-      console.error('Error fetching USDC balance:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch balance');
-      setBalance(null);
-    } finally {
-      setIsLoading(false);
+        // USDC has 6 decimals
+        const balanceFormatted = parseFloat(formatUnits(balanceBigInt, 6));
+        setBalance(balanceFormatted);
+        setIsLoading(false);
+        return;
+      } catch (err) {
+        if (attempt < MAX_RETRIES) {
+          // Exponential backoff: 500ms, 1s, 2s
+          await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+          continue;
+        }
+        console.error('Error fetching USDC balance after retries:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch balance');
+        // Keep last known balance on RPC failure instead of clearing it
+      }
     }
+    setIsLoading(false);
   }, [authenticated, user]);
 
   // Refetch immediately when txHash changes (trade/close submitted)

@@ -108,18 +108,19 @@ export default function ActivityPage() {
 
     const loadStats = async () => {
       setActivityApiError(null);
-      const stats = await getActivityStats(userAddress);
+      const [stats, vol] = await Promise.all([
+        getActivityStats(userAddress),
+        getTotalVolume(userAddress).catch((error) => {
+          console.error('[ActivityPage] Failed to fetch historic volume:', error);
+          return null;
+        }),
+      ]);
       if (stats) {
         setActivityStats(stats);
       } else {
         setActivityApiError('Activity data temporarily unavailable. Check your connection.');
       }
-      try {
-        const vol = await getTotalVolume(userAddress);
-        setHistoricVolume(vol);
-      } catch (error) {
-        console.error('[ActivityPage] Failed to fetch historic volume:', error);
-      }
+      if (vol !== null) setHistoricVolume(vol);
     };
 
     loadStats();
@@ -166,12 +167,20 @@ export default function ActivityPage() {
     const loadAllClosedTrades = async () => {
       const mergedMap = new Map<string, ClosedTrade>();
 
-      // Primary: Activity API
-      const activityRes = await getActivityTrades(userAddress, 50, 0);
+      // Fetch all sources in parallel: Activity API, Avantis API, localStorage
+      const localClosed = loadClosedTrades(userAddress);
+      const [activityRes, apiClosed] = await Promise.all([
+        getActivityTrades(userAddress, 50, 0),
+        getClosedTrades(userAddress, 1).catch((error) => {
+          console.error('[ActivityPage] Failed to fetch closed trades from Avantis:', error);
+          return [] as ClosedTrade[];
+        }),
+      ]);
+
       if (!activityRes) {
         setActivityApiError('Activity data temporarily unavailable. Check your connection.');
       } else {
-        setActivityApiError(null); // Clear error when API responds
+        setActivityApiError(null);
       }
       const activityClosed = activityRes?.trades
         ?.filter((t) => t.status === 'closed' || t.status === 'liquidated')
@@ -180,15 +189,6 @@ export default function ActivityPage() {
         const key = `${trade.pairIndex}-${trade.tradeIndex}`;
         mergedMap.set(key, trade);
       });
-
-      // Fallback: localStorage and Avantis for trades closed before Activity API or when API is down
-      const localClosed = loadClosedTrades(userAddress);
-      let apiClosed: ClosedTrade[] = [];
-      try {
-        apiClosed = await getClosedTrades(userAddress, 1);
-      } catch (error) {
-        console.error('[ActivityPage] Failed to fetch closed trades from Avantis:', error);
-      }
       apiClosed.forEach((trade) => {
         const key = `${trade.pairIndex}-${trade.tradeIndex}`;
         if (!mergedMap.has(key)) mergedMap.set(key, trade);
@@ -580,7 +580,7 @@ export default function ActivityPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom max-w-md mx-auto w-full">
+    <div className="min-h-screen bg-black flex flex-col px-4 sm:px-6 py-4 sm:py-6 font-mono safe-area-top safe-area-bottom max-w-lg mx-auto w-full">
       {/* Header - Improved layout */}
       <header className="w-full mb-4 sm:mb-6">
         {activityApiError && (
