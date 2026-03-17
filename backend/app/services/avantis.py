@@ -165,8 +165,7 @@ class AvantisService:
         
         trader = to_checksum_address(trader)
         
-        # Validate minimum position size
-        # Avantis requires minimum position size of $100 (positionSizeUSDC = collateral * leverage)
+        # Avantis requires $100 min position size (collateral × leverage)
         MIN_POSITION_SIZE_USD = 100.0
         position_size_usd = collateral * leverage
         if position_size_usd < MIN_POSITION_SIZE_USD:

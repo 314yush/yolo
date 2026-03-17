@@ -387,7 +387,7 @@ export function buildCloseTradeTx(params: CloseTradeParams): EncodedTransaction 
 
 /**
  * Validate minimum position size
- * Avantis requires minimum position size of $100
+ * Avantis requires $100 min position size (collateral × leverage)
  */
 export function validatePositionSize(
   collateral: number,

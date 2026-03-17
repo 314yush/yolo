@@ -15,7 +15,7 @@ interface UsePnLOptions {
 export function usePnL(options: UsePnLOptions = {}) {
   const { enabled = true, interval = 2000 } = options;
   
-  const { userAddress, currentTrade, pnlData, setPnLData, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose } = useTradeStore();
+  const { userAddress, currentTrade, pnlData, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose } = useTradeStore();
   const { getPnL } = useAvantisAPI();
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -34,6 +34,8 @@ export function usePnL(options: UsePnLOptions = {}) {
   const stageRef = useRef(stage);
   const getPnLRef = useRef(getPnL);
   const setPnLDataRef = useRef(setPnLData);
+  const setCurrentTradeRef = useRef(setCurrentTrade);
+  const setRememberedIndicesRef = useRef(setRememberedIndices);
   const setIsLiquidatedRef = useRef(setIsLiquidated);
   const setIsTakeProfitHitRef = useRef(setIsTakeProfitHit);
   const lastKnownPnLPercentageRef = useRef(lastKnownPnLPercentage);
@@ -55,13 +57,15 @@ export function usePnL(options: UsePnLOptions = {}) {
     stageRef.current = stage;
     getPnLRef.current = getPnL;
     setPnLDataRef.current = setPnLData;
+    setCurrentTradeRef.current = setCurrentTrade;
+    setRememberedIndicesRef.current = setRememberedIndices;
     setIsLiquidatedRef.current = setIsLiquidated;
     setIsTakeProfitHitRef.current = setIsTakeProfitHit;
     lastKnownPnLPercentageRef.current = lastKnownPnLPercentage;
     rememberedPairIndexRef.current = rememberedPairIndex;
     rememberedTradeIndexRef.current = rememberedTradeIndex;
     isIntentionalCloseRef.current = isIntentionalClose;
-  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose]);
+  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose]);
 
   const fetchPnL = useCallback(async (isRetry = false): Promise<void> => {
     const userAddr = userAddressRef.current;
@@ -100,13 +104,38 @@ export function usePnL(options: UsePnLOptions = {}) {
       // Use remembered indices if available (for multiple positions), otherwise fall back to currentTrade
       const pairIndexToMatch = rememberedPairIdx !== null ? rememberedPairIdx : trade?.pairIndex;
       const tradeIndexToMatch = rememberedTradeIdx !== null ? rememberedTradeIdx : trade?.tradeIndex;
-      
-      // Find the current trade's PnL using remembered indices or currentTrade
-      const currentPnL = positions.find(
-        (p) => 
+
+      // Find the current trade's PnL: exact match first, then placeholder fallback
+      let currentPnL = positions.find(
+        (p) =>
           p.trade.pairIndex === pairIndexToMatch &&
           p.trade.tradeIndex === tradeIndexToMatch
       );
+
+      // Placeholder fallback: tradeIndex 0 means we don't know the real index yet.
+      // Match newest position on same pair opened within last 60s (our just-opened trade).
+      if (!currentPnL && tradeIndexToMatch === 0 && pairIndexToMatch !== undefined && trade) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const recentPositions = positions
+          .filter(
+            (p) =>
+              p.trade.pairIndex === pairIndexToMatch &&
+              p.trade.openedAt >= nowSec - 60
+          )
+          .sort((a, b) => b.trade.openedAt - a.trade.openedAt);
+        const match = recentPositions[0];
+        if (match) {
+          debug('[usePnL] Placeholder match: found newest position on pair', {
+            pairIndex: pairIndexToMatch,
+            tradeIndex: match.trade.tradeIndex,
+            openedAt: match.trade.openedAt,
+          });
+          currentPnL = match;
+          // Sync currentTrade and remembered indices with real data
+          setCurrentTradeRef.current(match.trade);
+          setRememberedIndicesRef.current(match.trade.pairIndex, match.trade.tradeIndex);
+        }
+      }
       
       if (currentPnL) {
         positionDisappearedAtRef.current = null;

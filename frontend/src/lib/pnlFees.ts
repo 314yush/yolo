@@ -105,3 +105,54 @@ export function grossPnlPForNetPnlP(
   }
   return gross;
 }
+
+/**
+ * Compute net PnL client-side for ZFP trades (no Avantis API needed).
+ * Used for instant display when we have temp trade + Pyth price but Avantis hasn't indexed yet.
+ *
+ * @param collateral - Position collateral in USDC
+ * @param leverage - Leverage (e.g. 250)
+ * @param isLong - true for LONG
+ * @param openPrice - Entry price
+ * @param currentPrice - Current price (from Pyth)
+ * @param isPnl - true for ZFP trades (default); applies tiered fee on profits
+ * @param rolloverFee - Rollover fee to deduct (default 0 for new positions)
+ * @returns { pnl, pnlPercentage } - Net values for display
+ */
+export function computeClientPnL(
+  collateral: number,
+  leverage: number,
+  isLong: boolean,
+  openPrice: number,
+  currentPrice: number,
+  isPnl: boolean = true,
+  rolloverFee: number = 0
+): { pnl: number; pnlPercentage: number } {
+  if (
+    !isFiniteNumber(collateral) || collateral <= 0 ||
+    !isFiniteNumber(leverage) || leverage <= 0 ||
+    !isFiniteNumber(openPrice) || openPrice <= 0 ||
+    !isFiniteNumber(currentPrice) || currentPrice <= 0
+  ) {
+    return { pnl: 0, pnlPercentage: 0 };
+  }
+
+  const positionSize = collateral * leverage;
+  const grossPnl = isLong
+    ? positionSize * (currentPrice - openPrice) / openPrice
+    : positionSize * (openPrice - currentPrice) / openPrice;
+
+  let pnl: number;
+  if (isPnl && grossPnl > 0) {
+    const grossPnlP = (grossPnl / collateral) * 100;
+    const feeP = pnlFeeByGrossProfitP(grossPnlP, PNL_FEES.tierP, PNL_FEES.feesP);
+    pnl = grossPnl * (1 - feeP / 100) - rolloverFee;
+  } else {
+    pnl = grossPnl - rolloverFee;
+  }
+
+  const pnlPercentage = Number.isFinite(pnl) ? (pnl / collateral) * 100 : 0;
+  const safePnl = Number.isFinite(pnl) ? pnl : 0;
+
+  return { pnl: safePnl, pnlPercentage };
+}

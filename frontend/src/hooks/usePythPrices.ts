@@ -4,21 +4,11 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { debug } from '@/lib/debug';
 
+import { PYTH_FEED_IDS } from '@/lib/pythFeeds';
+
 // Pyth Hermes SSE streaming endpoint (WebSocket at /ws is NOT part of Hermes API)
 const PYTH_HERMES_BASE = 'https://hermes.pyth.network';
 const PYTH_SSE_PATH = '/v2/updates/price/stream';
-
-// Pyth price feed IDs for supported assets (mainnet)
-// These are the canonical feed IDs from Pyth
-const PYTH_FEED_IDS: Record<string, string> = {
-  'BTC/USD': '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43',
-  'ETH/USD': '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace',
-  'SOL/USD': '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
-  'XRP/USD': '0xec5d399846a9209f3fe5881d70aae9268c94339ff9817e8d18ff19fa05eea1c8',
-  // Commodities - XAU (Gold) and XAG (Silver)
-  'XAU/USD': '0x765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2',
-  'XAG/USD': '0xf2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e',
-};
 
 // Reverse mapping for quick lookup (strip 0x for matching - Hermes returns id without 0x)
 const FEED_ID_TO_PAIR: Record<string, string> = Object.fromEntries(

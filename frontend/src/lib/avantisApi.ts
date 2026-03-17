@@ -7,6 +7,7 @@
  */
 
 import { ASSETS } from './constants';
+import { fetchPythPrice } from './pythFeeds';
 import { PNL_FEES, pnlFeeByGrossProfitP } from './pnlFees';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
@@ -275,11 +276,18 @@ export async function fetchPnL(
     }
     try {
       const pairName = trade.pair;
-      const pythPrice = prices[pairName]?.price;
-      const currentPrice = pythPrice ?? trade.openPrice;
-
-      if (!pythPrice) {
-        console.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL uses open price as fallback`);
+      let currentPrice: number;
+      const storePrice = prices[pairName]?.price;
+      if (storePrice != null) {
+        currentPrice = storePrice;
+      } else {
+        const restPrice = await fetchPythPrice(pairName);
+        if (restPrice != null) {
+          currentPrice = restPrice;
+        } else {
+          console.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL uses open price as fallback`);
+          currentPrice = trade.openPrice;
+        }
       }
 
       const { pnl, pnlPercentage, grossPnl, grossPnlPercentage } = calculatePnL(pos, currentPrice);

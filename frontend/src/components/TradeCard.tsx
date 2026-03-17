@@ -64,8 +64,9 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
   
   // Check if this is a ClosedTrade
   const closedTrade = isClosed && 'finalPnL' in trade ? trade as ClosedTrade : null;
-  const rawPnl = closedTrade ? closedTrade.finalPnL : (pnlData?.grossPnl ?? 0);
-  const rawPnlPct = closedTrade ? closedTrade.finalPnLPercentage : (pnlData?.grossPnlPercentage ?? 0);
+  // Use net PnL for open trades (what user keeps after ZFP fees)
+  const rawPnl = closedTrade ? closedTrade.finalPnL : (pnlData?.pnl ?? 0);
+  const rawPnlPct = closedTrade ? closedTrade.finalPnLPercentage : (pnlData?.pnlPercentage ?? 0);
   const pnl = Number.isFinite(Number(rawPnl)) ? Number(rawPnl) : 0;
   const pnlPercentage = Number.isFinite(Number(rawPnlPct)) ? Number(rawPnlPct) : 0;
   const currentPrice = closedTrade ? closedTrade.closePrice : (pnlData?.currentPrice ?? trade.openPrice);

@@ -2,13 +2,14 @@ import type { Settings } from '@/types';
 import { DEFAULT_COLLATERAL } from './constants';
 
 const STORAGE_KEY = 'yolo_settings';
-export const MIN_COLLATERAL = 2;
+export const MIN_COLLATERAL = 1;
 export const MAX_COLLATERAL = 1000;
 
 export const DEFAULT_TAKE_PROFIT_PERCENT = 200;
 export const MIN_TAKE_PROFIT = 50;
 export const MAX_TAKE_PROFIT = 500;
 
+// Avantis requires $100 min position size; at 250x leverage min collateral = $0.40
 export const COLLATERAL_PRESETS = [5, 10, 25, 50, 100, 250, 500, 1000] as const;
 export const TAKE_PROFIT_PRESETS = [100, 150, 200, 300] as const;
 

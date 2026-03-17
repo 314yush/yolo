@@ -125,9 +125,8 @@ export function useFlipTrade() {
       const tradeKey = `${trade.pairIndex}-${trade.tradeIndex}`;
       const finalPnL = pnlMap.get(tradeKey) || null;
 
-      // Validate minimum position size before proceeding
-      // Avantis requires minimum position size of $100
-      const MIN_POSITION_SIZE_USD = 100.0;
+      // Avantis requires $100 min position size (collateral × leverage)
+      const MIN_POSITION_SIZE_USD = 100;
       const positionSize = trade.collateral * trade.leverage;
       if (positionSize < MIN_POSITION_SIZE_USD) {
         const minCollateral = MIN_POSITION_SIZE_USD / trade.leverage;
@@ -195,14 +194,13 @@ export function useFlipTrade() {
       // Use actual available balance, but cap at original collateral
       // If user had a loss, they might not have enough for the same collateral
       const availableCollateral = Math.min(actualUsdcBalance, trade.collateral);
-      
-      // Validate minimum position size with available collateral
+
       const positionSizeWithAvailable = availableCollateral * trade.leverage;
-      if (positionSizeWithAvailable < 100) {
+      if (positionSizeWithAvailable < MIN_POSITION_SIZE_USD) {
         throw new Error(
           `Cannot flip trade: After closing, available balance (${actualUsdcBalance.toFixed(2)} USDC) ` +
           `is insufficient for minimum position size. With ${trade.leverage}x leverage, ` +
-          `you need at least ${(100 / trade.leverage).toFixed(2)} USDC.`
+          `you need at least ${(MIN_POSITION_SIZE_USD / trade.leverage).toFixed(2)} USDC.`
         );
       }
 
