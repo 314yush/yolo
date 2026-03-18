@@ -1,22 +1,17 @@
 /**
  * Avantis API Client
  *
- * Routes all Avantis API calls through our backend proxy to avoid
- * the browser contacting Avantis directly (which can confuse Privy's
- * origin detection). The proxy also avoids CORS for non-whitelisted origins.
+ * Calls Avantis APIs directly. Avantis whitelists tradeyolo.fun for CORS.
  */
 
 import { ASSETS } from './constants';
 import { fetchPythPrice } from './pythFeeds';
 import { PNL_FEES, pnlFeeByGrossProfitP } from './pnlFees';
+import { logger } from './logger';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const AVANTIS_PROXY_BASE = `${API_URL}/avantis`;
-
-// Direct Avantis API (used as fallback when proxy unreachable - e.g. backend not running)
-// Per AVANTISAPI.md: https://core.avantisfi.com/user-data
 const AVANTIS_CORE_BASE = 'https://core.avantisfi.com';
+const AVANTIS_HISTORY_BASE = 'https://api.avantisfi.com/v2/history/portfolio/history';
 
 // Decimal conversions
 const USDC_DECIMALS = 1e6;
@@ -102,22 +97,22 @@ function calculatePnL(
   const rolloverFee = Number(pos.rolloverFee) / USDC_DECIMALS;
 
   if (!isFinitePositive(openPrice)) {
-    console.warn('[calculatePnL] Invalid openPrice:', pos.openPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    logger.warn('[calculatePnL] Invalid openPrice:', pos.openPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
     return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
   if (!Number.isFinite(collateral) || collateral <= 0) {
-    console.warn('[calculatePnL] Invalid collateral:', pos.collateral, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    logger.warn('[calculatePnL] Invalid collateral:', pos.collateral, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
     return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
   if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-    console.warn('[calculatePnL] Invalid currentPrice:', currentPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    logger.warn('[calculatePnL] Invalid currentPrice:', currentPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
     return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
   if (!Number.isFinite(leverage) || leverage <= 0) {
-    console.warn('[calculatePnL] Invalid leverage:', pos.leverage, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
+    logger.warn('[calculatePnL] Invalid leverage:', pos.leverage, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
     return { pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 };
   }
 
@@ -180,12 +175,8 @@ async function fetchWithTimeout(
       );
     }
     if (isNetworkError(error)) {
-      const hint =
-        url.startsWith('http://localhost') || url.includes('localhost')
-          ? ' Is the backend server running? (e.g. cd backend && uvicorn app.main:app)'
-          : ' Check your network and that the API URL is correct.';
       throw new Error(
-        `Cannot reach API at ${url}${hint} Original: ${(error as Error).message}`
+        `Cannot reach API at ${url} - check your network. Original: ${(error as Error).message}`
       );
     }
     throw error;
@@ -197,35 +188,16 @@ async function fetchWithTimeout(
  * direct Avantis API if proxy is unreachable (e.g. backend not running).
  */
 async function fetchUserData(traderAddress: string): Promise<AvantisUserDataResponse> {
-  const proxyUrl = `${AVANTIS_PROXY_BASE}/user-data?trader=${traderAddress}`;
-  const directUrl = `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`;
-
-  try {
-    const response = await fetchWithTimeout(proxyUrl, 15000, 'user-data via proxy');
-    if (!response.ok) {
-      throw new Error(`Avantis API error: ${response.status}`);
-    }
-    return await response.json();
-  } catch (proxyError) {
-    if (isNetworkError(proxyError) || (proxyError instanceof Error && proxyError.message.includes('Cannot reach API'))) {
-      console.warn('[avantisApi] Proxy unreachable, trying direct Avantis API:', (proxyError as Error).message);
-      try {
-        const response = await fetchWithTimeout(directUrl, 15000, 'user-data direct');
-        if (!response.ok) {
-          throw new Error(`Avantis API error: ${response.status}`);
-        }
-        return await response.json();
-      } catch (directError) {
-        console.error('[avantisApi] Direct Avantis API also failed:', directError);
-        throw proxyError;
-      }
-    }
-    throw proxyError;
+  const url = `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`;
+  const response = await fetchWithTimeout(url, 15000, 'user-data');
+  if (!response.ok) {
+    throw new Error(`Avantis API error: ${response.status}`);
   }
+  return await response.json();
 }
 
 /**
- * Fetch user's open trades via backend proxy (or direct Avantis API fallback).
+ * Fetch user's open trades from Avantis.
  */
 export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
   const data = await fetchUserData(traderAddress);
@@ -238,7 +210,6 @@ export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
 
 /**
  * Fetch user's positions with PnL from Avantis API.
- * Uses backend proxy first; falls back to direct Avantis API if proxy unreachable.
  *
  * @param traderAddress - Trader's wallet address
  * @param prices - Map of pair name to current price (from Pyth)
@@ -251,27 +222,27 @@ export async function fetchPnL(
   try {
     data = await fetchUserData(traderAddress);
   } catch (e) {
-    console.error('[fetchPnL] Failed to fetch user-data:', e);
+    logger.error('[fetchPnL] Failed to fetch user-data:', e);
     throw e;
   }
 
   const positions = data?.positions;
   if (!Array.isArray(positions)) {
-    console.warn('[fetchPnL] API returned no positions array, using empty list');
+    logger.warn('[fetchPnL] API returned no positions array, using empty list');
     return [];
   }
 
   const results: PnLData[] = [];
   for (const pos of positions) {
     if (!pos || typeof pos !== 'object') {
-      console.warn('[fetchPnL] Skipping invalid position: malformed data');
+      logger.warn('[fetchPnL] Skipping invalid position: malformed data');
       continue;
     }
     let trade: Trade;
     try {
       trade = parsePosition(pos);
     } catch (parseErr) {
-      console.error('[fetchPnL] Failed to parse position:', parseErr);
+      logger.error('[fetchPnL] Failed to parse position:', parseErr);
       continue;
     }
     try {
@@ -285,7 +256,7 @@ export async function fetchPnL(
         if (restPrice != null) {
           currentPrice = restPrice;
         } else {
-          console.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL uses open price as fallback`);
+          logger.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL uses open price as fallback`);
           currentPrice = trade.openPrice;
         }
       }
@@ -294,7 +265,7 @@ export async function fetchPnL(
 
       results.push({ trade, currentPrice, pnl, pnlPercentage, grossPnl, grossPnlPercentage });
     } catch (calcErr) {
-      console.error(`[fetchPnL] Failed to compute PnL for pairIndex=${trade.pairIndex} index=${trade.tradeIndex}:`, calcErr);
+      logger.error(`[fetchPnL] Failed to compute PnL for pairIndex=${trade.pairIndex} index=${trade.tradeIndex}:`, calcErr);
       results.push({ trade, currentPrice: trade.openPrice, pnl: 0, pnlPercentage: 0, grossPnl: 0, grossPnlPercentage: 0 });
     }
   }
@@ -354,7 +325,7 @@ export async function fetchClosedTrades(
   traderAddress: string,
   pageNumber: number = 1
 ): Promise<ClosedTrade[]> {
-  const url = `${AVANTIS_PROXY_BASE}/history/portfolio/history/${traderAddress}/${pageNumber}`;
+  const url = `${AVANTIS_HISTORY_BASE}/${traderAddress}/${pageNumber}`;
   
   try {
     const response = await fetchWithTimeout(url, 15000); // 15s
@@ -415,26 +386,52 @@ export async function fetchClosedTrades(
       } as ClosedTrade;
     });
   } catch (error) {
-    console.error('[fetchClosedTrades] Failed to fetch closed trades:', error);
+    logger.error('[fetchClosedTrades] Failed to fetch closed trades:', error);
     // Return empty array on error (don't break the app)
     return [];
   }
 }
 
 /**
- * Fetch total historic volume via backend proxy (all open + closed positions).
+ * Fetch total historic volume (open + closed positions) - computed client-side.
  */
 export async function fetchTotalVolume(traderAddress: string): Promise<number> {
-  const url = `${AVANTIS_PROXY_BASE}/volume/${traderAddress}`;
+  let total = 0;
   try {
-    const response = await fetchWithTimeout(url, 15000);
-    if (!response.ok) {
-      throw new Error(`Volume API error: ${response.status}`);
+    // 1. Open positions from user-data
+    const userData = await fetchUserData(traderAddress);
+    for (const pos of userData?.positions ?? []) {
+      const collateral = Number(pos?.collateral ?? 0) / USDC_DECIMALS;
+      const leverage = Number(pos?.leverage ?? 0) / LEVERAGE_DECIMALS;
+      if (Number.isFinite(collateral) && Number.isFinite(leverage) && collateral > 0 && leverage > 0) {
+        total += collateral * leverage;
+      }
     }
-    const data = await response.json();
-    return Number.isFinite(data?.totalVolume) ? data.totalVolume : 0;
+
+    // 2. Closed trades from portfolio history (paginate)
+    let page = 1;
+    while (true) {
+      const url = `${AVANTIS_HISTORY_BASE}/${traderAddress}/${page}`;
+      const response = await fetchWithTimeout(url, 15000);
+      if (response.status === 404) break;
+      if (!response.ok) break;
+      const data: AvantisPortfolioResponse = await response.json();
+      if (!data?.success || !data?.portfolio?.length) break;
+      for (const item of data.portfolio) {
+        const args = item?.event?.args;
+        const t = args?.t;
+        const collateral = Number(args?.positionSizeUSDC ?? t?.initialPosToken ?? 0) || 1e-10;
+        const leverage = Number(t?.leverage ?? 0) || 1;
+        if (Number.isFinite(collateral) && Number.isFinite(leverage)) {
+          total += collateral * leverage;
+        }
+      }
+      if (page >= (data.pageCount ?? 0)) break;
+      page += 1;
+    }
+    return Math.round(total * 100) / 100;
   } catch (error) {
-    console.warn('[fetchTotalVolume] Failed to fetch volume:', error);
+    logger.warn('[fetchTotalVolume] Failed to fetch volume:', error);
     return 0;
   }
 }

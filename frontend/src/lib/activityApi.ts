@@ -3,7 +3,9 @@
  * Fire-and-forget for log calls - no blocking UX.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { logger } from './logger';
+
+const API_BASE = '/api/backend';
 
 export interface LogTradeOpenParams {
   wallet: string;
@@ -90,12 +92,12 @@ export async function logTradeOpen(params: LogTradeOpenParams): Promise<{ trade_
       }),
     });
     if (!res.ok) {
-      console.warn('[activityApi] logTradeOpen failed:', res.status, await res.text());
+      logger.warn('[activityApi] logTradeOpen failed:', res.status, await res.text());
       return null;
     }
     return (await res.json()) as { trade_id: string };
   } catch (err) {
-    console.warn('[activityApi] logTradeOpen error:', err);
+    logger.warn('[activityApi] logTradeOpen error:', err);
     return null;
   }
 }
@@ -122,10 +124,10 @@ export async function logTradeCloseByPosition(
       }),
     });
     if (!res.ok) {
-      console.warn('[activityApi] logTradeCloseByPosition failed:', res.status, await res.text());
+      logger.warn('[activityApi] logTradeCloseByPosition failed:', res.status, await res.text());
     }
   } catch (err) {
-    console.warn('[activityApi] logTradeCloseByPosition error:', err);
+    logger.warn('[activityApi] logTradeCloseByPosition error:', err);
   }
 }
 
@@ -141,7 +143,7 @@ export async function getActivityStats(wallet: string): Promise<ActivityStats | 
     if (!res.ok) return null;
     return (await res.json()) as ActivityStats;
   } catch (err) {
-    console.warn('[activityApi] getActivityStats error:', err);
+    logger.warn('[activityApi] getActivityStats error:', err);
     return null;
   }
 }
@@ -162,7 +164,7 @@ export async function getActivityTrades(
     if (!res.ok) return null;
     return (await res.json()) as ActivityTradesResponse;
   } catch (err) {
-    console.warn('[activityApi] getActivityTrades error:', err);
+    logger.warn('[activityApi] getActivityTrades error:', err);
     return null;
   }
 }
@@ -180,7 +182,7 @@ export async function getOnboardingStatus(wallet: string): Promise<boolean> {
     const data = (await res.json()) as { completed: boolean };
     return data.completed;
   } catch (err) {
-    console.warn('[activityApi] getOnboardingStatus error:', err);
+    logger.warn('[activityApi] getOnboardingStatus error:', err);
     return false;
   }
 }
@@ -196,9 +198,9 @@ export async function markOnboardingCompleteApi(wallet: string): Promise<void> {
       body: JSON.stringify({ wallet }),
     });
     if (!res.ok) {
-      console.warn('[activityApi] markOnboardingCompleteApi failed:', res.status, await res.text());
+      logger.warn('[activityApi] markOnboardingCompleteApi failed:', res.status, await res.text());
     }
   } catch (err) {
-    console.warn('[activityApi] markOnboardingCompleteApi error:', err);
+    logger.warn('[activityApi] markOnboardingCompleteApi error:', err);
   }
 }

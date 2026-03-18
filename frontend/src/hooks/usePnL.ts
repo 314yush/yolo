@@ -15,7 +15,7 @@ interface UsePnLOptions {
 export function usePnL(options: UsePnLOptions = {}) {
   const { enabled = true, interval = 2000 } = options;
   
-  const { userAddress, currentTrade, pnlData, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose } = useTradeStore();
+  const { userAddress, currentTrade, pnlData, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose, flipExcludedPositionKey } = useTradeStore();
   const { getPnL } = useAvantisAPI();
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -42,6 +42,7 @@ export function usePnL(options: UsePnLOptions = {}) {
   const rememberedPairIndexRef = useRef(rememberedPairIndex);
   const rememberedTradeIndexRef = useRef(rememberedTradeIndex);
   const isIntentionalCloseRef = useRef(isIntentionalClose);
+  const flipExcludedPositionKeyRef = useRef(flipExcludedPositionKey);
   
   // Helper to create a unique key for a trade
   const getTradeKey = useCallback((trade: typeof currentTrade) => {
@@ -65,7 +66,8 @@ export function usePnL(options: UsePnLOptions = {}) {
     rememberedPairIndexRef.current = rememberedPairIndex;
     rememberedTradeIndexRef.current = rememberedTradeIndex;
     isIntentionalCloseRef.current = isIntentionalClose;
-  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose]);
+    flipExcludedPositionKeyRef.current = flipExcludedPositionKey;
+  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose, flipExcludedPositionKey]);
 
   const fetchPnL = useCallback(async (isRetry = false): Promise<void> => {
     const userAddr = userAddressRef.current;
@@ -89,7 +91,14 @@ export function usePnL(options: UsePnLOptions = {}) {
     }
     
     try {
-      const positions = await getPnLRef.current(userAddr);
+      let positions = await getPnLRef.current(userAddr);
+      const excludedKey = flipExcludedPositionKeyRef.current;
+      if (excludedKey) {
+        positions = positions.filter(
+          (p) => `${p.trade.pairIndex}-${p.trade.tradeIndex}` !== excludedKey
+        );
+        debug('[usePnL] Filtered out excluded position:', excludedKey, 'Remaining:', positions.length);
+      }
       debug('[usePnL] Fetched positions:', positions.length, 'Current trade:', { 
         pairIndex: trade?.pairIndex, 
         tradeIndex: trade?.tradeIndex,

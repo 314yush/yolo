@@ -4,7 +4,8 @@ import { useCallback, useState } from 'react';
 import { useWallets } from '@privy-io/react-auth';
 import { getOrCreateDelegateWallet } from '@/lib/delegateWallet';
 import { isDelegateDelegated } from '@/lib/tachyonRelay';
-import { AVANTIS_CONTRACTS } from '@/lib/avantisEncoder';
+import { AVANTIS_CONTRACTS, DELEGATIONS_ABI } from '@/lib/avantisEncoder';
+import { publicClient } from '@/lib/viemClient';
 import { relayService } from '@/lib/relayService';
 import type { UnsignedTx } from '@/types';
 import { debug } from '@/lib/debug';
@@ -26,6 +27,7 @@ const LOG_PREFIX = '[useTxSigner]';
 export function useTxSigner() {
   const [isPending, setIsPending] = useState(false);
   const userAddress = useTradeStore((state) => state.userAddress);
+  const delegateStatus = useTradeStore((state) => state.delegateStatus);
   const { wallets, ready: walletsReady } = useWallets();
 
   /**
@@ -125,47 +127,53 @@ export function useTxSigner() {
         
         // Check Avantis delegate status before trading
         // This is critical - if delegate is not registered in Avantis, delegatedAction will revert
-        try {
-          const delegateCheckStart = Date.now();
-          const { publicClient } = await import('@/lib/viemClient');
-          const { AVANTIS_CONTRACTS, DELEGATIONS_ABI } = await import('@/lib/avantisEncoder');
-          // Extract user address from calldata (first 20 bytes after function selector in delegatedAction)
-          // delegatedAction(address trader, bytes calldata) - trader is padded to 32 bytes after 4-byte selector
-          const calldataHex = unsignedTx.data as `0x${string}`;
-          // Skip 4 bytes selector (8 hex chars) + 12 bytes padding (24 hex chars) = 32 hex chars, then read 20 bytes (40 hex chars)
-          const userAddressFromCalldata = ('0x' + calldataHex.slice(10 + 24, 10 + 24 + 40)) as `0x${string}`;
-          
-          const registeredDelegate = await publicClient.readContract({
-            address: AVANTIS_CONTRACTS.Trading,
-            abi: DELEGATIONS_ABI,
-            functionName: 'delegations',
-            args: [userAddressFromCalldata],
-          });
-          const delegateCheckTime = Date.now() - delegateCheckStart;
-          if (delegateCheckTime > 100) {
-            debug(LOG_PREFIX, `⏱️  Avantis delegate check took ${delegateCheckTime}ms`);
+        // Extract trader from calldata: delegatedAction(address trader, bytes calldata) - trader padded to 32 bytes after 4-byte selector
+        const calldataHex = unsignedTx.data as `0x${string}`;
+        const userAddressFromCalldata = ('0x' + calldataHex.slice(10 + 24, 10 + 24 + 40)) as `0x${string}`;
+
+        // Cache hit: delegate already verified at app startup (page.tsx) or setup completion (SetupFlow.tsx)
+        const isCacheHit =
+          delegateStatus.isSetup &&
+          delegateStatus.delegateAddress?.toLowerCase() === wallet.address.toLowerCase() &&
+          userAddressFromCalldata?.toLowerCase() === userAddress?.toLowerCase();
+
+        if (isCacheHit) {
+          debug(LOG_PREFIX, '✅ Avantis delegate verified (cached):', wallet.address);
+        } else {
+          try {
+            const delegateCheckStart = Date.now();
+            const registeredDelegate = await publicClient.readContract({
+              address: AVANTIS_CONTRACTS.Trading,
+              abi: DELEGATIONS_ABI,
+              functionName: 'delegations',
+              args: [userAddressFromCalldata],
+            });
+            const delegateCheckTime = Date.now() - delegateCheckStart;
+            if (delegateCheckTime > 100) {
+              debug(LOG_PREFIX, `⏱️  Avantis delegate check took ${delegateCheckTime}ms`);
+            }
+            const isDelegateRegistered = registeredDelegate?.toString().toLowerCase() === wallet.address.toLowerCase();
+
+            if (!isDelegateRegistered) {
+              const error = new Error(
+                `Avantis delegate not set up! The Trading contract doesn't recognize this delegate. ` +
+                  `User: ${userAddressFromCalldata}, Expected delegate: ${wallet.address}, ` +
+                  `Registered delegate: ${registeredDelegate}. ` +
+                  `Please complete the Setup Flow first (setDelegate + approveUSDC).`
+              );
+              console.error(LOG_PREFIX, '❌', error.message);
+              throw error;
+            }
+
+            debug(LOG_PREFIX, '✅ Avantis delegate verified:', wallet.address);
+          } catch (e: unknown) {
+            // If it's our own error about delegate not registered, re-throw it
+            if (e instanceof Error && e.message.includes('Avantis delegate not set up')) {
+              throw e;
+            }
+            // Otherwise log and continue (might be RPC issue)
+            console.warn(LOG_PREFIX, '⚠️ Could not verify Avantis delegate (continuing anyway):', e);
           }
-          const isDelegateRegistered = registeredDelegate?.toString().toLowerCase() === wallet.address.toLowerCase();
-          
-          if (!isDelegateRegistered) {
-            const error = new Error(
-              `Avantis delegate not set up! The Trading contract doesn't recognize this delegate. ` +
-              `User: ${userAddressFromCalldata}, Expected delegate: ${wallet.address}, ` +
-              `Registered delegate: ${registeredDelegate}. ` +
-              `Please complete the Setup Flow first (setDelegate + approveUSDC).`
-            );
-            console.error(LOG_PREFIX, '❌', error.message);
-            throw error;
-          }
-          
-          debug(LOG_PREFIX, '✅ Avantis delegate verified:', wallet.address);
-        } catch (e: unknown) {
-          // If it's our own error about delegate not registered, re-throw it
-          if (e instanceof Error && e.message.includes('Avantis delegate not set up')) {
-            throw e;
-          }
-          // Otherwise log and continue (might be RPC issue)
-          console.warn(LOG_PREFIX, '⚠️ Could not verify Avantis delegate (continuing anyway):', e);
         }
         
         // Use relay service (supports multiple providers)
@@ -193,7 +201,7 @@ export function useTxSigner() {
         setIsPending(false);
       }
     },
-    [userAddress, wallets, walletsReady]
+    [userAddress, delegateStatus, wallets, walletsReady]
   );
 
   /**

@@ -97,11 +97,16 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
         setShowDirectionChip(true);
       }
 
-      // Stop spin sound and play tick when ALL wheels have stopped
+      // Stop spin sound and play tick when ALL wheels have stopped (with 100ms delay)
       if (progress3 >= 1) {
-        stopSpin();
-        playTick();
-        onSpinComplete();
+        if (!spinCompleteTimeoutRef.current) {
+          spinCompleteTimeoutRef.current = setTimeout(() => {
+            stopSpin();
+            playTick();
+            onSpinComplete();
+            spinCompleteTimeoutRef.current = null;
+          }, 100);
+        }
       } else {
         animationRef.current = requestAnimationFrame(animate);
       }

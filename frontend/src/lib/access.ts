@@ -2,7 +2,9 @@
  * Access code management - localStorage cache + API calls
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { logger } from './logger';
+
+const API_BASE = '/api/backend';
 
 function getAccessKey(wallet: string): string {
   return `yolo_access_${wallet.toLowerCase()}`;
@@ -62,20 +64,20 @@ export async function checkBackendConnection(): Promise<{
   error?: string;
   url?: string;
 }> {
-  const url = `${API_URL}/health`;
+  const url = `${API_BASE}/health`;
   try {
     const response = await fetch(url);
     return {
       ok: response.ok,
       status: response.status,
-      url: API_URL,
+      url: API_BASE,
     };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
       error: errMsg,
-      url: API_URL,
+      url: API_BASE,
     };
   }
 }
@@ -85,20 +87,20 @@ export async function checkBackendConnection(): Promise<{
  */
 export async function checkWalletAccess(walletAddress: string): Promise<boolean> {
   try {
-    const response = await fetch(`${API_URL}/access/check/${walletAddress.toLowerCase()}`, {
+    const response = await fetch(`${API_BASE}/access/check/${walletAddress.toLowerCase()}`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
     
     if (!response.ok) {
-      console.error('Access check failed:', response.status);
+      logger.error('Access check failed:', response.status);
       return false;
     }
     
     const data: CheckAccessResponse = await response.json();
     return data.hasAccess === true;
   } catch (error) {
-    console.error('Access check error:', error);
+    logger.error('Access check error:', error);
     return false; // Fail closed on network error
   }
 }
@@ -110,7 +112,7 @@ export async function redeemAccessCode(
   code: string,
   walletAddress: string
 ): Promise<RedeemCodeResponse> {
-  const url = `${API_URL}/access/redeem`;
+  const url = `${API_BASE}/access/redeem`;
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -127,7 +129,7 @@ export async function redeemAccessCode(
       data = text ? JSON.parse(text) : {};
     } catch {
       // Backend returned non-JSON (e.g. 502/503 HTML from Railway)
-      console.error('Redeem code: backend returned non-JSON', response.status, url);
+      logger.error('Redeem code: backend returned non-JSON', response.status, url);
       return {
         success: false,
         error: 'network_error',
@@ -136,17 +138,17 @@ export async function redeemAccessCode(
     }
 
     if (!response.ok) {
-      console.error('Redeem code: backend error', response.status, data);
+      logger.error('Redeem code: backend error', response.status, data);
     }
     return data;
   } catch (error) {
     // fetch threw: network failure, CORS, connection refused, etc.
     const errMsg = error instanceof Error ? error.message : String(error);
-    console.error('Redeem code error:', errMsg, 'URL:', url);
+    logger.error('Redeem code error:', errMsg, 'URL:', url);
     return {
       success: false,
       error: 'network_error',
-      message: 'Connection failed. Check NEXT_PUBLIC_API_URL in Vercel env vars matches your Railway backend URL.',
+      message: 'Connection failed. Please try again.',
     };
   }
 }

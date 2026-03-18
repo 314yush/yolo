@@ -25,6 +25,7 @@ let globalSounds: Sounds = {
 
 let soundsInitialized = false;
 let musicAutoStartDone = false;
+let spinFadeTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 // Initialize sounds once (singleton)
 function initializeSounds() {
@@ -74,19 +75,42 @@ export function useSound() {
   }, []);
 
   const startSpin = useCallback(() => {
-    if (settings.audioEnabled) {
-      globalSounds.spin?.play();
+    if (settings.audioEnabled && globalSounds.spin) {
+      globalSounds.spin.play();
+      // Cancel any pending fade from a previous spin
+      if (spinFadeTimeoutId) {
+        clearTimeout(spinFadeTimeoutId);
+        spinFadeTimeoutId = null;
+      }
+      // Start fade out at 4s (1.5s fade duration)
+      const FADE_START_MS = 4000;
+      const FADE_DURATION_MS = 1500;
+      spinFadeTimeoutId = setTimeout(() => {
+        spinFadeTimeoutId = null;
+        const spinSound = globalSounds.spin;
+        if (spinSound && spinSound.playing()) {
+          spinSound.fade(spinSound.volume(), 0, FADE_DURATION_MS);
+          setTimeout(() => {
+            spinSound.stop();
+            spinSound.volume(0.5);
+          }, FADE_DURATION_MS);
+        }
+      }, FADE_START_MS);
     }
   }, [settings.audioEnabled]);
 
   const stopSpin = useCallback(() => {
+    if (spinFadeTimeoutId) {
+      clearTimeout(spinFadeTimeoutId);
+      spinFadeTimeoutId = null;
+    }
     const spinSound = globalSounds.spin;
     if (spinSound && spinSound.playing()) {
       // Fade out over 200ms for smooth stop
       spinSound.fade(spinSound.volume(), 0, 200);
       setTimeout(() => {
         spinSound.stop();
-        spinSound.volume(0.5); // Reset volume for next play
+        spinSound.volume(0.5);
       }, 200);
     } else {
       spinSound?.stop();

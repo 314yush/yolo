@@ -18,9 +18,6 @@ export function AccessCodeGate({ walletAddress, onAccessGranted }: AccessCodeGat
   useEffect(() => {
     checkBackendConnection().then((result) => {
       setBackendReachable(result.ok);
-      if (!result.ok && result.error) {
-        console.error('[AccessCodeGate] Backend unreachable:', result.error, 'URL:', result.url);
-      }
     });
   }, []);
 
@@ -200,7 +197,7 @@ export function AccessCodeGate({ walletAddress, onAccessGranted }: AccessCodeGat
               {/* Backend status - only show when we know it's unreachable */}
               {backendReachable === false && (
                 <p className="text-[#FF006E] text-xs text-center font-bold">
-                  Backend unreachable. Check browser console for URL and CORS.
+                  Connection failed. Please try again later.
                 </p>
               )}
 

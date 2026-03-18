@@ -61,6 +61,11 @@ interface TradeState {
   isIntentionalClose: boolean;
   setIsIntentionalClose: (intentional: boolean) => void;
 
+  // Position key to exclude from PnL matching during flip (e.g. "0-5" = pairIndex 0, tradeIndex 5)
+  // Prevents showing old position while close propagates — stops entry price jump
+  flipExcludedPositionKey: string | null;
+  setFlipExcludedPositionKey: (key: string | null) => void;
+
   // Trade execution state
   txHash: `0x${string}` | null;
   setTxHash: (hash: `0x${string}` | null) => void;
@@ -155,6 +160,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   lastKnownPnLPercentage: null,
   isTakeProfitHit: false,
   isIntentionalClose: false,
+  flipExcludedPositionKey: null,
   txHash: null,
   isExecuting: false,
   error: null,
@@ -240,6 +246,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   setLastKnownPnLPercentage: (lastKnownPnLPercentage) => set({ lastKnownPnLPercentage }),
   setIsTakeProfitHit: (isTakeProfitHit) => set({ isTakeProfitHit }),
   setIsIntentionalClose: (isIntentionalClose) => set({ isIntentionalClose }),
+  setFlipExcludedPositionKey: (flipExcludedPositionKey) => set({ flipExcludedPositionKey }),
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
   setError: (error) => set({ error }),
@@ -468,5 +475,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     isPrebuildingClose: false,
     prebuiltFlipTxs: null,
     isPrebuildingFlip: false,
+    flipExcludedPositionKey: null,
   }),
 }));

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.models.schemas import HealthResponse
-from app.routers import delegate, trades, prices, access, admin, avantis_proxy, activity
+from app.routers import delegate, trades, prices, access, admin, activity
 
 
 settings = get_settings()
@@ -64,7 +64,6 @@ if settings.database_url:
 else:
     from app.routers.access_bypass import router as access_bypass_router
     app.include_router(access_bypass_router)
-app.include_router(avantis_proxy.router)
 
 
 # Startup event

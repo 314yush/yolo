@@ -50,6 +50,7 @@ export default function HomePage() {
   const { authenticated, ready, user, login } = usePrivy();
   const {
     stage,
+    flipExcludedPositionKey,
     setStage,
     userAddress,
     setUserAddress,
@@ -211,9 +212,14 @@ export default function HomePage() {
       // Try to find the latest trade
       const checkForTrade = async () => {
         try {
-          const positions = await getPnL(userAddress);
+          let positions = await getPnL(userAddress);
+          if (flipExcludedPositionKey) {
+            positions = positions.filter(
+              (p) => `${p.trade.pairIndex}-${p.trade.tradeIndex}` !== flipExcludedPositionKey
+            );
+          }
           if (positions.length === 0) return;
-          
+
           if (currentTrade) {
             // Placeholder (tradeIndex 0): match newest on same pair within 60s
             if (currentTrade.tradeIndex === 0) {
@@ -265,7 +271,7 @@ export default function HomePage() {
         clearTimeout(timeoutId);
       };
     }
-  }, [stage, currentTrade, userAddress, getPnL, setCurrentTrade, setPnLData]);
+  }, [stage, currentTrade, userAddress, flipExcludedPositionKey, getPnL, setCurrentTrade, setPnLData]);
   
   // Pre-build transactions when selection changes
   usePrebuiltTx();
