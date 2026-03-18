@@ -14,7 +14,7 @@ import { ToastContainer } from '@/components/Toast';
 import { AvantisFooter } from '@/components/AvantisFooter';
 import { StatsPanel } from '@/components/StatsPanel';
 import { saveClosedTrade, loadClosedTrades } from '@/lib/closedTrades';
-import { logTradeCloseByPosition, getActivityStats, getActivityTrades, type ActivityTrade } from '@/lib/activityApi';
+import { logTradeCloseByPosition, logTradeOpen, getActivityStats, getActivityTrades, type ActivityTrade } from '@/lib/activityApi';
 import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
 import { ASSETS } from '@/lib/constants';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
@@ -52,7 +52,7 @@ function activityTradeToClosedTrade(at: ActivityTrade): ClosedTrade {
 
 export default function ActivityPage() {
   const router = useRouter();
-  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, addPendingOpenTxHash, toasts, removeToast, tradeStats, setTradeStats, showToast, setIsIntentionalClose } = useTradeStore();
+  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, toasts, removeToast, tradeStats, setTradeStats, showToast, setIsIntentionalClose } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
   const { getTrades, getPnL, getClosedTrades, getTotalVolume } = useAvantisAPI();
   const { signAndWait, signAndBroadcast } = useTxSigner();
@@ -442,6 +442,29 @@ export default function ActivityPage() {
             setTradesWithPnL(combined);
             updateActivePositions(trades.length);
             if (stats) setActivityStats(stats);
+
+            // Log new trade to activity API (useOpenTrades doesn't run on /activity)
+            const newTrade = combined.find((c) => c.trade.pairIndex === verifiedTrade.pairIndex);
+            if (newTrade) {
+              const txHash = popPendingOpenTxHash();
+              if (txHash) {
+                logTradeOpen({
+                  wallet: userAddress,
+                  pair: newTrade.trade.pair,
+                  pairIndex: newTrade.trade.pairIndex,
+                  tradeIndex: newTrade.trade.tradeIndex,
+                  direction: newTrade.trade.isLong ? 'LONG' : 'SHORT',
+                  leverage: newTrade.trade.leverage,
+                  collateral: newTrade.trade.collateral,
+                  entryPrice: newTrade.trade.openPrice,
+                  tpPrice: newTrade.trade.tp,
+                  liqPrice: newTrade.trade.liquidationPrice ?? undefined,
+                  txHash,
+                });
+                incrementTotalTrades();
+                incrementVolume(newTrade.trade.collateral, newTrade.trade.leverage);
+              }
+            }
           } catch (error) {
             console.error('Failed to refresh trades:', error);
           }
