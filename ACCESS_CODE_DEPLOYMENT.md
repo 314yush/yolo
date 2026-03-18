@@ -65,9 +65,9 @@ curl https://YOUR-RAILWAY-URL/access/check/0xYourWalletAddress
 
 | Variable | Value |
 |----------|-------|
-| `NEXT_PUBLIC_API_URL` | `https://YOUR-RAILWAY-URL` (no trailing slash) |
+| `BACKEND_URL` | `https://YOUR-RAILWAY-URL` (no trailing slash) |
 
-**Important:** After changing `NEXT_PUBLIC_*` vars, **redeploy** the frontend (Build-time vars).
+**Important:** The `/api/backend` proxy uses `BACKEND_URL`. After changing env vars, **redeploy** the frontend.
 
 ## Deployment Checklist
 
@@ -76,7 +76,7 @@ curl https://YOUR-RAILWAY-URL/access/check/0xYourWalletAddress
 - [ ] `CORS_ORIGINS` includes your frontend domain (e.g. `https://tradeyolo.fun`)
 - [ ] `ADMIN_API_KEY` set (for generating codes)
 - [ ] Generated at least one access code via `/admin/codes/generate`
-- [ ] Vercel `NEXT_PUBLIC_API_URL` = Railway backend URL
+- [ ] Vercel `BACKEND_URL` = Railway backend URL
 - [ ] Vercel redeployed after setting env var
 
 ## Troubleshooting
@@ -84,7 +84,7 @@ curl https://YOUR-RAILWAY-URL/access/check/0xYourWalletAddress
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | "Application failed to respond" | Wrong port | Ensure Dockerfile uses `${PORT}` |
-| "Connection failed" | Frontend can't reach backend | Check `NEXT_PUBLIC_API_URL`, CORS |
+| "Connection failed" | Frontend can't reach backend | Check `BACKEND_URL` on Vercel, CORS |
 | "Backend unreachable" on gate | Same as above | Verify backend URL in browser console |
 | "Code not recognized" | Code not in DB | Generate codes via admin API |
 | 500 on /access | DB connection failed | Check `DATABASE_URL`, Railway Postgres logs |

@@ -19,7 +19,7 @@
 - [ ] Set root directory to `frontend`
 - [ ] Add environment variables:
   - [ ] `NEXT_PUBLIC_BASE_RPC_URL` (your Alchemy RPC URL)
-  - [ ] `NEXT_PUBLIC_API_URL` (your Railway backend URL)
+  - [ ] `BACKEND_URL` (your Railway backend URL, e.g. https://your-app.up.railway.app)
 - [ ] Deploy and get Vercel URL
 - [ ] Test frontend loads correctly
 
@@ -45,6 +45,6 @@ uvicorn app.main:app --reload
 cd frontend
 npm install
 export NEXT_PUBLIC_BASE_RPC_URL="your-rpc-url"
-export NEXT_PUBLIC_API_URL="http://localhost:8000"
+export BACKEND_URL="http://localhost:8000"
 npm run dev
 ```

@@ -81,13 +81,13 @@ In Vercel, go to **Environment Variables** and add:
 
 ```
 NEXT_PUBLIC_BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY
-NEXT_PUBLIC_API_URL=https://your-railway-url.up.railway.app
+BACKEND_URL=https://your-railway-url.up.railway.app
 ```
 
 **Important Notes:**
 - Replace `YOUR_ALCHEMY_KEY` with your actual Alchemy API key
 - Replace `your-railway-url.up.railway.app` with your Railway backend URL (from Step 4 of backend deployment)
-- **CRITICAL**: `NEXT_PUBLIC_API_URL` is required - without it, the frontend will try to connect to `localhost:8000` and fail
+- **CRITICAL**: `BACKEND_URL` is required for the `/api/backend` proxy - without it, requests will fail (NEXT_PUBLIC_API_URL is also supported as fallback)
 - Make sure to add these to **Production**, **Preview**, and **Development** environments
 - After adding environment variables, you must **redeploy** your Vercel project for them to take effect
 
@@ -143,7 +143,7 @@ Both platforms support automatic deployments:
 ### Frontend Issues
 
 **Problem**: Frontend can't connect to backend
-- Verify `NEXT_PUBLIC_API_URL` is set correctly in Vercel
+- Verify `BACKEND_URL` is set to your Railway URL in Vercel
 - Check that the backend URL is accessible (visit `/health` endpoint)
 - Ensure CORS is configured correctly on the backend
 

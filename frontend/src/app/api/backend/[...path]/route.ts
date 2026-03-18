@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
+// BACKEND_URL is preferred (server-side); NEXT_PUBLIC_API_URL supported for doc compatibility
+function getBackendUrl(): string {
+  const raw =
+    process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  return raw.replace(/\/+$/, ''); // strip trailing slashes
+}
 
 export async function GET(
   req: NextRequest,
@@ -49,7 +54,8 @@ async function proxyRequest(
   const { path } = await params;
   const pathStr = path?.length ? path.join('/') : '';
   const search = req.nextUrl.search;
-  const url = `${BACKEND_URL}/${pathStr}${search}`;
+  const base = getBackendUrl();
+  const url = `${base}/${pathStr}${search}`;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

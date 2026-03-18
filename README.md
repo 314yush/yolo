@@ -113,8 +113,8 @@ uvicorn app.main:app --reload --port 8000
 # Privy Authentication
 NEXT_PUBLIC_PRIVY_APP_ID=your-privy-app-id
 
-# API Configuration
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# API Configuration (used by /api/backend proxy)
+BACKEND_URL=http://localhost:8000
 
 # Blockchain RPC
 NEXT_PUBLIC_BASE_RPC_URL=https://mainnet.base.org
