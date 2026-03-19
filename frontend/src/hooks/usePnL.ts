@@ -261,8 +261,11 @@ export function usePnL(options: UsePnLOptions = {}) {
           positionDisappearedAtRef.current = now;
         }
         const elapsed = positionDisappearedAtRef.current ? now - positionDisappearedAtRef.current : 0;
+        const LIQ_THRESHOLD = -75; // Avoid false positives at -65%; real liquidation is -85%
         
-        if (lastPnL !== null && lastPnL <= -84 && lastPnLData && userAddr && trade && elapsed >= LIQUIDATION_GRACE_MS) {
+        // Position disappeared at a deep loss (not intentional close) = liquidated. We use lastPnL <= -75 to avoid
+        // false positives when the API transiently returns empty (e.g. at -65%). Real liquidation is at -85%.
+        if (lastPnL !== null && lastPnL <= LIQ_THRESHOLD && lastPnLData && userAddr && trade && elapsed >= LIQUIDATION_GRACE_MS) {
           debug('[usePnL] Position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL, '- Marking as liquidated');
           setIsLiquidatedRef.current(true);
           try {
