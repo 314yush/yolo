@@ -28,6 +28,7 @@ import { LandingPremium } from '@/components/LandingPremium';
 import { InsufficientFundsModal } from '@/components/InsufficientFundsModal';
 import { NavFooter } from '@/components/NavFooter';
 import { FinancialInfoBar } from '@/components/FinancialInfoBar';
+import { MusicToggleButton } from '@/components/MusicToggleButton';
 import { StageRouter } from '@/components/StageRouter';
 import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
 import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
@@ -872,6 +873,11 @@ export default function HomePage() {
           className="sr-only"
           id="status-announcements"
         />
+
+        {/* Floating mute button - inside motion div section */}
+        {(stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') && (
+          <MusicToggleButton />
+        )}
 
         <StageRouter stage={stage}>
           {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
