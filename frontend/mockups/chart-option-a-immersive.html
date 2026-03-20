@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Option A: Immersive Full-Bleed</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    font-family: 'Inter', system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  .phone-frame {
+    width: 393px;
+    height: 852px;
+    background: #000;
+    border-radius: 40px;
+    border: 3px solid #222;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ─── Status bar ─── */
+  .status-bar {
+    height: 54px;
+    padding: 14px 24px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  /* ─── Trade info strip ─── */
+  .trade-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .trade-info .dot { width: 6px; height: 6px; border-radius: 50%; background: #CCFF00; }
+  .trade-info .sep { color: rgba(255,255,255,0.2); }
+  .trade-info .direction { color: #CCFF00; }
+  .trade-info .msg { color: #CCFF00; font-style: italic; }
+
+  /* ─── HERO PnL ─── */
+  .pnl-hero {
+    text-align: center;
+    padding: 12px 16px 4px;
+  }
+  .pnl-amount {
+    font-size: 56px;
+    font-weight: 900;
+    letter-spacing: -2px;
+    line-height: 1;
+  }
+  .pnl-amount.positive {
+    color: #CCFF00;
+    text-shadow: 0 0 30px rgba(204,255,0,0.4), 0 0 60px rgba(204,255,0,0.15);
+  }
+  .pnl-amount.negative {
+    color: #FF006E;
+    text-shadow: 0 0 30px rgba(255,0,110,0.4), 0 0 60px rgba(255,0,110,0.15);
+  }
+  .pnl-pct {
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 2px;
+  }
+  .pnl-pct.positive { color: rgba(204,255,0,0.8); }
+  .pnl-pct.negative { color: rgba(255,0,110,0.8); }
+
+  /* ─── Entry/Current compact row ─── */
+  .price-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px 4px;
+    font-size: 14px;
+    color: rgba(255,255,255,0.5);
+  }
+  .price-row .label { font-weight: 400; }
+  .price-row .val { color: #fff; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .price-row .arrow { color: rgba(255,255,255,0.3); }
+
+  /* ─── THE KEY: Immersive chart container ─── */
+  .chart-immersive {
+    flex: 1;
+    position: relative;
+    margin: 0; /* NO margin — full bleed */
+    overflow: hidden;
+  }
+
+  /* Gradient that bleeds from chart into surrounding space */
+  .chart-immersive::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .chart-immersive.positive::before {
+    background: linear-gradient(
+      180deg,
+      rgba(204,255,0,0.06) 0%,
+      rgba(204,255,0,0.02) 30%,
+      transparent 60%,
+      rgba(204,255,0,0.03) 100%
+    );
+  }
+  .chart-immersive.negative::before {
+    background: linear-gradient(
+      180deg,
+      rgba(255,0,110,0.06) 0%,
+      rgba(255,0,110,0.02) 30%,
+      transparent 60%,
+      rgba(255,0,110,0.03) 100%
+    );
+  }
+
+  /* Top fade from PnL hero into chart */
+  .chart-immersive::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(180deg, #000 0%, transparent 100%);
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* Floating status pill */
+  .status-pill {
+    position: absolute;
+    top: 12px;
+    left: 16px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .status-pill.positive {
+    background: rgba(204,255,0,0.15);
+    color: #CCFF00;
+    border: 1px solid rgba(204,255,0,0.3);
+  }
+  .status-pill.negative {
+    background: rgba(255,0,110,0.15);
+    color: #FF006E;
+    border: 1px solid rgba(255,0,110,0.3);
+  }
+  .status-pill .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+  .status-pill.positive .dot { background: #CCFF00; }
+  .status-pill.negative .dot { background: #FF006E; }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.7); }
+  }
+
+  /* Floating timer */
+  .timer-pill {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.6);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Fake chart canvas */
+  .chart-canvas {
+    width: 100%;
+    height: 100%;
+    position: relative;
+  }
+
+  .chart-svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Bottom fade for clean transition to buttons */
+  .chart-bottom-fade {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30px;
+    background: linear-gradient(0deg, #000 0%, transparent 100%);
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* ─── Action buttons ─── */
+  .actions {
+    padding: 12px 16px 8px;
+    display: flex;
+    gap: 10px;
+  }
+
+  .btn {
+    flex: 1;
+    height: 56px;
+    border: none;
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 900;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .btn-close {
+    background: #FF006E;
+    color: #000;
+    border: 4px solid #000;
+    box-shadow: 4px 4px 0 #000;
+  }
+
+  .btn-flip {
+    background: #1a1a2e;
+    color: #fff;
+    border: 4px solid #000;
+    box-shadow: 4px 4px 0 #000;
+  }
+
+  .btn-roll {
+    width: 100%;
+    height: 64px;
+    background: #CCFF00;
+    color: #000;
+    border: 4px solid #000;
+    box-shadow: 6px 6px 0 #000;
+    font-size: 20px;
+  }
+
+  .roll-row {
+    padding: 8px 16px 32px;
+  }
+
+  /* ─── Description ─── */
+  .desc {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.9);
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 16px 24px;
+    max-width: 500px;
+    color: #aaa;
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: center;
+    z-index: 100;
+  }
+  .desc strong { color: #CCFF00; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- WINNING STATE                                  -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="phone-frame">
+  <div class="status-bar">
+    <span>9:41</span>
+    <span style="font-size:12px;">●●●</span>
+  </div>
+
+  <div class="trade-info">
+    <span class="dot"></span>
+    <span>BTC</span>
+    <span class="sep">·</span>
+    <span>100x</span>
+    <span class="sep">·</span>
+    <span class="direction">LONG</span>
+    <span class="sep">·</span>
+    <span class="msg">LFG!</span>
+  </div>
+
+  <div class="pnl-hero">
+    <div class="pnl-amount positive">+$4.20</div>
+    <div class="pnl-pct positive">+42.0%</div>
+  </div>
+
+  <div class="price-row">
+    <span class="label">Entry:</span>
+    <span class="val">$84,231</span>
+    <span class="arrow">→</span>
+    <span class="label">Now:</span>
+    <span class="val" style="color:#CCFF00;">$84,597</span>
+  </div>
+
+  <!-- THE CHART: full-bleed, no borders, bleeds into background -->
+  <div class="chart-immersive positive">
+    <div class="status-pill positive">
+      <span class="dot"></span>
+      WINNING
+    </div>
+    <div class="timer-pill">
+      ⏱ 47.2s
+    </div>
+
+    <div class="chart-canvas">
+      <svg class="chart-svg" viewBox="0 0 393 380" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#CCFF00" stop-opacity="0.35" />
+            <stop offset="60%" stop-color="#CCFF00" stop-opacity="0.08" />
+            <stop offset="100%" stop-color="#CCFF00" stop-opacity="0.0" />
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+
+        <!-- Horizontal grid lines -->
+        <line x1="0" y1="80" x2="393" y2="80" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+        <line x1="0" y1="160" x2="393" y2="160" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+        <line x1="0" y1="240" x2="393" y2="240" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+        <line x1="0" y1="320" x2="393" y2="320" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+
+        <!-- Entry line (dashed) -->
+        <line x1="0" y1="220" x2="393" y2="220" stroke="rgba(204,255,0,0.5)" stroke-width="2" stroke-dasharray="8 6" />
+        <rect x="340" y="213" width="53" height="18" rx="2" fill="rgba(204,255,0,0.15)" stroke="rgba(204,255,0,0.4)" stroke-width="1" />
+        <text x="366" y="226" font-size="10" fill="#CCFF00" text-anchor="middle" font-weight="700" font-family="Inter">Entry</text>
+
+        <!-- Area fill -->
+        <path d="M 20,280 L 50,275 L 80,260 L 110,240 L 140,220 L 170,200 L 200,190 L 230,180 L 260,160 L 290,140 L 320,120 L 350,100 L 370,80 L 370,380 L 20,380 Z"
+              fill="url(#areaGrad)" />
+
+        <!-- Price line -->
+        <path d="M 20,280 L 50,275 L 80,260 L 110,240 L 140,220 L 170,200 L 200,190 L 230,180 L 260,160 L 290,140 L 320,120 L 350,100 L 370,80"
+              fill="none" stroke="#CCFF00" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" />
+
+        <!-- Current price dot (pulsing) -->
+        <circle cx="370" cy="80" r="5" fill="#CCFF00" filter="url(#glow)">
+          <animate attributeName="r" values="5;7;5" dur="1.5s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="1;0.7;1" dur="1.5s" repeatCount="indefinite" />
+        </circle>
+
+        <!-- Price labels (right axis) -->
+        <text x="380" y="84" font-size="10" fill="rgba(226,232,240,0.6)" text-anchor="end" font-family="Inter" font-variant-numeric="tabular-nums">$84,597</text>
+        <text x="380" y="164" font-size="10" fill="rgba(226,232,240,0.4)" text-anchor="end" font-family="Inter">$84,450</text>
+        <text x="380" y="324" font-size="10" fill="rgba(226,232,240,0.4)" text-anchor="end" font-family="Inter">$84,150</text>
+
+        <!-- Time labels (bottom) -->
+        <text x="80" y="370" font-size="10" fill="rgba(226,232,240,0.3)" text-anchor="middle" font-family="Inter">21:30:15</text>
+        <text x="200" y="370" font-size="10" fill="rgba(226,232,240,0.3)" text-anchor="middle" font-family="Inter">21:30:30</text>
+        <text x="320" y="370" font-size="10" fill="rgba(226,232,240,0.3)" text-anchor="middle" font-family="Inter">21:30:45</text>
+      </svg>
+    </div>
+
+    <div class="chart-bottom-fade"></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-close">CASH OUT +$4.20</button>
+    <button class="btn btn-flip">⇅ FLIP</button>
+  </div>
+
+  <div class="roll-row">
+    <button class="btn btn-roll">🎲 ROLL AGAIN</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- LOSING STATE                                   -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="phone-frame" style="margin-left: 40px;">
+  <div class="status-bar">
+    <span>9:41</span>
+    <span style="font-size:12px;">●●●</span>
+  </div>
+
+  <div class="trade-info">
+    <span class="dot" style="background:#FF006E;"></span>
+    <span>SOL</span>
+    <span class="sep">·</span>
+    <span>250x</span>
+    <span class="sep">·</span>
+    <span style="color:#FF006E;">SHORT</span>
+    <span class="sep">·</span>
+    <span style="color:#FF006E; font-style:italic;">Stay strong!</span>
+  </div>
+
+  <div class="pnl-hero">
+    <div class="pnl-amount negative">-$1.37</div>
+    <div class="pnl-pct negative">-13.7%</div>
+  </div>
+
+  <div class="price-row">
+    <span class="label">Entry:</span>
+    <span class="val">$137.42</span>
+    <span class="arrow">→</span>
+    <span class="label">Now:</span>
+    <span class="val" style="color:#FF006E;">$137.80</span>
+  </div>
+
+  <div class="chart-immersive negative">
+    <div class="status-pill negative">
+      <span class="dot"></span>
+      LOSING
+    </div>
+    <div class="timer-pill">
+      ⏱ 23.8s
+    </div>
+
+    <div class="chart-canvas">
+      <svg class="chart-svg" viewBox="0 0 393 380" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="areaGradPink" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#FF006E" stop-opacity="0.3" />
+            <stop offset="60%" stop-color="#FF006E" stop-opacity="0.06" />
+            <stop offset="100%" stop-color="#FF006E" stop-opacity="0.0" />
+          </linearGradient>
+          <filter id="glowPink">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+
+        <line x1="0" y1="80" x2="393" y2="80" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+        <line x1="0" y1="160" x2="393" y2="160" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+        <line x1="0" y1="240" x2="393" y2="240" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+        <line x1="0" y1="320" x2="393" y2="320" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+
+        <!-- Entry line -->
+        <line x1="0" y1="140" x2="393" y2="140" stroke="rgba(204,255,0,0.5)" stroke-width="2" stroke-dasharray="8 6" />
+        <rect x="340" y="133" width="53" height="18" rx="2" fill="rgba(204,255,0,0.15)" stroke="rgba(204,255,0,0.4)" stroke-width="1" />
+        <text x="366" y="146" font-size="10" fill="#CCFF00" text-anchor="middle" font-weight="700" font-family="Inter">Entry</text>
+
+        <!-- Liquidation line -->
+        <line x1="0" y1="60" x2="393" y2="60" stroke="rgba(255,0,110,0.4)" stroke-width="1" stroke-dasharray="3 6" />
+        <rect x="348" y="53" width="45" height="18" rx="2" fill="rgba(255,0,110,0.15)" stroke="rgba(255,0,110,0.3)" stroke-width="1" />
+        <text x="370" y="66" font-size="10" fill="#FF006E" text-anchor="middle" font-weight="700" font-family="Inter">Liq</text>
+
+        <!-- Area fill (inverted for short losing — price going UP is bad) -->
+        <path d="M 20,200 L 50,190 L 80,170 L 110,165 L 140,150 L 170,140 L 200,130 L 230,115 L 260,105 L 290,95 L 320,90 L 350,85 L 370,80 L 370,380 L 20,380 Z"
+              fill="url(#areaGradPink)" />
+
+        <!-- Price line -->
+        <path d="M 20,200 L 50,190 L 80,170 L 110,165 L 140,150 L 170,140 L 200,130 L 230,115 L 260,105 L 290,95 L 320,90 L 350,85 L 370,80"
+              fill="none" stroke="#FF006E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#glowPink)" />
+
+        <circle cx="370" cy="80" r="5" fill="#FF006E" filter="url(#glowPink)">
+          <animate attributeName="r" values="5;7;5" dur="1.5s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="1;0.7;1" dur="1.5s" repeatCount="indefinite" />
+        </circle>
+
+        <text x="380" y="84" font-size="10" fill="rgba(226,232,240,0.6)" text-anchor="end" font-family="Inter">$137.80</text>
+        <text x="380" y="164" font-size="10" fill="rgba(226,232,240,0.4)" text-anchor="end" font-family="Inter">$137.50</text>
+        <text x="380" y="324" font-size="10" fill="rgba(226,232,240,0.4)" text-anchor="end" font-family="Inter">$136.90</text>
+
+        <text x="80" y="370" font-size="10" fill="rgba(226,232,240,0.3)" text-anchor="middle" font-family="Inter">21:30:15</text>
+        <text x="200" y="370" font-size="10" fill="rgba(226,232,240,0.3)" text-anchor="middle" font-family="Inter">21:30:30</text>
+        <text x="320" y="370" font-size="10" fill="rgba(226,232,240,0.3)" text-anchor="middle" font-family="Inter">21:30:45</text>
+      </svg>
+    </div>
+    <div class="chart-bottom-fade"></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-close">CLOSE -$1.37</button>
+    <button class="btn btn-flip">⇅ FLIP</button>
+  </div>
+
+  <div class="roll-row">
+    <button class="btn btn-roll">🎲 ROLL AGAIN</button>
+  </div>
+</div>
+
+<div class="desc">
+  <strong>Option A: Immersive Full-Bleed</strong><br/>
+  Chart has NO container/border — it bleeds edge-to-edge into the black background.
+  A subtle color gradient washes over the entire chart area (lime or pink).
+  Floating "WINNING/LOSING" pill + timer overlay the chart.
+  Top and bottom fade gradients dissolve the chart into the PnL hero above and buttons below.
+  The chart feels like it IS the background, not a widget sitting on it.
+</div>
+
+</body>
+</html>

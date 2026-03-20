@@ -1,12 +1,17 @@
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createPublicClient, createWalletClient, fallback, http } from 'viem';
 import { base } from 'viem/chains';
 import { CHAIN_CONFIG } from './constants';
 import { getDelegateAccount } from './delegateWallet';
 
-// Public client for reading from Base
+const PUBLIC_BASE_RPC = 'https://mainnet.base.org';
+
+// Public client for reading from Base - fallback to public RPC if Alchemy fails (rate limit, CORS, etc.)
 export const publicClient = createPublicClient({
   chain: base,
-  transport: http(CHAIN_CONFIG.rpcUrl),
+  transport: fallback([
+    http(CHAIN_CONFIG.rpcUrl),
+    http(PUBLIC_BASE_RPC),
+  ]),
 });
 
 // Flashblock client for faster tx broadcasting (~200ms preconfirmation)

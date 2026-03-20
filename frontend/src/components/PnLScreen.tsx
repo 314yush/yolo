@@ -196,14 +196,10 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   let pnlPercentage: number;
 
   if (isLiquidated) {
-    // Use last known PnL percentage, or default to -85% if not available
-    pnlPercentage = lastKnownPnLPercentage !== null && lastKnownPnLPercentage <= -85
-      ? lastKnownPnLPercentage
-      : -85;
-
-    // Calculate PnL from percentage and collateral
+    // Liquidation = full loss: -100%
+    pnlPercentage = -100;
     const collateral = currentTrade?.collateral ?? pnlData?.trade?.collateral ?? 0;
-    pnl = (collateral * pnlPercentage) / 100;
+    pnl = -collateral;
   } else if (isTakeProfitHit) {
     pnl = pnlData?.pnl ?? 0;
     pnlPercentage = pnlData?.pnlPercentage ?? lastKnownPnLPercentage ?? 0;

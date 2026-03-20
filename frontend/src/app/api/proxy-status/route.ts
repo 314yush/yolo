@@ -5,7 +5,11 @@ import { NextResponse } from 'next/server';
  * Visit /api/proxy-status to see if BACKEND_URL is correct and reachable.
  */
 export async function GET() {
-  const url = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '';
+  let url = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '';
+  url = url.replace(/\/+$/, '');
+  if (url && !/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
   const backendUrl = url || 'http://localhost:8000';
 
   let healthOk = false;

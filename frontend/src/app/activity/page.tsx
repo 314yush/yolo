@@ -28,7 +28,9 @@ function activityTradeToClosedTrade(at: ActivityTrade): ClosedTrade {
   const pnl = Number.isFinite(Number(pnlRaw)) ? Number(pnlRaw) : 0;
   const closedAtMs = at.closed_at ? new Date(at.closed_at).getTime() : 0;
   const openedAtSec = at.opened_at ? Math.floor(new Date(at.opened_at).getTime() / 1000) : 0;
-  const finalPnLPercentage = Number.isFinite(pnl / collateral) ? (pnl / collateral) * 100 : 0;
+  const isLiquidated = at.status === 'liquidated';
+  const finalPnLPercentage = isLiquidated ? -100 : (Number.isFinite(pnl / collateral) ? (pnl / collateral) * 100 : 0);
+  const finalPnL = isLiquidated ? -collateral : pnl;
   return {
     tradeIndex: at.trade_index ?? 0,
     pairIndex,
@@ -42,12 +44,12 @@ function activityTradeToClosedTrade(at: ActivityTrade): ClosedTrade {
     liquidationPrice: at.liq_price ?? 0,
     openedAt: openedAtSec,
     closedAt: closedAtMs,
-    finalPnL: pnl,
+    finalPnL,
     finalPnLPercentage,
     closePrice: at.exit_price ?? at.entry_price,
     txHash: at.tx_hash_open as `0x${string}` | undefined,
     closeTxHash: at.tx_hash_close as `0x${string}` | undefined,
-    isLiquidated: at.status === 'liquidated',
+    isLiquidated,
   };
 }
 
@@ -236,11 +238,14 @@ export default function ActivityPage() {
         }
       });
 
-      const merged = Array.from(mergedMap.values()).map((t) => ({
-        ...t,
-        finalPnL: Number.isFinite(Number(t.finalPnL)) ? Number(t.finalPnL) : 0,
-        finalPnLPercentage: Number.isFinite(Number(t.finalPnLPercentage)) ? Number(t.finalPnLPercentage) : 0,
-      })).sort((a, b) => {
+      const merged = Array.from(mergedMap.values()).map((t) => {
+        const isLiq = t.isLiquidated ?? false;
+        return {
+          ...t,
+          finalPnL: isLiq ? -t.collateral : (Number.isFinite(Number(t.finalPnL)) ? Number(t.finalPnL) : 0),
+          finalPnLPercentage: isLiq ? -100 : (Number.isFinite(Number(t.finalPnLPercentage)) ? Number(t.finalPnLPercentage) : 0),
+        };
+      }).sort((a, b) => {
         const aTime = (a.closedAt && a.closedAt > 0) ? a.closedAt : (a.openedAt && a.openedAt > 0 ? a.openedAt * 1000 : 0);
         const bTime = (b.closedAt && b.closedAt > 0) ? b.closedAt : (b.openedAt && b.openedAt > 0 ? b.openedAt * 1000 : 0);
         return bTime - aTime;

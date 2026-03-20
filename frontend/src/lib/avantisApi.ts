@@ -1,7 +1,7 @@
 /**
  * Avantis API Client
  *
- * Calls Avantis APIs directly. Avantis whitelists tradeyolo.fun for CORS.
+ * Uses /api/avantis proxy to avoid CORS (browser cannot call Avantis directly from prod).
  */
 
 import { ASSETS } from './constants';
@@ -10,8 +10,8 @@ import { PNL_FEES, pnlFeeByGrossProfitP } from './pnlFees';
 import { logger } from './logger';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
-const AVANTIS_CORE_BASE = 'https://core.avantisfi.com';
-const AVANTIS_HISTORY_BASE = 'https://api.avantisfi.com/v2/history/portfolio/history';
+const AVANTIS_PROXY_USER_DATA = '/api/avantis/user-data';
+const AVANTIS_PROXY_HISTORY = '/api/avantis/history';
 
 // Decimal conversions
 const USDC_DECIMALS = 1e6;
@@ -184,11 +184,10 @@ async function fetchWithTimeout(
 }
 
 /**
- * Fetch user-data from Avantis. Tries backend proxy first; falls back to
- * direct Avantis API if proxy is unreachable (e.g. backend not running).
+ * Fetch user-data from Avantis via our proxy (avoids CORS in browser).
  */
 async function fetchUserData(traderAddress: string): Promise<AvantisUserDataResponse> {
-  const url = `${AVANTIS_CORE_BASE}/user-data?trader=${traderAddress}`;
+  const url = `${AVANTIS_PROXY_USER_DATA}?trader=${encodeURIComponent(traderAddress)}`;
   const response = await fetchWithTimeout(url, 15000, 'user-data');
   if (!response.ok) {
     throw new Error(`Avantis API error: ${response.status}`);
@@ -325,7 +324,7 @@ export async function fetchClosedTrades(
   traderAddress: string,
   pageNumber: number = 1
 ): Promise<ClosedTrade[]> {
-  const url = `${AVANTIS_HISTORY_BASE}/${traderAddress}/${pageNumber}`;
+  const url = `${AVANTIS_PROXY_HISTORY}/${traderAddress}/${pageNumber}`;
   
   try {
     const response = await fetchWithTimeout(url, 15000); // 15s
@@ -365,6 +364,8 @@ export async function fetchClosedTrades(
       
       // _feeInfo can be absent in some records. Treat missing as not-liquidated.
       const isLiquidated = (args._feeInfo?.liquidationFee ?? 0) > 0;
+      const finalPnLVal = isLiquidated ? -collateral : finalPnL;
+      const finalPnLPct = isLiquidated ? -100 : finalPnLPercentage;
       
       return {
         tradeIndex: t.index,
@@ -379,8 +380,8 @@ export async function fetchClosedTrades(
         liquidationPrice: 0, // Not available in history API
         openedAt: t.timestamp,
         closedAt: new Date(item.timeStamp).getTime(),
-        finalPnL,
-        finalPnLPercentage,
+        finalPnL: finalPnLVal,
+        finalPnLPercentage: finalPnLPct,
         closePrice: args.price ?? t.openPrice,
         isLiquidated,
       } as ClosedTrade;
@@ -408,10 +409,10 @@ export async function fetchTotalVolume(traderAddress: string): Promise<number> {
       }
     }
 
-    // 2. Closed trades from portfolio history (paginate)
+    // 2. Closed trades from portfolio history (paginate, via proxy)
     let page = 1;
     while (true) {
-      const url = `${AVANTIS_HISTORY_BASE}/${traderAddress}/${page}`;
+      const url = `${AVANTIS_PROXY_HISTORY}/${traderAddress}/${page}`;
       const response = await fetchWithTimeout(url, 15000);
       if (response.status === 404) break;
       if (!response.ok) break;

@@ -61,8 +61,9 @@ export function saveClosedTrade(
   }
 
   try {
-    const grossPnl = Number.isFinite(Number(pnlData.grossPnl)) ? Number(pnlData.grossPnl) : 0;
-    const grossPnlPct = Number.isFinite(Number(pnlData.grossPnlPercentage)) ? Number(pnlData.grossPnlPercentage) : 0;
+    const isLiquidated = options?.isLiquidated ?? false;
+    const grossPnl = isLiquidated ? -trade.collateral : (Number.isFinite(Number(pnlData.grossPnl)) ? Number(pnlData.grossPnl) : 0);
+    const grossPnlPct = isLiquidated ? -100 : (Number.isFinite(Number(pnlData.grossPnlPercentage)) ? Number(pnlData.grossPnlPercentage) : 0);
     const closedTrade: ClosedTrade = {
       ...trade,
       closedAt: Date.now(),
@@ -71,7 +72,7 @@ export function saveClosedTrade(
       closePrice: Number.isFinite(Number(pnlData.currentPrice)) ? Number(pnlData.currentPrice) : trade.openPrice,
       txHash: options?.txHash,
       closeTxHash: options?.closeTxHash,
-      isLiquidated: options?.isLiquidated ?? false,
+      isLiquidated,
       isTakeProfitHit: options?.isTakeProfitHit ?? false,
     };
 

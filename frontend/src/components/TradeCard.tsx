@@ -65,9 +65,10 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, onShare, isFlipping
   
   // Check if this is a ClosedTrade
   const closedTrade = isClosed && 'finalPnL' in trade ? trade as ClosedTrade : null;
-  // Use net PnL for open trades (what user keeps after ZFP fees)
-  const rawPnl = closedTrade ? closedTrade.finalPnL : (pnlData?.pnl ?? 0);
-  const rawPnlPct = closedTrade ? closedTrade.finalPnLPercentage : (pnlData?.pnlPercentage ?? 0);
+  const isLiquidated = closedTrade?.isLiquidated ?? false;
+  // Use net PnL for open trades (what user keeps after ZFP fees). Liquidated = -100% full loss.
+  const rawPnl = closedTrade ? (isLiquidated ? -trade.collateral : closedTrade.finalPnL) : (pnlData?.pnl ?? 0);
+  const rawPnlPct = closedTrade ? (isLiquidated ? -100 : closedTrade.finalPnLPercentage) : (pnlData?.pnlPercentage ?? 0);
   const pnl = Number.isFinite(Number(rawPnl)) ? Number(rawPnl) : 0;
   const pnlPercentage = Number.isFinite(Number(rawPnlPct)) ? Number(rawPnlPct) : 0;
   const currentPrice = closedTrade ? closedTrade.closePrice : (pnlData?.currentPrice ?? trade.openPrice);
@@ -75,7 +76,6 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, onShare, isFlipping
   const color = isProfit ? '#CCFF00' : '#FF006E';
   
   const positionSize = trade.collateral * trade.leverage;
-  const isLiquidated = closedTrade?.isLiquidated ?? false;
   const isTakeProfitHit = closedTrade?.isTakeProfitHit ?? false;
 
   // Card border color based on P&L

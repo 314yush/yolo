@@ -6,6 +6,7 @@ import { ASSETS, LEVERAGES, DIRECTIONS, WHEEL_TIMINGS } from '@/lib/constants';
 import { useSound } from '@/hooks/useSound';
 import { vibrateShort } from '@/lib/haptics';
 import { getMarketClosedAssets } from '@/lib/marketHours';
+import { PickerWheelAssetGlyph } from '@/components/PickerWheelAssetGlyph';
 
 interface PickerWheelProps {
   onSpinComplete: () => void;
@@ -213,20 +214,16 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           stroke="#000"
           strokeWidth={strokeWidth}
         />
-        {isImage ? (
-          <image
-            href={label}
-            x={textX - imageSize / 2}
-            y={textY - imageSize / 2}
-            width={imageSize}
-            height={imageSize}
-            transform={`rotate(${textAngle}, ${textX}, ${textY})`}
-            style={{
-              maxWidth: `clamp(${imageSize * 0.5}px, ${imageSize * 0.7}vw, ${imageSize}px)`,
-              maxHeight: `clamp(${imageSize * 0.5}px, ${imageSize * 0.7}vw, ${imageSize}px)`,
-            }}
-          />
-        ) : (
+        {isImage && assetName ? (
+          <g transform={`rotate(${textAngle}, ${textX}, ${textY})`}>
+            <PickerWheelAssetGlyph
+              name={assetName}
+              x={textX - imageSize / 2}
+              y={textY - imageSize / 2}
+              size={imageSize}
+            />
+          </g>
+        ) : !isImage ? (
           <text
             x={textX}
             y={textY}
@@ -242,7 +239,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
           >
             {label}
           </text>
-        )}
+        ) : null}
         {assetName && marketClosedAssets.includes(assetName) && (
           <g transform={`rotate(${textAngle}, ${textX}, ${textY})`}>
             <rect
@@ -389,7 +386,7 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
             }}
           >
             {ASSETS.map((asset, i) =>
-              renderRingSegment(i, ASSETS.length, 130, 190, asset.color, asset.icon, 28, true, asset.name)
+              renderRingSegment(i, ASSETS.length, 130, 190, asset.color, '', 28, true, asset.name)
             )}
           </g>
 

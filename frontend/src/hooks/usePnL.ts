@@ -188,9 +188,9 @@ export function usePnL(options: UsePnLOptions = {}) {
             
             setIsLiquidatedRef.current(true);
             
-            // Update PnL data with final values (at liquidation, typically -85%)
-            const liqPct = Math.min(currentPnL.pnlPercentage, -85);
-            const liqPnl = (trade.collateral * liqPct) / 100;
+            // Update PnL data with final values (liquidation = -100% full loss)
+            const liqPct = -100;
+            const liqPnl = -trade.collateral;
             const finalPnLData = {
               ...currentPnL,
               pnlPercentage: liqPct,
@@ -269,7 +269,14 @@ export function usePnL(options: UsePnLOptions = {}) {
           debug('[usePnL] Position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL, '- Marking as liquidated');
           setIsLiquidatedRef.current(true);
           try {
-            saveClosedTrade(userAddr, trade, lastPnLData, {
+            const liqPnLData = {
+              ...lastPnLData,
+              pnlPercentage: -100,
+              grossPnlPercentage: -100,
+              pnl: -trade.collateral,
+              grossPnl: -trade.collateral,
+            };
+            saveClosedTrade(userAddr, trade, liqPnLData, {
               isLiquidated: true,
             });
             logTradeCloseByPosition({
@@ -277,7 +284,7 @@ export function usePnL(options: UsePnLOptions = {}) {
               pairIndex: trade.pairIndex,
               tradeIndex: trade.tradeIndex,
               exitPrice: lastPnLData.currentPrice,
-              pnl: lastPnLData.grossPnl,
+              pnl: -trade.collateral,
               closedAt: new Date().toISOString(),
               isLiquidated: true,
             });

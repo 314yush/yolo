@@ -218,7 +218,11 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         // Handle API errors gracefully - but don't keep retrying
         if (status.error) {
           console.error('Failed to check delegate status:', status.error);
-          setError(`API Error: ${status.error}. Make sure the backend is running.`);
+          setError(
+            status.error === 'Failed to read contract'
+              ? 'Failed to read from Base network. Check your connection and ensure NEXT_PUBLIC_BASE_RPC_URL is set on Vercel.'
+              : `Error: ${status.error}`
+          );
           // Don't block - show setup but with error message
           setStep('setup');
           setIsCheckingStatus(false);

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mute/Unmute Music Icon — Placement Options</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0a; color: #fff; font-family: system-ui, sans-serif; padding: 24px; }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; color: #CCFF00; }
+    p { color: rgba(255,255,255,0.7); margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; max-width: 1200px; }
+    .card {
+      background: #111; border: 2px solid rgba(204,255,0,0.2);
+      border-radius: 12px; overflow: hidden;
+    }
+    .card img { width: 100%; display: block; }
+    .card h3 { padding: 12px 16px; font-size: 0.9rem; color: #CCFF00; }
+    .card p { padding: 0 16px 12px; font-size: 0.8rem; margin: 0; color: rgba(255,255,255,0.6); }
+  </style>
+</head>
+<body>
+  <h1>Mute / Unmute Music Icon — Placement Options</h1>
+  <p>Mockups showing different ways to add a quick-access music toggle across the YOLO app. Currently music is controlled only in Settings.</p>
+
+  <div class="grid">
+    <div class="card">
+      <img src="mute-icon-mockup-header.png" alt="Header placement" />
+      <h3>A. Header (next to logo)</h3>
+      <p>Icon between YOLO logo and Sign In. Always visible on picker/wheel screens. Hidden on PnL (header hidden).</p>
+    </div>
+    <div class="card">
+      <img src="mute-icon-mockup-floating.png" alt="Floating corner" />
+      <h3>B. Floating top-right</h3>
+      <p>Floating pill/circle above content. Stays visible even when header is hidden (PnL). Like iOS control center.</p>
+    </div>
+    <div class="card">
+      <img src="mute-icon-mockup-info-bar.png" alt="Info bar" />
+      <h3>C. FinancialInfoBar</h3>
+      <p>Inline at right end of COLLATERAL | BALANCE bar. Minimal, always on screen when bar is shown.</p>
+    </div>
+    <div class="card">
+      <img src="mute-icon-mockup-nav-footer.png" alt="Nav footer" />
+      <h3>D. NavFooter (bottom)</h3>
+      <p>Next to ROLL button in bottom nav. Thumb-friendly. Consistent placement across stages.</p>
+    </div>
+    <div class="card">
+      <img src="mute-icon-mockup-pnl-screen.png" alt="PnL screen" />
+      <h3>E. PnL screen (floating)</h3>
+      <p>Floating in chart area when header is hidden. Ensures music control on PnL view.</p>
+    </div>
+  </div>
+</body>
+</html>

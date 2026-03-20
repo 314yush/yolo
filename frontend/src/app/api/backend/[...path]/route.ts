@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 
 // BACKEND_URL is preferred (server-side); NEXT_PUBLIC_API_URL supported for doc compatibility
 function getBackendUrl(): string {
-  const raw =
+  let raw =
     process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  return raw.replace(/\/+$/, ''); // strip trailing slashes
+  raw = raw.replace(/\/+$/, ''); // strip trailing slashes
+  // Ensure URL has protocol - without it, fetch treats as relative and 404s
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = `https://${raw}`;
+  }
+  return raw;
 }
 
 export async function GET(
