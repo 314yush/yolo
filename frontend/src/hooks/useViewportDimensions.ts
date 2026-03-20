@@ -129,12 +129,19 @@ function detectBrowser(): ViewportDimensions['browser'] {
   }
 
   const ua = navigator.userAgent.toLowerCase();
-  
+
+  type InjectedEthereum = {
+    isMetaMask?: boolean;
+    isTrust?: boolean;
+    isCoinbaseWallet?: boolean;
+  };
+  const eth = (window as Window & { ethereum?: InjectedEthereum }).ethereum;
+
   // Check for crypto wallet browsers
-  const isMetaMask = ua.includes('metamask') || !!(window as any).ethereum?.isMetaMask;
-  const isTrustWallet = ua.includes('trust') || !!(window as any).ethereum?.isTrust;
-  const isCoinbaseWallet = ua.includes('coinbasewallet') || !!(window as any).ethereum?.isCoinbaseWallet;
-  const isCryptoWallet = isMetaMask || isTrustWallet || isCoinbaseWallet || !!(window as any).ethereum;
+  const isMetaMask = ua.includes('metamask') || !!eth?.isMetaMask;
+  const isTrustWallet = ua.includes('trust') || !!eth?.isTrust;
+  const isCoinbaseWallet = ua.includes('coinbasewallet') || !!eth?.isCoinbaseWallet;
+  const isCryptoWallet = isMetaMask || isTrustWallet || isCoinbaseWallet || !!eth;
   
   // Standard browser detection
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -308,8 +315,7 @@ export function useViewportDimensions(): ViewportDimensions {
   }, []);
 
   useEffect(() => {
-    // Initial measurement
-    updateDimensions();
+    queueMicrotask(() => updateDimensions());
 
     // Listen for resize events
     window.addEventListener('resize', updateDimensions);

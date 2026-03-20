@@ -10,6 +10,7 @@ interface InsufficientFundsModalProps {
   currentBalance: number;
   requiredAmount: number;
   userAddress: string;
+  onFundingComplete?: () => void | Promise<void>;
 }
 
 export function InsufficientFundsModal({
@@ -18,6 +19,7 @@ export function InsufficientFundsModal({
   currentBalance,
   requiredAmount,
   userAddress,
+  onFundingComplete,
 }: InsufficientFundsModalProps) {
   const { fundWallet } = useFundWallet();
   
@@ -34,11 +36,12 @@ export function InsufficientFundsModal({
           amount: shortfallDisplay,
         },
       });
+      await Promise.resolve(onFundingComplete?.());
       onClose();
     } catch (error) {
       console.error('Fund wallet error:', error);
     }
-  }, [fundWallet, userAddress, shortfallDisplay, onClose]);
+  }, [fundWallet, userAddress, shortfallDisplay, onClose, onFundingComplete]);
 
   const handleFundFromWallet = useCallback(async () => {
     try {
@@ -51,11 +54,12 @@ export function InsufficientFundsModal({
           defaultFundingMethod: 'wallet',
         },
       });
+      await Promise.resolve(onFundingComplete?.());
       onClose();
     } catch (error) {
       console.error('Fund from wallet error:', error);
     }
-  }, [fundWallet, userAddress, shortfallDisplay, onClose]);
+  }, [fundWallet, userAddress, shortfallDisplay, onClose, onFundingComplete]);
 
   const handleFundFromExchange = useCallback(async () => {
     try {
@@ -68,11 +72,12 @@ export function InsufficientFundsModal({
           defaultFundingMethod: 'exchange',
         },
       });
+      await Promise.resolve(onFundingComplete?.());
       onClose();
     } catch (error) {
       console.error('Fund from exchange error:', error);
     }
-  }, [fundWallet, userAddress, shortfallDisplay, onClose]);
+  }, [fundWallet, userAddress, shortfallDisplay, onClose, onFundingComplete]);
 
   if (!isOpen) return null;
 

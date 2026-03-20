@@ -11,7 +11,9 @@ export function OriginDebug() {
   const [origin, setOrigin] = useState<string>('');
 
   useEffect(() => {
-    setOrigin(typeof window !== 'undefined' ? window.location.origin : '');
+    queueMicrotask(() => {
+      setOrigin(typeof window !== 'undefined' ? window.location.origin : '');
+    });
   }, []);
 
   if (!origin) return null;

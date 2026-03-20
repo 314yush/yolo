@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { debug } from '@/lib/debug';
 
@@ -100,6 +100,8 @@ export function usePythPrices(): UsePythPricesReturn {
     }
   }, []);
 
+  const connectRef = useRef<() => void>(() => {});
+
   // Connect to Pyth Hermes SSE stream
   const connect = useCallback(() => {
     const currentEs = eventSourceRef.current;
@@ -178,7 +180,7 @@ export function usePythPrices(): UsePythPricesReturn {
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current++;
             reconnectTimeoutRef.current = null;
-            connect();
+            connectRef.current();
           }, delay);
         } else if (reconnectAttempts.current >= maxReconnectAttempts) {
           console.error('[PythPrices] Max reconnection attempts reached');
@@ -190,9 +192,13 @@ export function usePythPrices(): UsePythPricesReturn {
     eventSourceRef.current = es;
   }, [parsePriceUpdate]);
 
+  useLayoutEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
   // Connect on mount
   useEffect(() => {
-    connect();
+    queueMicrotask(() => connect());
 
     return () => {
       if (reconnectTimeoutRef.current) {

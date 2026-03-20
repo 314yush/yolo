@@ -114,15 +114,25 @@ export function useBatchedSetup() {
 
       setSetupStatus('Setup complete!');
       return { success: true, txHashes };
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Batched setup error:', err);
       setSetupStatus('');
-      if (err.code === 4001 || err?.cause?.code === 4001) {
+      const rec = err && typeof err === 'object' ? (err as Record<string, unknown>) : {};
+      const cause = rec.cause && typeof rec.cause === 'object' ? (rec.cause as Record<string, unknown>) : {};
+      if (rec.code === 4001 || cause.code === 4001) {
         return { success: false, error: 'Transaction rejected by user' };
       }
+      const msg =
+        typeof rec.message === 'string'
+          ? rec.message
+          : typeof rec.shortMessage === 'string'
+            ? rec.shortMessage
+            : err instanceof Error
+              ? err.message
+              : 'Failed to complete setup';
       return {
         success: false,
-        error: err?.message || err?.shortMessage || 'Failed to complete setup',
+        error: msg,
       };
     } finally {
       setIsProcessing(false);

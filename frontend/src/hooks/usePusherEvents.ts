@@ -85,7 +85,7 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
   // Clear events when stage transitions from pnl → idle
   useEffect(() => {
     if (prevStageRef.current === 'pnl' && stage === 'idle') {
-      setEvents([]);
+      queueMicrotask(() => setEvents([]));
     }
     prevStageRef.current = stage;
   }, [stage]);

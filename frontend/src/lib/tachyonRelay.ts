@@ -287,15 +287,16 @@ export async function relayTrade(params: {
   try {
     taskId = await tachyon.relay(relayParams);
     debug(LOG_PREFIX, '✅ Relay submitted, task ID:', taskId);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error(LOG_PREFIX, '❌ Relay failed:', error);
-    console.error(LOG_PREFIX, '  Error message:', error?.message || String(error));
-    console.error(LOG_PREFIX, '  Error stack:', error?.stack);
+    console.error(LOG_PREFIX, '  Error message:', err.message || String(error));
+    console.error(LOG_PREFIX, '  Error stack:', err.stack);
     console.error(LOG_PREFIX, '  Params:', JSON.stringify(relayParams, (_, v) => 
       typeof v === 'bigint' ? v.toString() : v, 2));
     
     // Provide helpful error messages
-    if (error?.message?.includes('insufficient') || error?.message?.includes('balance')) {
+    if (err.message.includes('insufficient') || err.message.includes('balance')) {
       throw new Error(
         `Insufficient balance: Delegate wallet needs ${Number(value) / 1e18} ETH to send with transaction. ` +
         `Tachyon sponsors gas, but delegate must have ETH for transaction value. ` +

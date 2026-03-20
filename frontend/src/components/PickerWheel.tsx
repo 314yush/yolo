@@ -12,9 +12,18 @@ interface PickerWheelProps {
   onSpinComplete: () => void;
   onSpinStart: () => void;
   triggerSpin?: boolean;
+  /** When true (idle), wheel tap / external trigger opens add-funds instead of spinning */
+  blockSpinForFunds?: boolean;
+  onBlockedByFunds?: () => void;
 }
 
-export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: PickerWheelProps) {
+export function PickerWheel({
+  onSpinComplete,
+  onSpinStart,
+  triggerSpin,
+  blockSpinForFunds,
+  onBlockedByFunds,
+}: PickerWheelProps) {
   const { stage, selection, randomizeSelection, setStage } = useTradeStore();
   const hasTriggeredRef = React.useRef(false);
   const { startSpin, stopSpin, playTick } = useSound();
@@ -151,17 +160,25 @@ export function PickerWheel({ onSpinComplete, onSpinStart, triggerSpin }: Picker
       hasTriggeredRef.current = true;
       // Use setTimeout to avoid synchronous setState in effect
       setTimeout(() => {
-        spinWheels();
+        if (blockSpinForFunds) {
+          onBlockedByFunds?.();
+        } else {
+          spinWheels();
+        }
       }, 0);
     }
     // Reset the ref when triggerSpin becomes false
     if (!triggerSpin) {
       hasTriggeredRef.current = false;
     }
-  }, [triggerSpin, stage, spinWheels]);
+  }, [triggerSpin, stage, spinWheels, blockSpinForFunds, onBlockedByFunds]);
 
   const handleWheelClick = () => {
     if (stage !== 'idle') return;
+    if (blockSpinForFunds) {
+      onBlockedByFunds?.();
+      return;
+    }
     spinWheels();
   };
 

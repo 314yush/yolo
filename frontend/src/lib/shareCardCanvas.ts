@@ -1,19 +1,28 @@
 /**
  * Canvas-based share card renderer.
- * Bypasses html2canvas to reliably capture background + overlay (PnL, text, logo).
+ * Produces PNG blobs for export/sharing in both square (1:1) and portrait (4:5) formats.
+ *
+ * All sizing is proportional to the canvas width (matching the React preview's cqw units)
+ * so the output looks identical to the preview at any resolution.
  */
 
 import type { ClosedTrade } from '@/types';
+import type { ShareCardFormat } from '@/components/ShareCard';
 import { ASSETS, DIRECTIONS } from '@/lib/constants';
 import { pickShareCardBackground } from '@/lib/shareCardBackgrounds';
 
 const LIME = '#CCFF00';
 const PINK = '#FF006E';
-const SIZE = 400;
-const SCALE = 2;
+
+const CANVAS_W = 1080;
+const CANVAS_DIMS: Record<ShareCardFormat, { w: number; h: number }> = {
+  square: { w: CANVAS_W, h: CANVAS_W },
+  story: { w: CANVAS_W, h: Math.round(CANVAS_W * (5 / 4)) },
+};
 
 const SHARE_CARD_SITE_LINE =
-  (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_SITE_URL?.replace(/^https?:\/\//, '')) ||
+  (typeof process !== 'undefined' &&
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/^https?:\/\//, '')) ||
   'tradeyolo.fun';
 
 function normalizeToMs(timestamp: number): number {
@@ -45,7 +54,43 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-export async function renderShareCardToBlob(trade: ClosedTrade): Promise<Blob> {
+function drawImageCover(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  canvasW: number,
+  canvasH: number
+) {
+  const imgRatio = img.naturalWidth / img.naturalHeight;
+  const canvasRatio = canvasW / canvasH;
+  let sw: number, sh: number, sx: number, sy: number;
+
+  if (imgRatio > canvasRatio) {
+    sh = img.naturalHeight;
+    sw = sh * canvasRatio;
+    sx = (img.naturalWidth - sw) / 2;
+    sy = 0;
+  } else {
+    sw = img.naturalWidth;
+    sh = sw / canvasRatio;
+    sx = 0;
+    sy = (img.naturalHeight - sh) / 2;
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvasW, canvasH);
+}
+
+async function ensureFonts(): Promise<void> {
+  if (typeof document === 'undefined') return;
+  try {
+    await document.fonts.ready;
+  } catch {
+    /* continue with system fonts */
+  }
+}
+
+export async function renderShareCardToBlob(
+  trade: ClosedTrade,
+  format: ShareCardFormat = 'square'
+): Promise<Blob> {
   const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   const isProfit = trade.finalPnL >= 0;
@@ -61,91 +106,132 @@ export async function renderShareCardToBlob(trade: ClosedTrade): Promise<Blob> {
 
   const pctStr =
     trade.finalPnLPercentage >= 0
-      ? `+${trade.finalPnLPercentage.toFixed(2)}%`
-      : `-${Math.abs(trade.finalPnLPercentage).toFixed(2)}%`;
+      ? `+${trade.finalPnLPercentage.toFixed(1)}%`
+      : `${trade.finalPnLPercentage.toFixed(1)}%`;
 
   const openedMs = normalizeToMs(trade.openedAt);
   const closedMs = trade.closedAt > 1e12 ? trade.closedAt : trade.closedAt * 1000;
   const durationStr = formatDuration(Math.max(0, closedMs - openedMs));
 
-  const pairLabel = `${asset?.name ?? (trade.pair ?? '').replace('/USD', '')} ${trade.leverage}x ${direction?.name ?? (trade.isLong ? 'LONG' : 'SHORT')}`;
+  const assetName = asset?.name ?? (trade.pair ?? '').replace('/USD', '');
+  const directionName = direction?.name ?? (trade.isLong ? 'LONG' : 'SHORT');
+  const directionColor = trade.isLong ? LIME : PINK;
 
-  await document.fonts.ready;
+  await ensureFonts();
 
   const [bgImg, logoImg] = await Promise.all([
     loadImage(bgUrl),
     loadImage('/yolo-logo.svg'),
   ]);
 
-  const w = SIZE * SCALE;
-  const h = SIZE * SCALE;
+  const { w, h } = CANVAS_DIMS[format];
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2d context not available');
 
-  const s = (n: number) => n * SCALE;
+  const pw = (pct: number) => Math.round(w * pct);
 
-  // 1. Fallback gradient (if image fails, we still have bg)
-  const fallbackGradient = ctx.createLinearGradient(0, 0, w, h);
-  fallbackGradient.addColorStop(0, isProfit ? '#0d150d' : '#150d10');
-  fallbackGradient.addColorStop(1, '#0a0a0a');
-  ctx.fillStyle = fallbackGradient;
+  const displayFont = 'Oswald, "Helvetica Neue", Arial, sans-serif';
+  const bodyFont = '"IBM Plex Sans", "Outfit", system-ui, sans-serif';
+
+  // --- 1. Fallback gradient ---
+  const fallbackGrad = ctx.createLinearGradient(0, 0, w, h);
+  fallbackGrad.addColorStop(0, isProfit ? '#0d150d' : '#150d10');
+  fallbackGrad.addColorStop(1, '#0a0a0a');
+  ctx.fillStyle = fallbackGrad;
   ctx.fillRect(0, 0, w, h);
 
-  // 2. Background image
-  ctx.drawImage(bgImg, 0, 0, w, h);
+  // --- 2. Background image (cover-fit) ---
+  drawImageCover(ctx, bgImg, w, h);
 
-  // 3. Scrim gradient
+  // --- 3. Scrim gradient ---
   const scrim = ctx.createLinearGradient(0, 0, 0, h);
-  scrim.addColorStop(0, 'rgba(0,0,0,0.4)');
-  scrim.addColorStop(0.3, 'transparent');
-  scrim.addColorStop(0.5, 'transparent');
-  scrim.addColorStop(1, 'rgba(0,0,0,0.85)');
+  scrim.addColorStop(0, 'rgba(0,0,0,0.35)');
+  scrim.addColorStop(0.25, 'rgba(0,0,0,0.05)');
+  scrim.addColorStop(0.4, 'rgba(0,0,0,0)');
+  scrim.addColorStop(0.65, 'rgba(0,0,0,0.55)');
+  scrim.addColorStop(1, 'rgba(0,0,0,0.92)');
   ctx.fillStyle = scrim;
   ctx.fillRect(0, 0, w, h);
 
-  // 4. Logo (top-left)
-  const logoW = s(72);
-  const logoH = s(24);
-  ctx.drawImage(logoImg, s(16), s(16), logoW, logoH);
+  // --- Layout constants ---
+  const pad = pw(0.06); // 6% edge padding
 
-  // 5. Text (bottom-left) - match ShareCard: PnL larger, tighter PnL↔duration
-  const left = s(20);
-  const baseY = h - s(24); // pb-6
-  const pnlSize = s(48); // 3rem at scale 2 (was 36)
-  const pnlToDurationGap = s(8); // reduced from ~40px
+  // --- 4. Logo (top-left, 18% of width) ---
+  const logoW = pw(0.18);
+  const logoH = Math.round(logoW * (28 / 80));
+  ctx.drawImage(logoImg, pw(0.05), pw(0.05), logoW, logoH);
+
+  // --- 5. Direction pill (top-right) ---
+  const pillFontSize = pw(0.035);
+  ctx.font = `bold ${pillFontSize}px ${bodyFont}`;
+  const pillMetrics = ctx.measureText(directionName);
+  const pillPadX = pw(0.03);
+  const pillPadY = pw(0.01);
+  const pillW = pillMetrics.width + pillPadX * 2;
+  const pillH = pillFontSize + pillPadY * 2;
+  const pillX = w - pw(0.05) - pillW;
+  const pillY = pw(0.05);
+
+  ctx.fillStyle = directionColor;
+  ctx.fillRect(pillX, pillY, pillW, pillH);
+
+  ctx.fillStyle = '#000000';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.font = `bold ${pillFontSize}px ${bodyFont}`;
+  ctx.fillText(directionName, pillX + pillW / 2, pillY + pillH / 2);
+
+  // --- 6. Bottom content zone (builds from bottom up) ---
+  let curY = h - pad;
 
   ctx.textBaseline = 'bottom';
   ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)';
+  ctx.shadowBlur = pw(0.006);
 
-  // URL (bottom)
-  ctx.font = `600 ${s(9)}px system-ui, sans-serif`;
+  // Footer: duration · tradeyolo.fun
+  const footerSize = pw(0.03);
+  ctx.font = `bold ${footerSize}px ${bodyFont}`;
+
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText(durationStr, pad, curY);
+  const durW = ctx.measureText(durationStr).width;
+
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillText(' · ', pad + durW, curY);
+  const dotW = ctx.measureText(' · ').width;
+
   ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.fillText(SHARE_CARD_SITE_LINE, left, baseY);
+  ctx.fillText(SHARE_CARD_SITE_LINE, pad + durW + dotW, curY);
 
-  // Duration (tighter to PnL)
-  ctx.font = `600 ${s(10)}px system-ui, sans-serif`;
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.shadowColor = 'rgba(0,0,0,0.8)';
-  ctx.shadowBlur = s(2);
-  const durationY = baseY - s(20);
-  ctx.fillText(durationStr, left, durationY);
+  curY -= Math.round(footerSize * 1.8);
 
-  // PnL % (larger, closer to duration)
-  ctx.font = `bold ${pnlSize}px system-ui, sans-serif`;
+  // PnL percentage (hero) -- 18cqw
+  const pnlSize = pw(0.18);
+  ctx.font = `900 ${pnlSize}px ${displayFont}`;
   ctx.fillStyle = accent;
-  ctx.shadowBlur = s(12);
-  ctx.fillText(pctStr, left, durationY - s(10) - pnlToDurationGap);
+  ctx.shadowBlur = pw(0.02);
+  ctx.shadowColor = `${accent}33`;
+  ctx.fillText(pctStr, pad, curY);
 
-  // Pair label (top of text block)
-  ctx.font = `600 ${s(11)}px system-ui, sans-serif`;
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.shadowBlur = s(3);
-  ctx.fillText(pairLabel, left, durationY - s(10) - pnlToDurationGap - pnlSize - s(12));
+  curY -= pnlSize + Math.round(pw(0.03));
+
+  // Reset shadow
+  ctx.shadowColor = 'rgba(0,0,0,0.9)';
+  ctx.shadowBlur = pw(0.006);
+
+  // Asset label (no dot)
+  const assetLabel = `${assetName} ${trade.leverage}x`;
+  const assetFontSize = pw(0.038);
+  ctx.font = `bold ${assetFontSize}px ${bodyFont}`;
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillText(assetLabel, pad, curY);
 
   ctx.shadowBlur = 0;
+  ctx.shadowColor = 'transparent';
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(

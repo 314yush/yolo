@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { usePrivy } from '@privy-io/react-auth';
@@ -42,11 +42,12 @@ import {
   buildOpenTradeTx as buildOpenTradeTxDirect,
   calculateTakeProfitMultiplier,
 } from '@/lib/avantisEncoder';
-import type { Trade, ClosedTrade } from '@/types';
+import type { Trade, ClosedTrade, PnLData } from '@/types';
+import { fetchRecentClosedTradeMatch } from '@/lib/avantisApi';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DEFAULT_COLLATERAL, MIN_DEPOSIT } from '@/lib/constants';
 import { debug } from '@/lib/debug';
-import { Dice5, Loader2 } from 'lucide-react';
+import { Dice5, Loader2, Wallet } from 'lucide-react';
 
 export default function HomePage() {
   const router = useRouter();
@@ -195,7 +196,7 @@ export default function HomePage() {
   }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus, reset]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playWin, playLose } = useSound();
-  const { balance: usdcBalance } = useUsdcBalance();
+  const { balance: usdcBalance, refetch: refetchUsdcBalance } = useUsdcBalance();
   
   // Access code check (for gating app access)
   const walletAddress = authenticated ? user?.wallet?.address || null : null;
@@ -356,6 +357,15 @@ export default function HomePage() {
     }, 0);
   }, [openTrades, prices]);
 
+  const needsAddFunds = useMemo(
+    () => delegateStatus.isSetup && usdcBalance !== null && usdcBalance < collateral,
+    [delegateStatus.isSetup, usdcBalance, collateral]
+  );
+
+  const openInsufficientFundsModal = useCallback(() => {
+    setShowInsufficientFundsModal(true);
+  }, []);
+
   // Handle spin start - fire trade immediately
   const handleSpinStart = useCallback(async () => {
     // CRITICAL: Prevent trading if setup is not complete
@@ -396,6 +406,7 @@ export default function HomePage() {
     // Check USDC balance before proceeding
     if (usdcBalance !== null && usdcBalance < collateral) {
       debug(`[handleSpinStart] Insufficient funds: balance=${usdcBalance}, required=${collateral}`);
+      setStage('idle');
       useTradeStore.getState().showToast('Insufficient USDC balance', 'error');
       setShowInsufficientFundsModal(true);
       return;
@@ -477,7 +488,9 @@ export default function HomePage() {
     userAddress,
     user,
     delegateAddress,
+    delegateStatus.isSetup,
     collateral,
+    usdcBalance,
     prices,
     signAndBroadcast,
     setTxHash,
@@ -623,27 +636,70 @@ export default function HomePage() {
 
       const { hash: closeTxHash } = await signAndWait(closeTx);
 
-      // Play win/loss sound based on PnL
-      const pnlPct = pnlData?.pnlPercentage ?? 0;
+      const reconciled = await fetchRecentClosedTradeMatch(
+        userAddress,
+        currentTrade.pairIndex,
+        currentTrade.tradeIndex
+      );
+      const isLiquidatedClose = reconciled?.isLiquidated === true;
+      const closePrice =
+        reconciled?.closePrice ?? pnlData?.currentPrice ?? currentTrade.openPrice;
+
+      let effectivePnL: PnLData | null = pnlData;
+      if (isLiquidatedClose) {
+        const coll = currentTrade.collateral;
+        effectivePnL = {
+          trade: currentTrade,
+          currentPrice: closePrice,
+          pnl: -coll,
+          pnlPercentage: -100,
+          grossPnl: -coll,
+          grossPnlPercentage: -100,
+        };
+      } else if (reconciled) {
+        const fp = reconciled.finalPnL;
+        const fpct = reconciled.finalPnLPercentage;
+        effectivePnL = pnlData
+          ? {
+              ...pnlData,
+              currentPrice: closePrice,
+              pnl: fp,
+              pnlPercentage: fpct,
+              grossPnl: fp,
+              grossPnlPercentage: fpct,
+            }
+          : {
+              trade: currentTrade,
+              currentPrice: closePrice,
+              pnl: fp,
+              pnlPercentage: fpct,
+              grossPnl: fp,
+              grossPnlPercentage: fpct,
+            };
+      }
+
+      const pnlPct = effectivePnL?.pnlPercentage ?? pnlData?.pnlPercentage ?? 0;
       if (pnlPct >= 0) {
         playWin();
       } else {
         playLose();
       }
-      
-      // Save closed trade (pnlData may be missing — position often disappears from API right after close)
+
       if (userAddress && currentTrade) {
-        saveClosedTrade(userAddress, currentTrade, pnlData ?? null, { closeTxHash });
-        const gross = pnlData?.grossPnl ?? 0;
-        const grossPct = pnlData?.grossPnlPercentage ?? 0;
+        saveClosedTrade(userAddress, currentTrade, effectivePnL, {
+          closeTxHash,
+          isLiquidated: isLiquidatedClose,
+        });
+        const gross = effectivePnL?.grossPnl ?? pnlData?.grossPnl ?? 0;
+        const grossPct = effectivePnL?.grossPnlPercentage ?? pnlData?.grossPnlPercentage ?? 0;
         const closedTrade: ClosedTrade = {
           ...currentTrade,
           closedAt: Date.now(),
-          finalPnL: gross,
-          finalPnLPercentage: grossPct,
-          closePrice: pnlData?.currentPrice ?? currentTrade.openPrice,
+          finalPnL: isLiquidatedClose ? -currentTrade.collateral : gross,
+          finalPnLPercentage: isLiquidatedClose ? -100 : grossPct,
+          closePrice,
           closeTxHash,
-          isLiquidated: false,
+          isLiquidated: isLiquidatedClose,
           isTakeProfitHit: false,
         };
         setLastClosedTradeForShare(closedTrade);
@@ -651,18 +707,20 @@ export default function HomePage() {
           wallet: userAddress,
           pairIndex: currentTrade.pairIndex,
           tradeIndex: currentTrade.tradeIndex,
-          exitPrice: pnlData?.currentPrice,
-          pnl: pnlData?.grossPnl,
+          exitPrice: closePrice,
+          pnl: gross,
           closedAt: new Date().toISOString(),
           txHash: closeTxHash,
-          isLiquidated: false,
+          isLiquidated: isLiquidatedClose,
         });
       }
-      
-      // Show success toast with PnL
-      const pnl = pnlData?.grossPnl ?? 0;
+
+      const pnl = effectivePnL?.grossPnl ?? pnlData?.grossPnl ?? 0;
       const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
-      showToast(`Closed! PnL: ${pnlStr}`, 'success', undefined, {
+      const toastMsg = isLiquidatedClose
+        ? `Liquidated · ${pnlStr} (-100%)`
+        : `Closed! PnL: ${pnlStr}`;
+      showToast(toastMsg, 'success', undefined, {
         label: 'SHARE',
         onClick: () => router.push('/activity'),
       });
@@ -946,6 +1004,8 @@ export default function HomePage() {
                   onSpinStart={handleSpinStart}
                   onSpinComplete={handleSpinComplete}
                   triggerSpin={shouldSpin}
+                  blockSpinForFunds={needsAddFunds}
+                  onBlockedByFunds={openInsufficientFundsModal}
                 />
               </div>
             </section>
@@ -999,10 +1059,13 @@ export default function HomePage() {
           rollButton={
             <button
               onClick={() => {
-                if (stage === 'idle' && delegateStatus.isSetup) {
-                  setShouldSpin(true);
-                  setTimeout(() => setShouldSpin(false), 100);
+                if (stage !== 'idle' || !delegateStatus.isSetup) return;
+                if (needsAddFunds) {
+                  openInsufficientFundsModal();
+                  return;
                 }
+                setShouldSpin(true);
+                setTimeout(() => setShouldSpin(false), 100);
               }}
               disabled={stage !== 'idle' || !delegateStatus.isSetup || !isOnline}
               aria-label={
@@ -1010,6 +1073,8 @@ export default function HomePage() {
                   ? 'You are offline. Reconnect to trade'
                   : !delegateStatus.isSetup
                   ? 'Please complete setup before trading'
+                  : stage === 'idle' && needsAddFunds
+                  ? 'Add USDC to meet collateral requirement'
                   : stage === 'idle'
                   ? 'Spin the wheel to select trade parameters'
                   : 'Wheel is spinning, please wait'
@@ -1027,8 +1092,17 @@ export default function HomePage() {
             >
               {stage === 'idle' ? (
                 <span className="flex items-center justify-center gap-2">
-                  <Dice5 className="w-6 h-6 sm:w-7 sm:h-7" strokeWidth={3} />
-                  <span>ROLL</span>
+                  {needsAddFunds ? (
+                    <>
+                      <Wallet className="w-6 h-6 sm:w-7 sm:h-7" strokeWidth={2.5} />
+                      <span>ADD FUNDS</span>
+                    </>
+                  ) : (
+                    <>
+                      <Dice5 className="w-6 h-6 sm:w-7 sm:h-7" strokeWidth={3} />
+                      <span>ROLL</span>
+                    </>
+                  )}
                 </span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
@@ -1057,6 +1131,7 @@ export default function HomePage() {
         currentBalance={usdcBalance ?? 0}
         requiredAmount={collateral}
         userAddress={userAddress ?? ''}
+        onFundingComplete={refetchUsdcBalance}
       />
 
       {/* Toast notifications */}

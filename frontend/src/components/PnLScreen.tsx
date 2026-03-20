@@ -58,6 +58,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const [prevPnl, setPrevPnl] = useState<number | null>(null);
   const [isFlashing, setIsFlashing] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
   const hasTriggeredConfettiRef = useRef(false);
   const hasTriggeredTPConfettiRef = useRef(false);
   const megaContainerRef = useRef<HTMLDivElement>(null);
@@ -84,7 +85,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   useEffect(() => {
     const openedAt = displayTrade?.openedAt;
     if (!openedAt) {
-      setElapsedSeconds(0);
+      queueMicrotask(() => setElapsedSeconds(0));
       return;
     }
     const openedAtMs = openedAt > 1e12 ? openedAt : openedAt * 1000;
@@ -234,8 +235,10 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
 
   useEffect(() => {
     if (Math.abs(pnlPercentage) >= 100 && isProfit && !isConfirming) {
-      setBigWinScale(true);
-      setTimeout(() => setBigWinScale(false), 600);
+      queueMicrotask(() => {
+        setBigWinScale(true);
+        setTimeout(() => setBigWinScale(false), 600);
+      });
     }
   }, [pnlPercentage, isProfit, isConfirming]);
 
@@ -280,6 +283,15 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   // Mega-container ambient glow class
   const megaGlowClass = isLiquidated ? 'pnl-negative' : isTakeProfitHit ? 'pnl-positive' : isProfit ? 'pnl-positive' : 'pnl-negative';
 
+  const netForLiqWarn = clientPnL?.pnlPercentage ?? pnlData?.pnlPercentage ?? lastKnownPnLPercentage ?? 0;
+  const grossForLiqWarn = pnlData?.grossPnlPercentage ?? netForLiqWarn;
+  const worstPnlPctForLiqWarn = Math.min(netForLiqWarn, grossForLiqWarn);
+  const showNearLiquidationBanner =
+    !isLiquidated &&
+    !isTakeProfitHit &&
+    !isConfirming &&
+    worstPnlPctForLiqWarn <= -80;
+
   return (
     <div
       className="bg-black w-full safe-area-top safe-area-bottom flex flex-col"
@@ -293,47 +305,49 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
     >
       {/* Trade info strip — sits ABOVE the mega-container */}
       <div
-        className="flex items-center justify-center gap-2 text-white/80 font-mono px-4"
+        className="flex w-full items-center justify-center px-4 text-center text-white/80 font-mono"
         style={{
           fontSize: 'clamp(0.875rem, 2.5vw, 1rem)',
           paddingTop: 'max(env(safe-area-inset-top, 0px), 0.5rem)',
           paddingBottom: '0.25rem',
         }}
       >
-        {displayAsset && (
-          <span className="flex items-center gap-1">
-            <span style={{ color: displayAsset.color }}>●</span>
-            <span>{displayAsset.name}</span>
-          </span>
-        )}
-        {displayLeverage && (
-          <>
-            <span className="text-white/40">•</span>
-            <span>{displayLeverage.name}</span>
-          </>
-        )}
-        {displayDirection && (
-          <>
-            <span className="text-white/40">•</span>
-            <span style={{ color: displayDirection.color }}>{displayDirection.name}</span>
-          </>
-        )}
-        {gamificationMessage && showStatusRow && (
-          <>
-            <span className="text-white/40">•</span>
-            <span
-              className={`font-bold ${isNearLiq ? 'animate-pulse' : ''}`}
-              style={{
-                color: isNearLiq ? '#FF006E' : '#CCFF00',
-                textShadow: isNearLiq
-                  ? '0 0 10px rgba(255, 0, 110, 0.8), 0 0 20px rgba(255, 0, 110, 0.4)'
-                  : 'none',
-              }}
-            >
-              {gamificationMessage}
+        <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+          {displayAsset && (
+            <span className="flex items-center gap-1">
+              <span style={{ color: displayAsset.color }}>●</span>
+              <span>{displayAsset.name}</span>
             </span>
-          </>
-        )}
+          )}
+          {displayLeverage && (
+            <>
+              <span className="text-white/40">•</span>
+              <span>{displayLeverage.name}</span>
+            </>
+          )}
+          {displayDirection && (
+            <>
+              <span className="text-white/40">•</span>
+              <span style={{ color: displayDirection.color }}>{displayDirection.name}</span>
+            </>
+          )}
+          {gamificationMessage && showStatusRow && (
+            <>
+              <span className="text-white/40">•</span>
+              <span
+                className={`font-bold ${isNearLiq ? 'animate-pulse' : ''}`}
+                style={{
+                  color: isNearLiq ? '#FF006E' : '#CCFF00',
+                  textShadow: isNearLiq
+                    ? '0 0 10px rgba(255, 0, 110, 0.8), 0 0 20px rgba(255, 0, 110, 0.4)'
+                    : 'none',
+                }}
+              >
+                {gamificationMessage}
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
       {/* MEGA CONTAINER — merged hero + chart as one seamless unit */}
@@ -368,6 +382,17 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
             </div>
           )}
 
+          {showNearLiquidationBanner && (
+            <div
+              className="mb-3 mx-auto max-w-md border-4 border-[#FF006E] bg-[#FF006E]/10 px-3 py-2 font-mono text-center font-bold text-[#FF006E] brutal-card-losing"
+              style={{ fontSize: 'clamp(0.7rem, 2.8vw, 0.85rem)', lineHeight: 1.35 }}
+              role="alert"
+            >
+              Near liquidation — the protocol may close your position on-chain before the app updates. Closing
+              manually may not cap your loss.
+            </div>
+          )}
+
           {isLiquidated ? (
             <>
               <div
@@ -399,7 +424,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
                 className="text-white/70 mt-1 font-semibold font-mono text-center"
                 style={{ fontSize: 'clamp(0.75rem, 2vw, 0.875rem)' }}
               >
-                Position closed at -85% loss
+                Full collateral lost · liquidated on-chain
               </div>
             </>
           ) : isTakeProfitHit ? (
@@ -629,6 +654,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
       <span className="sr-only">
         {isProfit ? 'Profit' : 'Loss'} of {Math.abs(pnl).toFixed(2)} USDC, {Math.abs(pnlPercentage).toFixed(2)} percent
       </span>
+
     </div>
   );
 }

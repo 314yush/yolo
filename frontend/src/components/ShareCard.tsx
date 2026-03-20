@@ -8,12 +8,15 @@ import { pickShareCardBackground } from '@/lib/shareCardBackgrounds';
 const LIME = '#CCFF00';
 const PINK = '#FF006E';
 
+export type ShareCardFormat = 'square' | 'story';
+
 const SHARE_CARD_SITE_LINE =
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_SITE_URL?.replace(/^https?:\/\//, '')) ||
   'tradeyolo.fun';
 
 interface ShareCardProps {
   trade: ClosedTrade;
+  format?: ShareCardFormat;
   className?: string;
 }
 
@@ -34,7 +37,10 @@ function formatDuration(ms: number): string {
   return `${sec}s`;
 }
 
-export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function ShareCard({ trade, className = '' }, ref) {
+export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function ShareCard(
+  { trade, format = 'square', className = '' },
+  ref
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   useImperativeHandle(ref, () => ({
     getElement: () => containerRef.current,
@@ -52,23 +58,31 @@ export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function Share
 
   const [imageError, setImageError] = useState(false);
 
-  const pctStr = trade.finalPnLPercentage >= 0
-    ? `+${trade.finalPnLPercentage.toFixed(2)}%`
-    : `-${Math.abs(trade.finalPnLPercentage).toFixed(2)}%`;
+  const pctStr =
+    trade.finalPnLPercentage >= 0
+      ? `+${trade.finalPnLPercentage.toFixed(1)}%`
+      : `${trade.finalPnLPercentage.toFixed(1)}%`;
 
   const openedMs = normalizeToMs(trade.openedAt);
   const closedMs = trade.closedAt > 1e12 ? trade.closedAt : trade.closedAt * 1000;
   const durationStr = formatDuration(Math.max(0, closedMs - openedMs));
 
-  const pairLabel = `${asset?.name ?? trade.pair.replace('/USD', '')} ${trade.leverage}x ${direction?.name ?? (trade.isLong ? 'LONG' : 'SHORT')}`;
+  const assetName = asset?.name ?? trade.pair.replace('/USD', '');
+  const directionName = direction?.name ?? (trade.isLong ? 'LONG' : 'SHORT');
+  const directionColor = trade.isLong ? LIME : PINK;
+
+  const aspectClass = format === 'story' ? 'aspect-[4/5]' : 'aspect-square';
 
   return (
     <div
       ref={containerRef}
-      className={`relative w-full max-w-[400px] aspect-square overflow-hidden ${className}`}
-      style={{ fontFamily: 'var(--font-sans), ui-sans-serif, system-ui, sans-serif' }}
+      className={`relative w-full overflow-hidden ${aspectClass} ${className}`}
+      style={{
+        fontFamily: 'var(--font-share-body), var(--font-sans), ui-sans-serif, system-ui, sans-serif',
+        containerType: 'inline-size',
+      }}
     >
-      {/* Fallback */}
+      {/* Fallback gradient */}
       <div
         className="absolute inset-0"
         style={{
@@ -79,8 +93,9 @@ export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function Share
         aria-hidden
       />
 
+      {/* Background image */}
       {!imageError && (
-        // eslint-disable-next-line @next/next/no-img-element -- html2canvas + /public assets
+        // eslint-disable-next-line @next/next/no-img-element -- canvas export compat + /public assets
         <img
           src={bgUrl}
           alt=""
@@ -90,80 +105,107 @@ export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function Share
         />
       )}
 
-      {/* Scrim: soft top, stronger bottom */}
+      {/* Scrim: softer top, strong bottom for text readability */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background: `
             linear-gradient(
               to bottom,
-              rgba(0,0,0,0.4) 0%,
-              transparent 30%,
-              transparent 50%,
-              rgba(0,0,0,0.85) 100%
+              rgba(0,0,0,0.35) 0%,
+              rgba(0,0,0,0.05) 25%,
+              transparent 40%,
+              rgba(0,0,0,0.55) 65%,
+              rgba(0,0,0,0.92) 100%
             )
           `,
         }}
         aria-hidden
       />
 
-      {/* Logo: corner, no box */}
-      <div className="absolute top-4 left-4 z-10">
+      {/* Top bar: Logo + Direction pill */}
+      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-[5%] pt-[5%]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/yolo-logo.svg"
           alt="YOLO"
-          width={72}
-          height={24}
-          className="h-6 w-auto opacity-95"
-          style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.6))' }}
+          width={80}
+          height={28}
+          className="w-[18%] h-auto opacity-95"
+          style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
         />
+        <div
+          className="font-bold uppercase tracking-wider"
+          style={{
+            fontFamily: 'var(--font-share-body), var(--font-sans), ui-sans-serif, system-ui, sans-serif',
+            fontSize: 'clamp(0.5rem, 3.5cqw, 0.75rem)',
+            padding: 'clamp(2px, 1cqw, 6px) clamp(6px, 3cqw, 14px)',
+            color: '#000',
+            backgroundColor: directionColor,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+          }}
+        >
+          {directionName}
+        </div>
       </div>
 
-      {/* Bottom: minimal stats — hierarchy: PnL #1 (largest), proximity: PnL+duration grouped */}
-      <footer className="absolute bottom-0 left-0 right-0 z-10 px-5 pb-6 pt-8">
-        <div className="space-y-1">
-          <p
-            className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/75"
-            style={{
-              fontFamily: 'var(--font-sans), ui-sans-serif, system-ui, sans-serif',
-              textShadow: '0 1px 3px rgba(0,0,0,0.8)',
-            }}
-          >
-            {pairLabel}
-          </p>
+      {/* Bottom content zone */}
+      <footer className="absolute bottom-0 left-0 right-0 z-10 px-[6%] pb-[6%]">
+        {/* Asset + Leverage */}
+        <p
+          className="font-bold uppercase tracking-[0.15em] text-white/90"
+          style={{
+            fontFamily:
+              'var(--font-share-body), var(--font-sans), ui-sans-serif, system-ui, sans-serif',
+            fontSize: 'clamp(0.5rem, 3.8cqw, 0.8rem)',
+            textShadow: '0 1px 4px rgba(0,0,0,0.9)',
+          }}
+        >
+          {assetName} {trade.leverage}x
+        </p>
 
-          <p
-            className="font-bold leading-none tracking-tight"
-            style={{
-              fontFamily: 'var(--font-display), ui-sans-serif, system-ui, sans-serif',
-              fontSize: '3rem',
-              color: accent,
-              textShadow: '0 2px 12px rgba(0,0,0,0.9)',
-            }}
-          >
-            {pctStr}
-          </p>
+        {/* PnL Percentage -- hero element */}
+        <p
+          className="font-black leading-[0.95] tracking-tight"
+          style={{
+            fontFamily: 'var(--font-display), Oswald, ui-sans-serif, system-ui, sans-serif',
+            fontSize: 'clamp(1.8rem, 18cqw, 4.5rem)',
+            color: accent,
+            textShadow: `0 2px 16px rgba(0,0,0,0.9), 0 0 40px ${accent}33`,
+            marginTop: '3cqw',
+          }}
+        >
+          {pctStr}
+        </p>
 
-          <p
-            className="text-[10px] font-medium tracking-[0.12em] text-white/55 -mt-1"
+        {/* Duration + URL */}
+        <div
+          className="flex items-center gap-[2%]"
+          style={{ marginTop: 'clamp(2px, 1.5cqw, 8px)' }}
+        >
+          <span
+            className="text-white/50 font-bold tracking-wide"
             style={{
-              fontFamily: 'var(--font-sans), ui-sans-serif, system-ui, sans-serif',
-              textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+              fontFamily:
+                'var(--font-share-body), var(--font-sans), ui-sans-serif, system-ui, sans-serif',
+              fontSize: 'clamp(0.4rem, 3cqw, 0.65rem)',
+              textShadow: '0 1px 3px rgba(0,0,0,0.9)',
             }}
           >
             {durationStr}
-          </p>
-
-          <p
-            className="pt-2 text-[9px] font-medium tracking-[0.12em] text-white/40"
+          </span>
+          <span className="text-white/20" style={{ fontSize: 'clamp(0.35rem, 2.5cqw, 0.55rem)' }}>·</span>
+          <span
+            className="text-white/40 font-bold tracking-wide"
             style={{
-              fontFamily: 'var(--font-sans), ui-sans-serif, system-ui, sans-serif',
-              textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+              fontFamily:
+                'var(--font-share-body), var(--font-sans), ui-sans-serif, system-ui, sans-serif',
+              fontSize: 'clamp(0.4rem, 3cqw, 0.65rem)',
+              textShadow: '0 1px 3px rgba(0,0,0,0.9)',
             }}
           >
             {SHARE_CARD_SITE_LINE}
-          </p>
+          </span>
         </div>
       </footer>
     </div>

@@ -394,6 +394,30 @@ export async function fetchClosedTrades(
 }
 
 /**
+ * Poll portfolio history until a closed trade matching pair/trade index appears (indexing lag after close).
+ */
+export async function fetchRecentClosedTradeMatch(
+  traderAddress: string,
+  pairIndex: number,
+  tradeIndex: number,
+  options?: { attempts?: number; delayMs?: number }
+): Promise<ClosedTrade | null> {
+  const attempts = options?.attempts ?? 5;
+  const delayMs = options?.delayMs ?? 700;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    const closed = await fetchClosedTrades(traderAddress, 1);
+    const match = closed.find((c) => c.pairIndex === pairIndex && c.tradeIndex === tradeIndex);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+/**
  * Fetch total historic volume (open + closed positions) - computed client-side.
  */
 export async function fetchTotalVolume(traderAddress: string): Promise<number> {

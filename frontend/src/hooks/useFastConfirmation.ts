@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useTradeStore, type ConfirmationStage } from '@/store/tradeStore';
 import { usePusherEvents } from './usePusherEvents';
 import { debug } from '@/lib/debug';
@@ -76,10 +76,17 @@ export function useFastConfirmation(
   // Session nonce — tag each confirmation session with txHash to ignore stale events
   const sessionNonceRef = useRef<string>('');
 
-  // Calculate latency
-  const latencyMs = confirmationTimestamp 
-    ? Date.now() - confirmationTimestamp 
-    : null;
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (confirmationTimestamp == null) {
+      queueMicrotask(() => setLatencyMs(null));
+      return;
+    }
+    const tick = () => setLatencyMs(Date.now() - confirmationTimestamp);
+    queueMicrotask(tick);
+    const id = setInterval(tick, 100);
+    return () => clearInterval(id);
+  }, [confirmationTimestamp]);
 
   // Stop all polling and timeouts
   const cleanup = useCallback(() => {
@@ -253,10 +260,15 @@ export function useFastConfirmation(
     };
   }, [cleanup]);
 
+  const isConfirming =
+    confirmationStage !== 'none' &&
+    confirmationStage !== 'confirmed' &&
+    confirmationStage !== 'failed';
+
   return {
     startConfirmation,
     confirmationStage,
-    isConfirming: isConfirmingRef.current,
+    isConfirming,
     latencyMs,
     cancelConfirmation,
   };

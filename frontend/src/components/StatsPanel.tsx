@@ -13,11 +13,23 @@ interface StatsPanelProps {
   tradeStats: { totalTrades: number; totalVolume: number };
   historicVolume: number | null;
   computedVolume: number;
+  /** Activity API stats row still fetching */
+  statsLoading?: boolean;
+}
+
+function StatShimmer({ className }: { className?: string }) {
+  return (
+    <span
+      className={`inline-block chart-loading-skeleton rounded-sm align-middle min-h-[1.25rem] ${className ?? ''}`}
+      aria-hidden="true"
+    />
+  );
 }
 
 export function StatsPanel({
   tradesWithPnL, closedTradesCount, showClosedTrades, onToggle,
   mounted, activityStats, tradeStats, historicVolume, computedVolume,
+  statsLoading = false,
 }: StatsPanelProps) {
   const aggregateStats = React.useMemo(() => {
     const totalPnL = tradesWithPnL.reduce((sum, item) => sum + (item.pnlData?.pnl ?? 0), 0);
@@ -64,14 +76,26 @@ export function StatsPanel({
         <div className="flex items-center justify-end gap-4 text-xs sm:text-sm min-w-0">
           <div className="text-center shrink-0">
             <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Trades</div>
-            <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
-              {mounted ? (activityStats?.total_trades ?? tradeStats.totalTrades) : 0}
+            <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono min-h-[1.75rem] flex items-center justify-center" suppressHydrationWarning>
+              {mounted && statsLoading ? (
+                <StatShimmer className="w-10 h-7" />
+              ) : mounted ? (
+                activityStats?.total_trades ?? tradeStats.totalTrades
+              ) : (
+                0
+              )}
             </div>
           </div>
           <div className="text-center shrink-0">
             <div className="text-white/50 text-[10px] sm:text-xs uppercase tracking-wide mb-0.5">Volume</div>
-            <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono" suppressHydrationWarning>
-              {mounted ? `$${(activityStats?.total_volume ?? historicVolume ?? tradeStats.totalVolume ?? computedVolume).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '$0'}
+            <div className="text-[#CCFF00] font-black text-lg sm:text-xl font-mono min-h-[1.75rem] flex items-center justify-center" suppressHydrationWarning>
+              {mounted && statsLoading ? (
+                <StatShimmer className="w-16 sm:w-20 h-7" />
+              ) : mounted ? (
+                `$${(activityStats?.total_volume ?? historicVolume ?? tradeStats.totalVolume ?? computedVolume).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+              ) : (
+                '$0'
+              )}
             </div>
           </div>
         </div>

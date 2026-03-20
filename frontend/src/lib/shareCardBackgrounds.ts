@@ -6,11 +6,13 @@
 export const SHARE_CARD_POSITIVE_BACKGROUNDS = [
   '/share-cards/positive-1.png',
   '/share-cards/positive-2.png',
+  '/share-cards/positive-3.png',
 ] as const;
 
 export const SHARE_CARD_NEGATIVE_BACKGROUNDS = [
   '/share-cards/negative-1.png',
   '/share-cards/negative-2.png',
+  '/share-cards/negative-3.png',
 ] as const;
 
 /** Stable variant per trade (same card every time for the same close). */

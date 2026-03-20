@@ -10,10 +10,11 @@ import { useSound } from '@/hooks/useSound';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { vibrateMedium } from '@/lib/haptics';
 import { TradeCard } from '@/components/TradeCard';
-import { ShareCardModal } from '@/components/ShareCardModal';
+import { ShareBottomSheet } from '@/components/ShareBottomSheet';
 import { ToastContainer } from '@/components/Toast';
 import { AvantisFooter } from '@/components/AvantisFooter';
 import { StatsPanel } from '@/components/StatsPanel';
+import { ActivityListSkeleton } from '@/components/ActivityListSkeleton';
 import { saveClosedTrade, loadClosedTrades, mergeClosedTradesDuplicate } from '@/lib/closedTrades';
 import { logTradeCloseByPosition, logTradeOpen, getActivityStats, getActivityTrades, type ActivityTrade } from '@/lib/activityApi';
 import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
@@ -55,7 +56,8 @@ function activityTradeToClosedTrade(at: ActivityTrade): ClosedTrade {
 
 export default function ActivityPage() {
   const router = useRouter();
-  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, toasts, removeToast, tradeStats, setTradeStats, showToast, setIsIntentionalClose, lastClosedTradeForShare, setLastClosedTradeForShare } = useTradeStore();
+  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, addPendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, toasts, removeToast, tradeStats, showToast, setIsIntentionalClose, lastClosedTradeForShare, setLastClosedTradeForShare } = useTradeStore();
+  const pendingOpenTxCount = useTradeStore((s) => s.pendingOpenTxHashes.length);
   const { delegateAddress } = useDelegateWallet();
   const { getTrades, getPnL, getClosedTrades, getTotalVolume } = useAvantisAPI();
   const { signAndWait, signAndBroadcast } = useTxSigner();
@@ -71,12 +73,21 @@ export default function ActivityPage() {
   const [mounted, setMounted] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
   const [isLoadingTrades, setIsLoadingTrades] = useState(true);
+  const [isLoadingClosedTrades, setIsLoadingClosedTrades] = useState(false);
+  const [isLoadingActivityStats, setIsLoadingActivityStats] = useState(false);
   const [displayedClosedTradesCount, setDisplayedClosedTradesCount] = useState(12); // Default to 12 trades
   const [historicVolume, setHistoricVolume] = useState<number | null>(null);
   const [activityStats, setActivityStats] = useState<{ total_trades: number; total_volume: number; total_pnl: number; win_rate: number; open_trades: number } | null>(null);
   const [activityApiError, setActivityApiError] = useState<string | null>(null);
   const [shareTrade, setShareTrade] = useState<ClosedTrade | null>(null);
   const mainRef = useRef<HTMLElement>(null);
+  /** Detect newly indexed positions so we only clear pending tx hashes when a new open appears (not when user already had positions). */
+  const prevOpenPositionKeysRef = useRef<Set<string>>(new Set());
+  /** After wallet change or first poll, establish baseline without clearing pending (avoids false "new" keys). */
+  const deferPendingHashClearRef = useRef(true);
+  const activityPollWalletRef = useRef<string | null>(null);
+  /** Ignore stale responses when closed-trades load runs multiple times (retries, strict mode). */
+  const closedTradesLoadIdRef = useRef(0);
 
   // Prevent hydration mismatch by only rendering stats after mount
   useEffect(() => {
@@ -111,6 +122,8 @@ export default function ActivityPage() {
   useEffect(() => {
     if (!userAddress) {
       setIsLoadingTrades(false);
+      setIsLoadingClosedTrades(false);
+      setIsLoadingActivityStats(false);
       setHistoricVolume(null);
       setActivityStats(null);
       setActivityApiError(null);
@@ -136,20 +149,25 @@ export default function ActivityPage() {
     if (!userAddress) return;
 
     const loadStats = async () => {
+      setIsLoadingActivityStats(true);
       setActivityApiError(null);
-      const [stats, vol] = await Promise.all([
-        getActivityStats(userAddress),
-        getTotalVolume(userAddress).catch((error) => {
-          console.error('[ActivityPage] Failed to fetch historic volume:', error);
-          return null;
-        }),
-      ]);
-      if (stats) {
-        setActivityStats(stats);
-      } else {
-        setActivityApiError('Activity data temporarily unavailable. Check your connection.');
+      try {
+        const [stats, vol] = await Promise.all([
+          getActivityStats(userAddress),
+          getTotalVolume(userAddress).catch((error) => {
+            console.error('[ActivityPage] Failed to fetch historic volume:', error);
+            return null;
+          }),
+        ]);
+        if (stats) {
+          setActivityStats(stats);
+        } else {
+          setActivityApiError('Activity data temporarily unavailable. Check your connection.');
+        }
+        if (vol !== null) setHistoricVolume(vol);
+      } finally {
+        setIsLoadingActivityStats(false);
       }
-      if (vol !== null) setHistoricVolume(vol);
     };
 
     loadStats();
@@ -191,62 +209,86 @@ export default function ActivityPage() {
 
   // Load closed trades: Activity API primary, merge localStorage + Avantis for legacy/fallback
   useEffect(() => {
-    if (!userAddress) return;
+    if (!userAddress) {
+      setIsLoadingClosedTrades(false);
+      return;
+    }
+
+    const loadId = ++closedTradesLoadIdRef.current;
+    setIsLoadingClosedTrades(true);
 
     const loadAllClosedTrades = async () => {
-      const mergedMap = new Map<string, ClosedTrade>();
+      try {
+        const mergedMap = new Map<string, ClosedTrade>();
 
-      // Fetch all sources in parallel: Activity API, Avantis API, localStorage
-      const localClosed = loadClosedTrades(userAddress);
-      const [activityRes, apiClosed] = await Promise.all([
-        getActivityTrades(userAddress, 50, 0),
-        getClosedTrades(userAddress, 1).catch((error) => {
-          console.error('[ActivityPage] Failed to fetch closed trades from Avantis:', error);
-          return [] as ClosedTrade[];
-        }),
-      ]);
+        // Fetch all sources in parallel: Activity API, Avantis API, localStorage
+        const localClosed = loadClosedTrades(userAddress);
+        const [activityRes, apiClosed] = await Promise.all([
+          getActivityTrades(userAddress, 50, 0),
+          getClosedTrades(userAddress, 1).catch((error) => {
+            console.error('[ActivityPage] Failed to fetch closed trades from Avantis:', error);
+            return [] as ClosedTrade[];
+          }),
+        ]);
 
-      if (!activityRes) {
-        setActivityApiError('Activity data temporarily unavailable. Check your connection.');
-      } else {
-        setActivityApiError(null);
-      }
-      const activityClosed = activityRes?.trades
-        ?.filter((t) => t.status === 'closed' || t.status === 'liquidated')
-        .map(activityTradeToClosedTrade) ?? [];
-      const mergePut = (trade: ClosedTrade) => {
-        const key = `${trade.pairIndex}-${trade.tradeIndex}`;
-        const existing = mergedMap.get(key);
-        mergedMap.set(key, existing ? mergeClosedTradesDuplicate(existing, trade) : trade);
-      };
-      activityClosed.forEach(mergePut);
-      apiClosed.forEach(mergePut);
-      localClosed.forEach(mergePut);
+        if (loadId !== closedTradesLoadIdRef.current) return;
 
-      const merged = Array.from(mergedMap.values()).map((t) => {
-        const isLiq = t.isLiquidated ?? false;
-        return {
-          ...t,
-          finalPnL: isLiq ? -t.collateral : (Number.isFinite(Number(t.finalPnL)) ? Number(t.finalPnL) : 0),
-          finalPnLPercentage: isLiq ? -100 : (Number.isFinite(Number(t.finalPnLPercentage)) ? Number(t.finalPnLPercentage) : 0),
+        if (!activityRes) {
+          setActivityApiError('Activity data temporarily unavailable. Check your connection.');
+        } else {
+          setActivityApiError(null);
+        }
+        const activityClosed = activityRes?.trades
+          ?.filter((t) => t.status === 'closed' || t.status === 'liquidated')
+          .map(activityTradeToClosedTrade) ?? [];
+        const mergePut = (trade: ClosedTrade) => {
+          const key = `${trade.pairIndex}-${trade.tradeIndex}`;
+          const existing = mergedMap.get(key);
+          mergedMap.set(key, existing ? mergeClosedTradesDuplicate(existing, trade) : trade);
         };
-      }).sort((a, b) => {
-        const aTime = (a.closedAt && a.closedAt > 0) ? a.closedAt : (a.openedAt && a.openedAt > 0 ? a.openedAt * 1000 : 0);
-        const bTime = (b.closedAt && b.closedAt > 0) ? b.closedAt : (b.openedAt && b.openedAt > 0 ? b.openedAt * 1000 : 0);
-        return bTime - aTime;
-      });
-      setClosedTrades(merged);
+        activityClosed.forEach(mergePut);
+        apiClosed.forEach(mergePut);
+        localClosed.forEach(mergePut);
+
+        const merged = Array.from(mergedMap.values()).map((t) => {
+          const isLiq = t.isLiquidated ?? false;
+          return {
+            ...t,
+            finalPnL: isLiq ? -t.collateral : (Number.isFinite(Number(t.finalPnL)) ? Number(t.finalPnL) : 0),
+            finalPnLPercentage: isLiq ? -100 : (Number.isFinite(Number(t.finalPnLPercentage)) ? Number(t.finalPnLPercentage) : 0),
+          };
+        }).sort((a, b) => {
+          const aTime = (a.closedAt && a.closedAt > 0) ? a.closedAt : (a.openedAt && a.openedAt > 0 ? a.openedAt * 1000 : 0);
+          const bTime = (b.closedAt && b.closedAt > 0) ? b.closedAt : (b.openedAt && b.openedAt > 0 ? b.openedAt * 1000 : 0);
+          return bTime - aTime;
+        });
+        if (loadId !== closedTradesLoadIdRef.current) return;
+        setClosedTrades(merged);
+      } finally {
+        if (loadId === closedTradesLoadIdRef.current) {
+          setIsLoadingClosedTrades(false);
+        }
+      }
     };
 
-    loadAllClosedTrades();
+    void loadAllClosedTrades();
   }, [userAddress, getClosedTrades, activityApiRetryTrigger]);
 
   // Note: Volume is incremented when trades are opened, not recalculated here
   // Volume = cumulative sum of position sizes (collateral * leverage) for all opened trades
 
-  // Load trades with PnL - adaptive polling (faster when pending trades exist)
+  // Load trades with PnL - adaptive polling (faster when pending open txs exist)
   useEffect(() => {
-    if (!userAddress) return;
+    if (!userAddress) {
+      activityPollWalletRef.current = null;
+      return;
+    }
+
+    if (activityPollWalletRef.current !== userAddress) {
+      activityPollWalletRef.current = userAddress;
+      prevOpenPositionKeysRef.current = new Set();
+      deferPendingHashClearRef.current = true;
+    }
 
     let isMounted = true;
     let intervalId: NodeJS.Timeout | null = null;
@@ -264,6 +306,14 @@ export default function ActivityPage() {
 
         if (!isMounted) return;
 
+        const currentKeys = new Set(
+          positions.map((p) => `${p.trade.pairIndex}-${p.trade.tradeIndex}`)
+        );
+        const newKeys: string[] = [];
+        currentKeys.forEach((k) => {
+          if (!prevOpenPositionKeysRef.current.has(k)) newKeys.push(k);
+        });
+
         hasLoadedOnce = true;
         // PnL response includes trades, so we can use it directly
         const combined = positions.map((pos) => ({
@@ -274,11 +324,21 @@ export default function ActivityPage() {
         setTradesWithPnL(combined);
         updateActivePositions(positions.length);
         setIsLoadingTrades(false);
-        
-        // If we have pending trades and found new trades, clear pending hashes
-        if (pendingTradeHashes.size > 0 && positions.length > 0) {
-          pendingTradeHashes.forEach(hash => removePendingTradeHash(hash));
+
+        // Only clear pending hashes when new positions appear vs last poll — not merely "any positions exist"
+        // (otherwise users who already had open trades would stop fast-polling before the new trade indexed).
+        // Skip clearing on wallet first poll / baseline so existing positions aren't mistaken for "new".
+        if (deferPendingHashClearRef.current) {
+          deferPendingHashClearRef.current = false;
+        } else if (newKeys.length > 0) {
+          const { pendingTradeHashes: pending, removePendingTradeHash: removePending } =
+            useTradeStore.getState();
+          if (pending.size > 0) {
+            const toClear = [...pending].slice(0, newKeys.length);
+            toClear.forEach((h) => removePending(h));
+          }
         }
+        prevOpenPositionKeysRef.current = currentKeys;
       } catch (error) {
         console.error('[TradesPage] Failed to load trades:', error);
         setIsLoadingTrades(false);
@@ -286,13 +346,14 @@ export default function ActivityPage() {
       }
     };
 
-    // Adaptive polling: faster (500ms) if pending trades, slower (2s) otherwise
-    const hasPending = pendingTradeHashes.size > 0;
+    // Fast poll while waiting for a new open from home (pendingTradeHashes) or flip (pendingOpenTxHashes)
+    const hasPending =
+      pendingTradeHashes.size > 0 || pendingOpenTxCount > 0;
     const interval = hasPending ? 500 : 2000;
-    
+
     // Load immediately
     loadTrades();
-    
+
     // Start polling with adaptive interval
     intervalId = setInterval(() => {
       if (isMounted) {
@@ -317,7 +378,7 @@ export default function ActivityPage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userAddress, pendingTradeHashes.size]); // Restart polling when pending count changes
+  }, [userAddress, pendingTradeHashes.size, pendingOpenTxCount]);
 
   const handleFlip = async (trade: Trade) => {
     // CRITICAL: Prevent trading if setup is not complete
@@ -396,6 +457,17 @@ export default function ActivityPage() {
           txHash: closeTxHash,
           isLiquidated: false,
         });
+        setActivityApiRetryTrigger((t) => t + 1);
+        // Drop closed row from open list immediately; closed tab shows the flip leg after user switches
+        setTradesWithPnL((prev) =>
+          prev.filter(
+            (t) =>
+              !(
+                t.trade.pairIndex === verifiedTrade.pairIndex &&
+                t.trade.tradeIndex === verifiedTrade.tradeIndex
+              )
+          )
+        );
         // Optimistically add to closed trades list (remove open trade from open list happens in refresh)
         const newClosed: ClosedTrade = {
           ...verifiedTrade,
@@ -436,6 +508,7 @@ export default function ActivityPage() {
       // Open opposite position
       const openHash = await signAndBroadcast(openTx);
       addPendingOpenTxHash(openHash);
+      addPendingTradeHash(openHash);
 
       // Refresh trades and stats after a delay
       setTimeout(() => {
@@ -560,6 +633,14 @@ export default function ActivityPage() {
           txHash: closeTxHash,
           isLiquidated: false,
         });
+        setActivityApiRetryTrigger((t) => t + 1);
+        setTradesWithPnL((prev) =>
+          prev.filter(
+            (t) =>
+              !(t.trade.pairIndex === trade.pairIndex && t.trade.tradeIndex === trade.tradeIndex)
+          )
+        );
+        setShowClosedTrades(true);
         // Optimistically add to closed trades list
         const newClosed: ClosedTrade = {
           ...trade,
@@ -593,35 +674,36 @@ export default function ActivityPage() {
         },
       });
 
-      // Refresh trades and stats after a delay
-      setTimeout(() => {
+      // Reconcile with chain/API after indexer catches up (immediate try + backup)
+      const refreshAfterClose = async () => {
         if (!userAddress) return;
-        const refresh = async () => {
-          try {
-            const [trades, positions, stats] = await Promise.all([
-              getTrades(userAddress),
-              getPnL(userAddress),
-              getActivityStats(userAddress),
-            ]);
-            const pnlMap = new Map<string, PnLData>();
-            positions.forEach((pos) => {
-              const key = `${pos.trade.pairIndex}-${pos.trade.tradeIndex}`;
-              pnlMap.set(key, pos);
-            });
-            const combined = trades.map((trade) => {
-              const key = `${trade.pairIndex}-${trade.tradeIndex}`;
-              return { trade, pnlData: pnlMap.get(key) };
-            });
-            setTradesWithPnL(combined);
-            updateActivePositions(trades.length);
-            if (stats) setActivityStats(stats);
-            setActivityApiRetryTrigger((t) => t + 1);
-          } catch (error) {
-            console.error('Failed to refresh trades:', error);
-          }
-        };
-        refresh();
-      }, 1000);
+        try {
+          const [trades, positions, stats] = await Promise.all([
+            getTrades(userAddress),
+            getPnL(userAddress),
+            getActivityStats(userAddress),
+          ]);
+          const pnlMap = new Map<string, PnLData>();
+          positions.forEach((pos) => {
+            const key = `${pos.trade.pairIndex}-${pos.trade.tradeIndex}`;
+            pnlMap.set(key, pos);
+          });
+          const combined = trades.map((t) => {
+            const key = `${t.pairIndex}-${t.tradeIndex}`;
+            return { trade: t, pnlData: pnlMap.get(key) };
+          });
+          setTradesWithPnL(combined);
+          updateActivePositions(trades.length);
+          if (stats) setActivityStats(stats);
+        } catch (error) {
+          console.error('Failed to refresh trades:', error);
+        }
+      };
+      void refreshAfterClose();
+      setTimeout(() => {
+        void refreshAfterClose();
+        setActivityApiRetryTrigger((t) => t + 1);
+      }, 1200);
     } catch (error) {
       console.error('Close trade error:', error);
       showToast(
@@ -694,14 +776,24 @@ export default function ActivityPage() {
           tradeStats={tradeStats}
           historicVolume={historicVolume}
           computedVolume={computedVolume}
+          statsLoading={isLoadingActivityStats}
         />
       </header>
 
       {/* Trades List */}
-      <main ref={mainRef} className="flex-1 overflow-y-auto min-h-0 -mx-4 sm:-mx-6 px-4 sm:px-6">
+      <main
+        ref={mainRef}
+        className="flex-1 overflow-y-auto min-h-0 -mx-4 sm:-mx-6 px-4 sm:px-6"
+        aria-busy={
+          isLoadingTrades ||
+          (showClosedTrades && isLoadingClosedTrades && closedTrades.length === 0)
+        }
+      >
         {showClosedTrades ? (
           // Show closed trades
-          closedTrades.length === 0 ? (
+          isLoadingClosedTrades && closedTrades.length === 0 ? (
+            <ActivityListSkeleton count={3} label="Loading closed trades…" />
+          ) : closedTrades.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
               <div className="mb-6">
                 <svg
@@ -766,23 +858,7 @@ export default function ActivityPage() {
         ) : (
           // Show open trades
           isLoadingTrades ? (
-            <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-6">
-              {[1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  className="brutal-card p-3 sm:p-4 min-w-0 border-4 border-white/20"
-                  aria-hidden="true"
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="chart-loading-skeleton h-4 w-16 rounded" />
-                    <div className="chart-loading-skeleton h-4 w-12 rounded" />
-                  </div>
-                  <div className="chart-loading-skeleton h-10 w-24 mb-3 rounded" />
-                  <div className="chart-loading-skeleton h-4 w-full mb-2 rounded" />
-                  <div className="chart-loading-skeleton h-4 w-3/4 rounded" />
-                </div>
-              ))}
-            </div>
+            <ActivityListSkeleton count={3} label="Loading open positions…" />
           ) : tradesWithPnL.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
               <div className="mb-6">
@@ -840,15 +916,15 @@ export default function ActivityPage() {
       {/* Footer */}
       <AvantisFooter />
 
-      {/* Share Card Modal */}
+      {/* Share Bottom Sheet */}
       {shareTrade && (
-        <ShareCardModal
+        <ShareBottomSheet
           trade={shareTrade}
           onClose={() => setShareTrade(null)}
           onCopy={() => showToast('Copied to clipboard', 'success')}
           onDownload={() => showToast('Downloaded', 'success')}
           onShare={() => showToast('Shared!', 'success')}
-          onShareOnX={() => showToast('Opened X — paste image (Ctrl+V) to add it', 'success')}
+          onShareOnX={(m) => m === 'clipboard' && showToast('Image copied — paste it in your tweet', 'info')}
         />
       )}
 

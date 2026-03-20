@@ -17,6 +17,21 @@ interface SetupFlowProps {
 
 type SetupStep = 'checking' | 'setup' | 'complete';
 
+type PrivyConnectedWallet = {
+  address?: string;
+  walletClientType?: string;
+  connectorType?: string;
+  getEthereumProvider?: () => Promise<unknown>;
+};
+
+type Eip1193Provider = {
+  request: (args: { method: string; params?: unknown }) => Promise<unknown>;
+};
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
 // NOTE: With Tachyon gas sponsorship, delegate wallet no longer needs ETH!
 // ETH funding step has been removed from the setup flow.
 
@@ -67,7 +82,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   }, [wallets, userAddress]);
 
   // Safely get Ethereum provider with fallback handling
-  const getEthereumProviderSafe = useCallback(async (wallet: any) => {
+  const getEthereumProviderSafe = useCallback(async (wallet: PrivyConnectedWallet | null | undefined) => {
     try {
       // Try to get provider from Privy wallet
       if (wallet && typeof wallet.getEthereumProvider === 'function') {
@@ -76,34 +91,42 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           if (provider) {
             return provider;
           }
-        } catch (providerError: any) {
+        } catch (providerError: unknown) {
+          const pe = isRecord(providerError) ? providerError : {};
+          const msg =
+            typeof pe.message === 'string' ? pe.message : String(providerError);
           console.error('getEthereumProvider failed:', {
             error: providerError,
-            message: providerError?.message,
-            code: providerError?.code,
+            message: pe.message,
+            code: pe.code,
             walletType: wallet.walletClientType,
             connectorType: wallet.connectorType,
             walletAddress: wallet.address,
-            stack: providerError?.stack,
+            stack: pe.stack,
           });
           // Check if it's a connector error
-          if (providerError?.message?.toLowerCase().includes('connector') || 
-              providerError?.message?.toLowerCase().includes('unknown')) {
+          if (
+            msg.toLowerCase().includes('connector') ||
+            msg.toLowerCase().includes('unknown')
+          ) {
             throw new Error(
-              `Wallet connector error: ${providerError.message}. ` +
-              `This wallet type (${wallet.walletClientType || wallet.connectorType || 'unknown'}) may not support direct provider access. ` +
-              `Please try disconnecting and reconnecting your wallet, or use a different wallet.`
+              `Wallet connector error: ${msg}. ` +
+                `This wallet type (${wallet.walletClientType || wallet.connectorType || 'unknown'}) may not support direct provider access. ` +
+                `Please try disconnecting and reconnecting your wallet, or use a different wallet.`
             );
           }
           // Re-throw if it's not a connector error
           throw providerError;
         }
       }
-      
+
       // Fallback: Try to use window.ethereum if available
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
+      const injected = (typeof window !== 'undefined'
+        ? (window as Window & { ethereum?: Eip1193Provider }).ethereum
+        : undefined);
+      if (injected) {
         debug('Using window.ethereum as fallback provider');
-        return (window as any).ethereum;
+        return injected;
       }
       
       throw new Error(
@@ -119,16 +142,17 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
   // NOTE: checkDelegateBalance removed - with Tachyon gas sponsorship, delegate doesn't need ETH
 
   // Switch to Base network
-  const switchToBase = useCallback(async (provider: any) => {
+  const switchToBase = useCallback(async (provider: Eip1193Provider) => {
     try {
       // Try to switch to Base
       await provider.request({
         method: 'wallet_switchEthereumChain',
         params: [{ chainId: BASE_CHAIN_ID_HEX }],
       });
-    } catch (switchError: any) {
+    } catch (switchError: unknown) {
+      const code = isRecord(switchError) ? switchError.code : undefined;
       // If chain doesn't exist, add it
-      if (switchError.code === 4902) {
+      if (code === 4902) {
         await provider.request({
           method: 'wallet_addEthereumChain',
           params: [{
@@ -144,7 +168,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
           }],
         });
       } else {
-        throw switchError;
+        throw switchError instanceof Error ? switchError : new Error(String(switchError));
       }
     }
   }, []);
@@ -364,7 +388,7 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
               // If USDC not approved yet, continue polling (approval might be in progress)
             }
           }
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.warn('Error checking on-chain state:', err);
         }
         
@@ -429,12 +453,14 @@ export function SetupFlow({ onSetupComplete }: SetupFlowProps) {
         setError('Failed to verify setup. Please check your wallet and try again.');
         setIsProcessing(false);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Batched setup error:', err);
-      if (err.code === 4001) {
+      const code = isRecord(err) ? err.code : undefined;
+      const message = err instanceof Error ? err.message : undefined;
+      if (code === 4001) {
         setError('Transaction rejected by user');
       } else {
-        setError(err?.message || 'Failed to complete setup');
+        setError(message || 'Failed to complete setup');
       }
     } finally {
       setIsProcessing(false);

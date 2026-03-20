@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats, ClosedTrade } from '@/types';
 import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constants';
 import { loadSettings, DEFAULT_SETTINGS } from '@/lib/settings';
-import { loadStats, saveStats, incrementVolume } from '@/lib/stats';
+import { loadStats, saveStats } from '@/lib/stats';
 import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
 import { isCommoditiesMarketOpen } from '@/lib/marketHours';
 import { debug } from '@/lib/debug';
@@ -52,6 +52,9 @@ interface TradeState {
   setIsLiquidated: (liquidated: boolean) => void;
   lastKnownPnLPercentage: number | null; // Track last PnL % to detect liquidation
   setLastKnownPnLPercentage: (percentage: number | null) => void;
+  /** Most negative net/gross PnL % seen this position (PnL stage); for liquidation-on-vanish heuristic */
+  sessionMinPnlPercentage: number | null;
+  resetSessionMinPnlPercentage: () => void;
   
   // Take profit hit state (position closed at profit by TP target)
   isTakeProfitHit: boolean;
@@ -162,6 +165,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   pnlData: null,
   isLiquidated: false,
   lastKnownPnLPercentage: null,
+  sessionMinPnlPercentage: null,
   isTakeProfitHit: false,
   isIntentionalClose: false,
   flipExcludedPositionKey: null,
@@ -240,14 +244,29 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     }
   },
   setRememberedIndices: (pairIndex, tradeIndex) => set({ rememberedPairIndex: pairIndex, rememberedTradeIndex: tradeIndex }),
-  setPnLData: (pnlData) => {
-    set({ pnlData });
-    // Update last known PnL percentage when PnL data is set
-    if (pnlData) {
-      set({ lastKnownPnLPercentage: pnlData.pnlPercentage });
-    }
-  },
+  setPnLData: (pnlData) =>
+    set((state) => {
+      if (!pnlData) {
+        return { pnlData };
+      }
+      const net = pnlData.pnlPercentage;
+      const gross = pnlData.grossPnlPercentage;
+      const candidates = [net, gross].filter((n) => Number.isFinite(n)) as number[];
+      const pollMin = candidates.length ? Math.min(...candidates) : null;
+      const nextSessionMin =
+        pollMin === null
+          ? state.sessionMinPnlPercentage
+          : state.sessionMinPnlPercentage === null
+            ? pollMin
+            : Math.min(state.sessionMinPnlPercentage, pollMin);
+      return {
+        pnlData,
+        lastKnownPnLPercentage: pnlData.pnlPercentage,
+        sessionMinPnlPercentage: nextSessionMin,
+      };
+    }),
   setIsLiquidated: (isLiquidated) => set({ isLiquidated }),
+  resetSessionMinPnlPercentage: () => set({ sessionMinPnlPercentage: null }),
   setLastKnownPnLPercentage: (lastKnownPnLPercentage) => set({ lastKnownPnLPercentage }),
   setIsTakeProfitHit: (isTakeProfitHit) => set({ isTakeProfitHit }),
   setIsIntentionalClose: (isIntentionalClose) => set({ isIntentionalClose }),
@@ -467,6 +486,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     pnlData: null,
     isLiquidated: false,
     lastKnownPnLPercentage: null,
+    sessionMinPnlPercentage: null,
     isTakeProfitHit: false,
     isIntentionalClose: false,
     txHash: null,
