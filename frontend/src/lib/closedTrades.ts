@@ -2,6 +2,18 @@ import type { ClosedTrade, Trade, PnLData } from '@/types';
 
 const STORAGE_KEY_PREFIX = 'yolo_closed_trades_';
 
+/** Minimal PnL snapshot when the indexer no longer returns the position (race after close). */
+function syntheticPnLForClose(trade: Trade): PnLData {
+  return {
+    trade,
+    currentPrice: trade.openPrice,
+    pnl: 0,
+    pnlPercentage: 0,
+    grossPnl: 0,
+    grossPnlPercentage: 0,
+  };
+}
+
 function getStorageKey(address: string): string {
   return `${STORAGE_KEY_PREFIX}${address.toLowerCase()}`;
 }
@@ -55,21 +67,23 @@ export function saveClosedTrade(
     return;
   }
 
-  // Avoid persisting synthetic $0 PnL entries when canonical PnL has not synced yet.
-  if (!pnlData) {
+  // After a successful close tx we always persist: API often drops the position immediately, so pnlData can be missing.
+  const effectivePnL =
+    pnlData ?? (options?.closeTxHash ? syntheticPnLForClose(trade) : null);
+  if (!effectivePnL) {
     return;
   }
 
   try {
     const isLiquidated = options?.isLiquidated ?? false;
-    const grossPnl = isLiquidated ? -trade.collateral : (Number.isFinite(Number(pnlData.grossPnl)) ? Number(pnlData.grossPnl) : 0);
-    const grossPnlPct = isLiquidated ? -100 : (Number.isFinite(Number(pnlData.grossPnlPercentage)) ? Number(pnlData.grossPnlPercentage) : 0);
+    const grossPnl = isLiquidated ? -trade.collateral : (Number.isFinite(Number(effectivePnL.grossPnl)) ? Number(effectivePnL.grossPnl) : 0);
+    const grossPnlPct = isLiquidated ? -100 : (Number.isFinite(Number(effectivePnL.grossPnlPercentage)) ? Number(effectivePnL.grossPnlPercentage) : 0);
     const closedTrade: ClosedTrade = {
       ...trade,
       closedAt: Date.now(),
       finalPnL: grossPnl,
       finalPnLPercentage: grossPnlPct,
-      closePrice: Number.isFinite(Number(pnlData.currentPrice)) ? Number(pnlData.currentPrice) : trade.openPrice,
+      closePrice: Number.isFinite(Number(effectivePnL.currentPrice)) ? Number(effectivePnL.currentPrice) : trade.openPrice,
       txHash: options?.txHash,
       closeTxHash: options?.closeTxHash,
       isLiquidated,
@@ -110,6 +124,45 @@ export function saveClosedTrade(
 /**
  * Clear all closed trades for an address
  */
+/** Merge two records for the same position (Activity API vs localStorage). Prefer non-zero PnL when one side is a stale $0 row. */
+export function mergeClosedTradesDuplicate(a: ClosedTrade, b: ClosedTrade): ClosedTrade {
+  if (a.isLiquidated || b.isLiquidated) {
+    const liq = a.isLiquidated ? a : b;
+    const other = liq === a ? b : a;
+    return {
+      ...liq,
+      closedAt: Math.max(a.closedAt ?? 0, b.closedAt ?? 0),
+      closeTxHash: liq.closeTxHash ?? other.closeTxHash,
+      txHash: liq.txHash ?? other.txHash,
+    };
+  }
+  const newer = (a.closedAt ?? 0) >= (b.closedAt ?? 0) ? a : b;
+  const older = newer === a ? b : a;
+  const finalPnL =
+    newer.finalPnL !== 0 ? newer.finalPnL : older.finalPnL !== 0 ? older.finalPnL : 0;
+  const finalPnLPercentage =
+    newer.finalPnLPercentage !== 0
+      ? newer.finalPnLPercentage
+      : older.finalPnLPercentage !== 0
+        ? older.finalPnLPercentage
+        : 0;
+  return {
+    ...newer,
+    closedAt: Math.max(a.closedAt ?? 0, b.closedAt ?? 0),
+    closeTxHash: newer.closeTxHash ?? older.closeTxHash,
+    txHash: newer.txHash ?? older.txHash,
+    closePrice:
+      newer.closePrice !== newer.openPrice
+        ? newer.closePrice
+        : older.closePrice !== older.openPrice
+          ? older.closePrice
+          : newer.closePrice,
+    finalPnL,
+    finalPnLPercentage,
+    isTakeProfitHit: newer.isTakeProfitHit || older.isTakeProfitHit,
+  };
+}
+
 export function clearClosedTrades(address: string): void {
   if (typeof window === 'undefined' || !address) {
     return;

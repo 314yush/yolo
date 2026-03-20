@@ -14,7 +14,7 @@ import { ShareCardModal } from '@/components/ShareCardModal';
 import { ToastContainer } from '@/components/Toast';
 import { AvantisFooter } from '@/components/AvantisFooter';
 import { StatsPanel } from '@/components/StatsPanel';
-import { saveClosedTrade, loadClosedTrades } from '@/lib/closedTrades';
+import { saveClosedTrade, loadClosedTrades, mergeClosedTradesDuplicate } from '@/lib/closedTrades';
 import { logTradeCloseByPosition, logTradeOpen, getActivityStats, getActivityTrades, type ActivityTrade } from '@/lib/activityApi';
 import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
 import { ASSETS } from '@/lib/constants';
@@ -214,29 +214,14 @@ export default function ActivityPage() {
       const activityClosed = activityRes?.trades
         ?.filter((t) => t.status === 'closed' || t.status === 'liquidated')
         .map(activityTradeToClosedTrade) ?? [];
-      activityClosed.forEach((trade) => {
-        const key = `${trade.pairIndex}-${trade.tradeIndex}`;
-        mergedMap.set(key, trade);
-      });
-      apiClosed.forEach((trade) => {
-        const key = `${trade.pairIndex}-${trade.tradeIndex}`;
-        if (!mergedMap.has(key)) mergedMap.set(key, trade);
-      });
-      localClosed.forEach((trade) => {
+      const mergePut = (trade: ClosedTrade) => {
         const key = `${trade.pairIndex}-${trade.tradeIndex}`;
         const existing = mergedMap.get(key);
-        if (!existing) mergedMap.set(key, trade);
-        else {
-          // Enrich existing with tx hashes from localStorage (saved when user closed from our app)
-          const updates: Partial<ClosedTrade> = {};
-          if (trade.isTakeProfitHit && !existing.isTakeProfitHit) updates.isTakeProfitHit = true;
-          if (trade.closeTxHash && !existing.closeTxHash) updates.closeTxHash = trade.closeTxHash;
-          if (trade.txHash && !existing.txHash) updates.txHash = trade.txHash;
-          if (Object.keys(updates).length > 0) {
-            mergedMap.set(key, { ...existing, ...updates });
-          }
-        }
-      });
+        mergedMap.set(key, existing ? mergeClosedTradesDuplicate(existing, trade) : trade);
+      };
+      activityClosed.forEach(mergePut);
+      apiClosed.forEach(mergePut);
+      localClosed.forEach(mergePut);
 
       const merged = Array.from(mergedMap.values()).map((t) => {
         const isLiq = t.isLiquidated ?? false;
@@ -474,6 +459,7 @@ export default function ActivityPage() {
             setTradesWithPnL(combined);
             updateActivePositions(trades.length);
             if (stats) setActivityStats(stats);
+            setActivityApiRetryTrigger((t) => t + 1);
 
             // Log new trade to activity API (useOpenTrades doesn't run on /activity)
             const newTrade = combined.find((c) => c.trade.pairIndex === verifiedTrade.pairIndex);
@@ -629,6 +615,7 @@ export default function ActivityPage() {
             setTradesWithPnL(combined);
             updateActivePositions(trades.length);
             if (stats) setActivityStats(stats);
+            setActivityApiRetryTrigger((t) => t + 1);
           } catch (error) {
             console.error('Failed to refresh trades:', error);
           }

@@ -631,15 +631,17 @@ export default function HomePage() {
         playLose();
       }
       
-      // Save closed trade with current PnL data (capture path for share card)
-      if (userAddress && currentTrade && pnlData) {
-        saveClosedTrade(userAddress, currentTrade, pnlData, { closeTxHash });
+      // Save closed trade (pnlData may be missing — position often disappears from API right after close)
+      if (userAddress && currentTrade) {
+        saveClosedTrade(userAddress, currentTrade, pnlData ?? null, { closeTxHash });
+        const gross = pnlData?.grossPnl ?? 0;
+        const grossPct = pnlData?.grossPnlPercentage ?? 0;
         const closedTrade: ClosedTrade = {
           ...currentTrade,
           closedAt: Date.now(),
-          finalPnL: pnlData.grossPnl ?? 0,
-          finalPnLPercentage: pnlData.grossPnlPercentage ?? 0,
-          closePrice: pnlData.currentPrice ?? currentTrade.openPrice,
+          finalPnL: gross,
+          finalPnLPercentage: grossPct,
+          closePrice: pnlData?.currentPrice ?? currentTrade.openPrice,
           closeTxHash,
           isLiquidated: false,
           isTakeProfitHit: false,
