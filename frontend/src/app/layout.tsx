@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Outfit, Oswald } from 'next/font/google';
+import { Outfit, Oswald, Syne, IBM_Plex_Sans } from 'next/font/google';
 import Script from 'next/script';
 import { Providers } from './providers';
 import './globals.css';
@@ -16,6 +16,20 @@ const outfit = Outfit({
 const oswald = Oswald({
   subsets: ['latin'],
   variable: '--font-display',
+  display: 'swap',
+});
+
+const syne = Syne({
+  subsets: ['latin'],
+  weight: ['600', '700'],
+  variable: '--font-share-display',
+  display: 'swap',
+});
+
+const ibmPlexSans = IBM_Plex_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  variable: '--font-share-body',
   display: 'swap',
 });
 
@@ -103,7 +117,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${outfit.variable} ${oswald.variable}`}>
+    <html lang="en" className={`${outfit.variable} ${oswald.variable} ${syne.variable} ${ibmPlexSans.variable}`}>
       <body className="bg-black text-white font-sans antialiased">
         {disableClientConsole ? (
           <Script id="disable-client-console" strategy="beforeInteractive">

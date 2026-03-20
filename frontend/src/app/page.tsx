@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { usePrivy } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
@@ -41,13 +42,14 @@ import {
   buildOpenTradeTx as buildOpenTradeTxDirect,
   calculateTakeProfitMultiplier,
 } from '@/lib/avantisEncoder';
-import type { Trade } from '@/types';
+import type { Trade, ClosedTrade } from '@/types';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DEFAULT_COLLATERAL, MIN_DEPOSIT } from '@/lib/constants';
 import { debug } from '@/lib/debug';
 import { Dice5, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
+  const router = useRouter();
   const { authenticated, ready, user, login } = usePrivy();
   const {
     stage,
@@ -71,6 +73,7 @@ export default function HomePage() {
     removeToast,
     showToast,
     prices,
+    setLastClosedTradeForShare,
   } = useTradeStore();
   
   const { delegateAddress } = useDelegateWallet();
@@ -628,9 +631,20 @@ export default function HomePage() {
         playLose();
       }
       
-      // Save closed trade with current PnL data
-      if (userAddress && currentTrade) {
+      // Save closed trade with current PnL data (capture path for share card)
+      if (userAddress && currentTrade && pnlData) {
         saveClosedTrade(userAddress, currentTrade, pnlData, { closeTxHash });
+        const closedTrade: ClosedTrade = {
+          ...currentTrade,
+          closedAt: Date.now(),
+          finalPnL: pnlData.grossPnl ?? 0,
+          finalPnLPercentage: pnlData.grossPnlPercentage ?? 0,
+          closePrice: pnlData.currentPrice ?? currentTrade.openPrice,
+          closeTxHash,
+          isLiquidated: false,
+          isTakeProfitHit: false,
+        };
+        setLastClosedTradeForShare(closedTrade);
         logTradeCloseByPosition({
           wallet: userAddress,
           pairIndex: currentTrade.pairIndex,
@@ -646,7 +660,10 @@ export default function HomePage() {
       // Show success toast with PnL
       const pnl = pnlData?.grossPnl ?? 0;
       const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
-      showToast(`Closed! PnL: ${pnlStr}`, 'success');
+      showToast(`Closed! PnL: ${pnlStr}`, 'success', undefined, {
+        label: 'SHARE',
+        onClick: () => router.push('/activity'),
+      });
       
       // Reset and go back to idle
       reset();
@@ -658,7 +675,7 @@ export default function HomePage() {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast]);
+  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare]);
 
   handleCloseTradeRef.current = handleCloseTrade;
 
@@ -874,8 +891,8 @@ export default function HomePage() {
           id="status-announcements"
         />
 
-        {/* Floating mute button - inside motion div section */}
-        {(stage === 'idle' || stage === 'spinning' || stage === 'executing' || stage === 'pnl') && (
+        {/* Floating mute button - only on picker wheel / home screen */}
+        {(stage === 'idle' || stage === 'spinning' || stage === 'executing') && (
           <MusicToggleButton />
         )}
 

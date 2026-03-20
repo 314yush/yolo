@@ -59,6 +59,12 @@ export interface Trade {
   openedAt: number;
 }
 
+// Path point for share card chart imprint
+export interface PathDataPoint {
+  time: number;
+  price: number;
+}
+
 // Closed trade (includes final PnL and close timestamp)
 export interface ClosedTrade extends Trade {
   closedAt: number;
@@ -69,6 +75,7 @@ export interface ClosedTrade extends Trade {
   closeTxHash?: `0x${string}`; // Transaction hash for closing the trade
   isLiquidated?: boolean; // Whether the trade was liquidated vs manually closed
   isTakeProfitHit?: boolean; // Whether the trade was closed by TP target (vs manual close)
+  pathData?: PathDataPoint[]; // Legacy: ignored by share card (anime backgrounds)
 }
 
 // PnL data - gross PnL shown everywhere; net kept for internal use

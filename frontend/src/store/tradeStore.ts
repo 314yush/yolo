@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats } from '@/types';
+import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats, ClosedTrade } from '@/types';
 import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constants';
 import { loadSettings, DEFAULT_SETTINGS } from '@/lib/settings';
 import { loadStats, saveStats, incrementVolume } from '@/lib/stats';
@@ -144,6 +144,10 @@ interface TradeState {
   isPrebuildingFlip: boolean;
   setIsPrebuildingFlip: (building: boolean) => void;
 
+  // Last closed trade for share card modal (set when trade closes)
+  lastClosedTradeForShare: ClosedTrade | null;
+  setLastClosedTradeForShare: (trade: ClosedTrade | null) => void;
+
   // Reset state for new roll
   reset: () => void;
 }
@@ -216,6 +220,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     activePositions: 0,
     totalVolume: 0,
   },
+  lastClosedTradeForShare: null,
 
   // Setters
   setStage: (stage) => set({ stage }),
@@ -338,6 +343,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     set({ collateral: settings.collateral });
   },
   setTradeStats: (tradeStats) => set({ tradeStats }),
+  setLastClosedTradeForShare: (lastClosedTradeForShare) => set({ lastClosedTradeForShare }),
   incrementTotalTrades: () => {
     set((state) => {
       const newStats = {

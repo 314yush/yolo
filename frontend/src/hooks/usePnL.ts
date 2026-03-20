@@ -200,7 +200,7 @@ export function usePnL(options: UsePnLOptions = {}) {
             };
             setPnLDataRef.current(finalPnLData);
             
-            // Save liquidated trade
+            // Save liquidated trade (capture path for share card)
             const userAddr = userAddressRef.current;
             if (userAddr && trade) {
               try {
@@ -269,7 +269,9 @@ export function usePnL(options: UsePnLOptions = {}) {
           debug('[usePnL] Position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL, '- Marking as liquidated');
           setIsLiquidatedRef.current(true);
           try {
-            saveClosedTrade(userAddr, trade, lastPnLData, { isLiquidated: true });
+            saveClosedTrade(userAddr, trade, lastPnLData, {
+              isLiquidated: true,
+            });
             logTradeCloseByPosition({
               wallet: userAddr,
               pairIndex: trade.pairIndex,
@@ -287,7 +289,10 @@ export function usePnL(options: UsePnLOptions = {}) {
           debug('[usePnL] Position disappeared at profit (after grace). Last PnL:', lastPnL, '- Marking as take profit hit');
           setIsTakeProfitHitRef.current(true);
           try {
-            saveClosedTrade(userAddr, trade, lastPnLData, { isLiquidated: false, isTakeProfitHit: true });
+            saveClosedTrade(userAddr, trade, lastPnLData, {
+              isLiquidated: false,
+              isTakeProfitHit: true,
+            });
           } catch (error) {
             console.error('[usePnL] Failed to save closed trade (TP hit):', error);
           }

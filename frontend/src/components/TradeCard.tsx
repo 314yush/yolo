@@ -9,6 +9,7 @@ interface TradeCardProps {
   pnlData?: PnLData;
   onFlip: (trade: Trade) => void;
   onClose: (trade: Trade) => void;
+  onShare?: (trade: ClosedTrade) => void;
   isFlipping?: boolean;
   isClosing?: boolean;
   isClosed?: boolean; // New prop to indicate closed trade
@@ -58,7 +59,7 @@ function formatRelativeTime(timestampMs: number | null | undefined): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
 }
 
-export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosing, isClosed = false, actionsDisabled = false }: TradeCardProps) {
+export function TradeCard({ trade, pnlData, onFlip, onClose, onShare, isFlipping, isClosing, isClosed = false, actionsDisabled = false }: TradeCardProps) {
   const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   
@@ -234,7 +235,21 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, isFlipping, isClosi
         )}
       </div>
 
-      {/* Actions - Enhanced with icons and better states */}
+      {/* Actions - Share for closed trades, Flip/Close for open */}
+      {isClosed && closedTrade && onShare && (
+        <button
+          onClick={() => onShare(closedTrade)}
+          className="w-full py-2.5 px-3 text-xs sm:text-sm font-bold brutal-button bg-[#CCFF00] text-black touch-manipulation min-h-[44px] flex items-center justify-center gap-1.5 focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
+          aria-label="Share trade"
+        >
+          <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+            <polyline points="16 6 12 2 8 6" />
+            <line x1="12" y1="2" x2="12" y2="15" />
+          </svg>
+          <span className="whitespace-nowrap">SHARE</span>
+        </button>
+      )}
       {!isClosed && (
         <div className="flex gap-2">
           <button

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
@@ -10,6 +10,7 @@ import { useSound } from '@/hooks/useSound';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { vibrateMedium } from '@/lib/haptics';
 import { TradeCard } from '@/components/TradeCard';
+import { ShareCardModal } from '@/components/ShareCardModal';
 import { ToastContainer } from '@/components/Toast';
 import { AvantisFooter } from '@/components/AvantisFooter';
 import { StatsPanel } from '@/components/StatsPanel';
@@ -52,7 +53,7 @@ function activityTradeToClosedTrade(at: ActivityTrade): ClosedTrade {
 
 export default function ActivityPage() {
   const router = useRouter();
-  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, toasts, removeToast, tradeStats, setTradeStats, showToast, setIsIntentionalClose } = useTradeStore();
+  const { userAddress, delegateStatus, updateActivePositions, pendingTradeHashes, removePendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, toasts, removeToast, tradeStats, setTradeStats, showToast, setIsIntentionalClose, lastClosedTradeForShare, setLastClosedTradeForShare } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
   const { getTrades, getPnL, getClosedTrades, getTotalVolume } = useAvantisAPI();
   const { signAndWait, signAndBroadcast } = useTxSigner();
@@ -72,11 +73,37 @@ export default function ActivityPage() {
   const [historicVolume, setHistoricVolume] = useState<number | null>(null);
   const [activityStats, setActivityStats] = useState<{ total_trades: number; total_volume: number; total_pnl: number; win_rate: number; open_trades: number } | null>(null);
   const [activityApiError, setActivityApiError] = useState<string | null>(null);
+  const [shareTrade, setShareTrade] = useState<ClosedTrade | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
 
   // Prevent hydration mismatch by only rendering stats after mount
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Open share modal when arriving from home after closing a trade (SHARE button on toast)
+  useEffect(() => {
+    if (lastClosedTradeForShare) {
+      setShareTrade(lastClosedTradeForShare);
+      setLastClosedTradeForShare(null);
+      setShowClosedTrades(true); // Switch to CLOSED tab for context
+      // Prepend trade to list if not already present (handles async load race)
+      setClosedTrades((prev) => {
+        const exists = prev.some(
+          (t) => t.pairIndex === lastClosedTradeForShare.pairIndex && t.tradeIndex === lastClosedTradeForShare.tradeIndex
+        );
+        if (exists) return prev;
+        return [lastClosedTradeForShare, ...prev];
+      });
+    }
+  }, [lastClosedTradeForShare, setLastClosedTradeForShare]);
+
+  // Scroll to top when share modal opens so card is in view
+  useEffect(() => {
+    if (shareTrade && mainRef.current) {
+      mainRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [shareTrade]);
 
   // Reset loading when user logs out
   useEffect(() => {
@@ -366,7 +393,7 @@ export default function ActivityPage() {
       // Close position first
       const { hash: closeTxHash } = await signAndWait(closeTx);
 
-      // Save closed trade
+      // Save closed trade (capture path for share card; may be empty for activity-page closes)
       if (userAddress) {
         saveClosedTrade(userAddress, verifiedTrade, finalPnL, { closeTxHash });
         logTradeCloseByPosition({
@@ -529,7 +556,7 @@ export default function ActivityPage() {
         playLose();
       }
 
-      // Save closed trade
+      // Save closed trade (capture path for share card; may be empty for activity-page closes)
       if (userAddress) {
         saveClosedTrade(userAddress, trade, finalPnL, { closeTxHash });
         logTradeCloseByPosition({
@@ -558,7 +585,22 @@ export default function ActivityPage() {
       // Show success toast with PnL
       const pnl = finalPnL?.grossPnl ?? 0;
       const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
-      showToast(`Closed! PnL: ${pnlStr}`, 'success');
+      const closedForShare: ClosedTrade = {
+        ...trade,
+        closedAt: Date.now(),
+        finalPnL: finalPnL?.grossPnl ?? 0,
+        finalPnLPercentage: finalPnL?.grossPnlPercentage ?? 0,
+        closePrice: finalPnL?.currentPrice ?? trade.openPrice,
+        closeTxHash: closeTxHash as `0x${string}`,
+        isLiquidated: false,
+      };
+      showToast(`Closed! PnL: ${pnlStr}`, 'success', undefined, {
+        label: 'SHARE',
+        onClick: () => {
+          setShowClosedTrades(true);
+          setShareTrade(closedForShare);
+        },
+      });
 
       // Refresh trades and stats after a delay
       setTimeout(() => {
@@ -664,7 +706,7 @@ export default function ActivityPage() {
       </header>
 
       {/* Trades List */}
-      <main className="flex-1 overflow-y-auto min-h-0 -mx-4 sm:-mx-6 px-4 sm:px-6">
+      <main ref={mainRef} className="flex-1 overflow-y-auto min-h-0 -mx-4 sm:-mx-6 px-4 sm:px-6">
         {showClosedTrades ? (
           // Show closed trades
           closedTrades.length === 0 ? (
@@ -712,6 +754,7 @@ export default function ActivityPage() {
                   }}
                   onFlip={() => {}}
                   onClose={() => {}}
+                  onShare={() => setShareTrade(closedTrade)}
                   isFlipping={false}
                   isClosing={false}
                   isClosed={true}
@@ -804,6 +847,18 @@ export default function ActivityPage() {
 
       {/* Footer */}
       <AvantisFooter />
+
+      {/* Share Card Modal */}
+      {shareTrade && (
+        <ShareCardModal
+          trade={shareTrade}
+          onClose={() => setShareTrade(null)}
+          onCopy={() => showToast('Copied to clipboard', 'success')}
+          onDownload={() => showToast('Downloaded', 'success')}
+          onShare={() => showToast('Shared!', 'success')}
+          onShareOnX={() => showToast('Opened X — paste image (Ctrl+V) to add it', 'success')}
+        />
+      )}
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
