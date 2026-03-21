@@ -11,7 +11,6 @@ interface StatsPanelProps {
   mounted: boolean;
   activityStats: { total_trades: number; total_volume: number; total_pnl: number; win_rate: number; open_trades: number } | null;
   tradeStats: { totalTrades: number; totalVolume: number };
-  historicVolume: number | null;
   computedVolume: number;
   /** Activity API stats row still fetching */
   statsLoading?: boolean;
@@ -26,9 +25,9 @@ function StatShimmer({ className }: { className?: string }) {
   );
 }
 
-export function StatsPanel({
+export const StatsPanel = React.memo(function StatsPanel({
   tradesWithPnL, closedTradesCount, showClosedTrades, onToggle,
-  mounted, activityStats, tradeStats, historicVolume, computedVolume,
+  mounted, activityStats, tradeStats, computedVolume,
   statsLoading = false,
 }: StatsPanelProps) {
   const aggregateStats = React.useMemo(() => {
@@ -92,7 +91,7 @@ export function StatsPanel({
               {mounted && statsLoading ? (
                 <StatShimmer className="w-16 sm:w-20 h-7" />
               ) : mounted ? (
-                `$${(activityStats?.total_volume ?? historicVolume ?? tradeStats.totalVolume ?? computedVolume).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                `$${(activityStats?.total_volume ?? tradeStats.totalVolume ?? computedVolume).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
               ) : (
                 '$0'
               )}
@@ -102,4 +101,4 @@ export function StatsPanel({
       </div>
     </>
   );
-}
+});

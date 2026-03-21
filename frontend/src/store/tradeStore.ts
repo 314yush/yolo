@@ -123,7 +123,7 @@ interface TradeState {
   showToast: (message: string, type?: 'success' | 'error' | 'info', duration?: number, action?: { label: string; onClick: () => void }) => void;
   removeToast: (id: string) => void;
 
-  // Real-time prices from Pyth
+  // Real-time prices (Avantis feed-v3 stream, Hermes fallback)
   prices: Record<string, { price: number; timestamp: number }>;
   setPrices: (prices: Record<string, { price: number; timestamp: number }>) => void;
   
@@ -201,7 +201,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   // Fast trading confirmation state
   confirmationStage: 'none',
   confirmationTimestamp: null,
-  // Real-time prices from Pyth
+  // Real-time prices (Avantis feed-v3 stream, Hermes fallback)
   prices: {},
   // Pre-built transaction
   prebuiltTx: null,
@@ -234,10 +234,12 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   setCurrentTrade: (currentTrade) => {
     // When setting currentTrade, also remember the indices for PnL matching
     if (currentTrade && currentTrade.pairIndex !== undefined && currentTrade.tradeIndex !== undefined) {
-      set({ 
+      set({
         currentTrade,
         rememberedPairIndex: currentTrade.pairIndex,
         rememberedTradeIndex: currentTrade.tradeIndex,
+        // New live position supersedes any pending "share last close" from a prior session
+        lastClosedTradeForShare: null,
       });
     } else {
       set({ currentTrade });

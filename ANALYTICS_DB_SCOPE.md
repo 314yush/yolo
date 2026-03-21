@@ -35,9 +35,9 @@
 
 ### 2.3 What We Do NOT Store
 
-- Real-time PnL for open positions → always from Avantis API (or Pyth + calculation).
+- Real-time PnL for open positions → Avantis API plus client-side mark when applicable.
 - Delegate private keys or sensitive wallet data.
-- Raw price history (Pyth/chart) beyond `open_price`, `close_price` on trades.
+- Raw price history (chart / feed) beyond `open_price`, `close_price` on trades.
 
 ---
 

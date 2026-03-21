@@ -51,7 +51,7 @@ function formatElapsed(seconds: number): string {
 }
 
 export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
-  const { selection, pnlData, currentTrade, prices, confirmationStage, txHash, isLiquidated, isTakeProfitHit, lastKnownPnLPercentage, showToast, settings } = useTradeStore();
+  const { selection, pnlData, currentTrade, confirmationStage, txHash, isLiquidated, isTakeProfitHit, lastKnownPnLPercentage, showToast, settings } = useTradeStore();
   const { flipTrade, isFlipping } = useFlipTrade();
   const { playFlip } = useSound();
   const { isOnline } = useNetworkStatus();
@@ -108,23 +108,33 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const pollInterval = currentTrade?.tradeIndex === 0 ? 500 : 1000;
   usePnL({ enabled: true, interval: pollInterval });
 
-  // Get real-time Pyth price for the current asset
+  // Live mark from store (Avantis feed-v3 → Hermes fallback, via useLivePricesSync)
   const assetPair = pnlData?.trade?.pair ?? currentTrade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
-  const pythCurrentPrice = assetPair ? prices[assetPair]?.price ?? null : null;
+  /** Granular subscription: re-render when this pair’s mark changes, not on every store field */
+  const liveMarkPrice = useTradeStore(
+    (s) => (assetPair ? s.prices[assetPair]?.price ?? null : null)
+  );
 
-  // Instant client-side PnL when we have placeholder trade (tradeIndex 0) + Pyth price
-  // No Avantis wait — compute net PnL with ZFP fee logic immediately
-  const isPlaceholder = currentTrade?.tradeIndex === 0;
-  const hasPricesForClientPnL = isPlaceholder && currentTrade && pythCurrentPrice && currentTrade.openPrice > 0;
-  const clientPnL = hasPricesForClientPnL
+  // Live oracle PnL (ZFP net) — same formula for placeholder and confirmed trades so the header
+  // tracks the feed; Avantis poll still runs for liquidation / sync / activity.
+  const tradeForLivePnL = currentTrade ?? pnlData?.trade;
+  const canLiveOraclePnL =
+    !isLiquidated &&
+    !isTakeProfitHit &&
+    !isConfirming &&
+    !!tradeForLivePnL &&
+    tradeForLivePnL.openPrice > 0 &&
+    typeof liveMarkPrice === 'number' &&
+    liveMarkPrice > 0;
+  const clientPnL = canLiveOraclePnL
     ? computeClientPnL(
-        currentTrade.collateral,
-        currentTrade.leverage,
-        currentTrade.isLong,
-        currentTrade.openPrice,
-        pythCurrentPrice,
-        true, // isPnl (ZFP)
-        0    // rolloverFee (new positions)
+        tradeForLivePnL.collateral,
+        tradeForLivePnL.leverage,
+        tradeForLivePnL.isLong,
+        tradeForLivePnL.openPrice,
+        liveMarkPrice,
+        true,
+        0
       )
     : null;
 
@@ -246,13 +256,19 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const liqDistance = currentTrade ? Math.abs(100 + pnlPercentage) : 100;
   const isNearLiq = liqDistance < 20;
 
-  // Reference lines: only show once real on-chain trade data is loaded.
-  // The optimistic trade has liquidationPrice: 0; real trades always have liqPrice > 0.
+  // Liq line: only after real position (placeholder trade has liquidationPrice: 0 until Avantis poll).
   const rawLiqPrice = pnlData?.trade?.liquidationPrice ?? currentTrade?.liquidationPrice ?? 0;
   const hasRealTradeData = rawLiqPrice > 0 || isLiquidated || isTakeProfitHit;
-  const entryPrice = hasRealTradeData ? (pnlData?.trade?.openPrice ?? currentTrade?.openPrice ?? null) : null;
   const liquidationPrice = hasRealTradeData ? rawLiqPrice : null;
-  const currentPrice = pythCurrentPrice ?? pnlData?.currentPrice ?? null;
+
+  // Entry line: use open price as soon as it exists (wheel placeholder + API). Do NOT gate on
+  // hasRealTradeData — that waits for liquidation from Avantis (~15–20s), so the entry line was late or missing.
+  const openForEntryLine = pnlData?.trade?.openPrice ?? currentTrade?.openPrice ?? null;
+  const entryPrice =
+    openForEntryLine != null && Number.isFinite(openForEntryLine) && openForEntryLine > 0
+      ? openForEntryLine
+      : null;
+  const currentPrice = liveMarkPrice ?? pnlData?.currentPrice ?? null;
 
   // Target price: prefer tp from API when > 0, else compute from settings
   const takeProfitPercent = settings.takeProfitPercent ?? 200;

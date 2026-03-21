@@ -34,7 +34,8 @@ export type Resolution = 60 | 180 | 300 | 900 | 14400 | 86400; // 1m, 3m, 5m, 15
 // Data storage configuration
 const MAX_TICKS = 18000; // 5 hours of 1-second ticks (5 * 3600)
 const MAX_AGE_SECONDS = 18000; // 5 hours
-const UPDATE_INTERVAL_MS = 1000; // Update every 1 second
+/** When price is unchanged, sample this often so flat segments still advance with the clock */
+const FLAT_HEARTBEAT_MS = 1000;
 
 // Default resolution: 1 minute
 export const DEFAULT_RESOLUTION: Resolution = 60; // 1 minute
@@ -140,69 +141,73 @@ export function clearAllChartData(): void {
   lastUpdateTimes.clear();
 }
 
+/** Sample store into tick buffers — call on every `prices` update or on heartbeat */
+export function collectChartTicksFromStore(): void {
+  const now = Date.now();
+  const timeInSeconds = Math.floor(now / 1000);
+  const prices = useTradeStore.getState().prices;
+
+  Object.entries(prices).forEach(([assetPair, priceData]) => {
+    if (!priceData?.price) return;
+
+    const price = priceData.price;
+    const lastUpdate = lastUpdateTimes.get(assetPair) || 0;
+
+    let ticks = tickDataStore.get(assetPair) || [];
+    const lastTick = ticks[ticks.length - 1];
+    const priceMoved = !lastTick || lastTick.price !== price;
+    if (!priceMoved && now - lastUpdate < FLAT_HEARTBEAT_MS) {
+      return;
+    }
+
+    lastUpdateTimes.set(assetPair, now);
+
+    if (lastTick && lastTick.time === timeInSeconds) {
+      ticks = [...ticks.slice(0, -1), { time: timeInSeconds, price }];
+    } else {
+      ticks = [...ticks, { time: timeInSeconds, price }];
+    }
+
+    const cutoffTime = timeInSeconds - MAX_AGE_SECONDS;
+    ticks = ticks.filter(tick => tick.time > cutoffTime);
+    if (ticks.length > MAX_TICKS) {
+      ticks = ticks.slice(-MAX_TICKS);
+    }
+
+    tickDataStore.set(assetPair, ticks);
+  });
+}
+
 /**
- * Hook that runs in the background to collect 1-second tick data for all assets.
+ * Hook that runs in the background to collect tick data for all assets.
  * Should be mounted once at the app level (e.g., in main page or layout).
- * 
- * Updates every 1 second via WebSocket and stores raw ticks for client-side aggregation.
+ *
+ * Flushes on every zustand `prices` change (same cadence as SSE batches) plus a slow heartbeat when flat.
  */
 export function useChartDataCollector() {
-  const prices = useTradeStore(state => state.prices);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // Start collecting data
-    const collect = () => {
-      const now = Date.now();
-      const timeInSeconds = Math.floor(now / 1000);
+    collectChartTicksFromStore();
 
-      // Process all available asset prices
-      Object.entries(prices).forEach(([assetPair, priceData]) => {
-        if (!priceData?.price) return;
+    const unsub = useTradeStore.subscribe((state, prev) => {
+      if (state.prices !== prev.prices) {
+        collectChartTicksFromStore();
+      }
+    });
 
-        const price = priceData.price;
-        const lastUpdate = lastUpdateTimes.get(assetPair) || 0;
-        
-        // Throttle: only update if at least 1 second has passed
-        if (now - lastUpdate < UPDATE_INTERVAL_MS) {
-          return;
-        }
-
-        lastUpdateTimes.set(assetPair, now);
-
-        // Get or create tick buffer for this asset
-        let ticks = tickDataStore.get(assetPair) || [];
-        
-        // Add new tick
-        ticks = [...ticks, {
-          time: timeInSeconds,
-          price,
-        }];
-
-        // Trim old ticks (keep only last 5 hours)
-        const cutoffTime = timeInSeconds - MAX_AGE_SECONDS;
-        ticks = ticks.filter(tick => tick.time > cutoffTime);
-        if (ticks.length > MAX_TICKS) {
-          ticks = ticks.slice(-MAX_TICKS);
-        }
-
-        tickDataStore.set(assetPair, ticks);
-      });
-    };
-
-    // Run immediately
-    collect();
-
-    // Then run every second
-    intervalRef.current = setInterval(collect, UPDATE_INTERVAL_MS);
+    intervalRef.current = setInterval(() => {
+      collectChartTicksFromStore();
+    }, FLAT_HEARTBEAT_MS);
 
     return () => {
+      unsub();
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
-  }, [prices]);
+  }, []);
 
   // Return stats for debugging
   return {

@@ -59,7 +59,7 @@ function formatRelativeTime(timestampMs: number | null | undefined): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
 }
 
-export function TradeCard({ trade, pnlData, onFlip, onClose, onShare, isFlipping, isClosing, isClosed = false, actionsDisabled = false }: TradeCardProps) {
+export const TradeCard = React.memo(function TradeCard({ trade, pnlData, onFlip, onClose, onShare, isFlipping, isClosing, isClosed = false, actionsDisabled = false }: TradeCardProps) {
   const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   
@@ -328,4 +328,4 @@ export function TradeCard({ trade, pnlData, onFlip, onClose, onShare, isFlipping
       )}
     </div>
   );
-}
+});

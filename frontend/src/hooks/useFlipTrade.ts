@@ -113,7 +113,7 @@ export function useFlipTrade() {
       try {
         const currentPrice = prices[pairToUse]?.price ?? prices[`${pairToUse}/USD`]?.price;
         if (!currentPrice || currentPrice <= 0) {
-          throw new Error(`No price available for ${pairToUse}. Wait for Pyth connection.`);
+          throw new Error(`No price available for ${pairToUse}. Wait for the price feed.`);
         }
 
         const closeTx = buildFlipTradeTxs({
@@ -136,9 +136,7 @@ export function useFlipTrade() {
           chainId: closeTx.chainId,
         });
 
-        // Brief delay so RPC has indexed the close before we read balance
-        await new Promise((r) => setTimeout(r, 500));
-
+        // Read balance immediately — signAndBroadcast already waited for confirmation
         const actualUsdcBalance = await readUsdcBalanceWithRetry(userAddress);
         const availableCollateral = Math.min(actualUsdcBalance, trade.collateral);
 

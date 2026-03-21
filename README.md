@@ -45,8 +45,7 @@ The trade executes automatically with zero opening fees using Avantis Protocol. 
 │  │         (No private keys on backend)                     │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │              Pyth Network Price Feed                      │   │
-│  │         Real-time price updates via WebSocket            │   │
+│  │         Avantis SDK (prices for optional tx building)    │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -76,7 +75,7 @@ The trade executes automatically with zero opening fees using Avantis Protocol. 
 ### Backend
 - **FastAPI 0.109+** (Python web framework)
 - **Avantis Trader SDK 0.8.13+** (transaction building)
-- **Pyth Network** (price feeds via WebSocket)
+- **Avantis SDK** (server-side price lookups when building txs)
 - **Uvicorn** (ASGI server)
 
 ## Getting Started
@@ -161,7 +160,7 @@ DEBUG=true
 6. Delegate wallet signs transaction
 7. Transaction relayed via Tachyon (gas sponsored)
 8. Trade confirms → Show PnL screen
-9. PnL updates in real-time via Pyth price feeds
+9. PnL updates in real-time via live marks (Avantis feed-v3 + Hermes fallback)
 10. Price chart displays with Entry/LIQ labels
 
 ### Key Innovations
@@ -176,8 +175,7 @@ DEBUG=true
 |----------|--------|-------------|
 | `/health` | GET | Health check |
 | `/pairs` | GET | Available trading pairs |
-| `/price/{pair}` | GET | Current price from Pyth |
-| `/prices` | GET | Batch price fetch for multiple pairs |
+| `/price/{pair}` | GET | Current price (Avantis SDK feed client) |
 | `/delegate/setup` | POST | Build delegation tx |
 | `/delegate/status/{trader}` | GET | Check delegation status |
 | `/trade/build-open` | POST | Build open trade tx |
@@ -202,7 +200,7 @@ DEBUG=true
 
 ### State Management
 - **Zustand Store**: Centralized trade state, prices, and UI state
-- **Real-time Price Sync**: Pyth prices synced to store via WebSocket
+- **Real-time Price Sync**: Live marks (Avantis SSE + Hermes fallback) into Zustand
 - **Chart Data Collector**: Background collection of 1-second tick data
 - **Pre-built Transactions**: Transactions pre-built for instant execution
 
@@ -245,7 +243,7 @@ yolo/
 │   │   │   └── SetupFlow.tsx      # One-time setup flow
 │   │   ├── hooks/           # Custom React hooks
 │   │   │   ├── useChartDataCollector.ts  # Chart data collection
-│   │   │   ├── usePythPrices.ts          # Real-time price updates
+│   │   │   ├── useLivePrices.ts          # Avantis feed-v3 + Hermes fallback
 │   │   │   ├── useTxSigner.ts            # Transaction signing
 │   │   │   └── useRelayProvider.ts       # Relay provider management
 │   │   ├── lib/             # Utility libraries
@@ -268,7 +266,7 @@ yolo/
     │   │   └── prices.py     # Price endpoints
     │   ├── services/         # Business logic
     │   │   ├── avantis.py   # Avantis SDK integration
-    │   │   └── price_feed.py # Pyth price feed
+    │   │   └── price_feed.py # Avantis SDK prices
     │   └── main.py          # FastAPI app
     └── Dockerfile           # Container configuration
 ```

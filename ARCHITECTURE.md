@@ -35,7 +35,7 @@ The **primary trading flow uses frontend-only direct contract encoding** for spe
 │  │  ┌──────────────────────────────────────────────────────┐   │  │
 │  │  │         State Management (Zustand)                   │   │  │
 │  │  │  - Trade state                                        │   │  │
-│  │  │  - Price data (Pyth)                                  │   │  │
+│  │  │  - Live marks (Avantis feed-v3 + Hermes fallback)      │   │  │
 │  │  │  - Chart data (1-second ticks)                        │   │  │
 │  │  │  - UI state                                           │   │  │
 │  │  └──────────────────────────────────────────────────────┘   │  │
@@ -66,8 +66,8 @@ The **primary trading flow uses frontend-only direct contract encoding** for spe
          ┌────────────────────┼────────────────────┐
          │                    │                    │
          ▼                    ▼                    ▼
-   Pyth WebSocket      Avantis REST API      Base RPC (viem)
-   (prices)            (trades, history)     (contract reads)
+   Avantis feed-v3     Avantis REST API      Base RPC (viem)
+   (+ Hermes fallback) (trades, history)     (contract reads)
          │                    │                    │
          └────────────────────┼────────────────────┘
                               │
@@ -83,7 +83,7 @@ The **primary trading flow uses frontend-only direct contract encoding** for spe
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              Pyth via Avantis SDK Feed Client                   │  │
+│  │              Avantis SDK feed client (server-side prices)        │  │
 │  │  - Used when backend builds tx (price for build-open)          │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
@@ -126,7 +126,7 @@ The **primary trading flow uses frontend-only direct contract encoding** for spe
 - **Library**: Zustand
 - **Stores**:
   - Trade state (current trade, open trades)
-  - Price data (Pyth prices)
+  - Live marks (Avantis / Hermes on the client; SDK on the backend)
   - Chart data (1-second ticks)
   - UI state (stage, selection)
   - Settings (collateral, preferences)
@@ -154,7 +154,7 @@ The **primary trading flow uses frontend-only direct contract encoding** for spe
   - `/trade/build-open`, `/trade/build-close`, `/trade/build-update-tpsl` – tx building via Avantis SDK
   - `/delegate/setup`, `/delegate/approve-usdc` – delegate/USDC tx building
   - `/trades/{address}`, `/trades/{address}/pnl` – trades and PnL via SDK
-  - `/prices/*` – Price feeds (Pyth via Avantis SDK)
+  - `/price/{pair}` – Single-pair price (Avantis SDK feed client)
   - `/pairs` – Available trading pairs
 
 #### 2. **Avantis Integration** (Dual Path)
@@ -203,7 +203,7 @@ The **primary trading flow uses frontend-only direct contract encoding** for spe
 - **Bypasses backend**: Frontend calls Avantis APIs directly for trades and history
 
 #### 5. **Price Feed Service** (`backend/app/services/price_feed.py`)
-- **Source**: Pyth Network (via Avantis SDK feed_client when backend builds tx)
+- **Source**: Avantis SDK `feed_client` when the backend resolves a mark for tx building
 - **Protocol**: WebSocket
 - **Caching**: In-memory cache with TTL
 - **Timeout**: 10-12 second timeout for price fetches
@@ -235,7 +235,7 @@ All built transactions target the Avantis Trading contract and use `delegatedAct
    - Wheel animation starts
    - `usePrebuiltTx` / `avantisEncoder.buildOpenTradeTx` builds tx in frontend (no backend)
 4. **Transaction Building** (frontend):
-   - Price from Pyth WebSocket (usePythPrices)
+   - Price from live marks (`useLivePrices` → Avantis feed-v3 SSE, Hermes fallback)
    - `buildOpenTradeTx` encodes `delegatedAction(trader, openTrade(...))` via viem
    - Tx built locally – no network round-trip
 5. **Frontend Signing**:
@@ -247,7 +247,7 @@ All built transactions target the Avantis Trading contract and use `delegatedAct
    - Transaction hash returned
    - PnL screen displayed
 8. **Real-time Updates**:
-   - Pyth prices update every second
+   - Live marks update from SSE / REST (feed cadence)
    - Chart updates with new data
    - PnL from Avantis REST API (`core.avantisfi.com/user-data`)
 
@@ -257,11 +257,11 @@ If using backend for tx building: `POST /trade/build-open` → backend fetches p
 
 ### Price Update Flow
 
-1. **Frontend**: Pyth Hermes WebSocket (`wss://hermes.pyth.network/ws`) via `usePythPrices`
+1. **Frontend**: Avantis feed-v3 SSE (proxied), Hermes SSE/REST fallback — `useLivePrices`
 2. **Frontend**: Prices stored in Zustand
 3. **Chart Collector**: Collects 1-second ticks
 4. **Chart**: Aggregates ticks into 1-minute bars
-5. **PnL**: `avantisApi.fetchPnL` combines Avantis positions with Pyth prices (Net PnL = Gross PnL − rolloverFee)
+5. **PnL**: `avantisApi.fetchPnL` combines Avantis positions with live marks / Hermes when needed (Net PnL = Gross PnL − rolloverFee)
 6. **UI**: Chart and PnL update in real-time
 
 ## Key Design Decisions
@@ -298,7 +298,7 @@ If using backend for tx building: `POST /trade/build-open` → backend fetches p
 3. **Progressive Chart Loading**: 10 → 30 data points
 4. **Chart Data Caching**: 1-second ticks cached in memory
 5. **Direct Avantis API**: Trades/PnL from Avantis REST API, bypassing backend
-6. **Pyth WebSocket**: Real-time prices in frontend (no polling)
+6. **Live prices**: Avantis feed-v3 SSE (+ Hermes fallback) into Zustand
 7. **Debounced Updates**: Chart updates debounced to prevent jank
 
 ## Security Considerations

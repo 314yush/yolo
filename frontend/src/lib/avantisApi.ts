@@ -2,10 +2,10 @@
  * Avantis API Client
  *
  * Uses /api/avantis/* proxies to avoid CORS (browser cannot call Avantis directly from prod).
+ * Prices come exclusively from Avantis v3 feed (via store) — no Hermes fallback.
  */
 
 import { ASSETS } from './constants';
-import { fetchPythPrice } from './pythFeeds';
 import { PNL_FEES, pnlFeeByGrossProfitP } from './pnlFees';
 import { logger } from './logger';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
@@ -211,7 +211,7 @@ export async function fetchTrades(traderAddress: string): Promise<Trade[]> {
  * Fetch user's positions with PnL from Avantis API.
  *
  * @param traderAddress - Trader's wallet address
- * @param prices - Map of pair name to current price (from Pyth)
+ * @param prices - Map of pair name to current price (Avantis v3 feed via store)
  */
 export async function fetchPnL(
   traderAddress: string,
@@ -246,18 +246,12 @@ export async function fetchPnL(
     }
     try {
       const pairName = trade.pair;
-      let currentPrice: number;
+      // Use Avantis v3 feed prices from store — no Hermes fallback
       const storePrice = prices[pairName]?.price;
-      if (storePrice != null) {
-        currentPrice = storePrice;
-      } else {
-        const restPrice = await fetchPythPrice(pairName);
-        if (restPrice != null) {
-          currentPrice = restPrice;
-        } else {
-          logger.warn(`[fetchPnL] No Pyth price for ${pairName} — PnL uses open price as fallback`);
-          currentPrice = trade.openPrice;
-        }
+      const currentPrice = storePrice != null && storePrice > 0 ? storePrice : trade.openPrice;
+      
+      if (storePrice == null) {
+        logger.warn(`[fetchPnL] No price for ${pairName} — using open price`);
       }
 
       const { pnl, pnlPercentage, grossPnl, grossPnlPercentage } = calculatePnL(pos, currentPrice);
@@ -395,6 +389,7 @@ export async function fetchClosedTrades(
 
 /**
  * Poll portfolio history until a closed trade matching pair/trade index appears (indexing lag after close).
+ * Optimized: 3 attempts with 400ms delay (was 5 × 700ms = 3.5s, now 3 × 400ms = 1.2s worst case).
  */
 export async function fetchRecentClosedTradeMatch(
   traderAddress: string,
@@ -402,8 +397,8 @@ export async function fetchRecentClosedTradeMatch(
   tradeIndex: number,
   options?: { attempts?: number; delayMs?: number }
 ): Promise<ClosedTrade | null> {
-  const attempts = options?.attempts ?? 5;
-  const delayMs = options?.delayMs ?? 700;
+  const attempts = options?.attempts ?? 3;
+  const delayMs = options?.delayMs ?? 400;
   for (let i = 0; i < attempts; i++) {
     if (i > 0) {
       await new Promise((r) => setTimeout(r, delayMs));

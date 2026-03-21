@@ -134,7 +134,7 @@ export function useAvantisAPI() {
     }
   }, []);
 
-  // Get PnL for all positions - Via backend proxy (or direct Avantis API fallback) + Pyth prices
+  // Get PnL for all positions - Avantis user-data + live prices from the client store (Hermes for cold fetch)
   const getPnL = useCallback(async (address: string) => {
     try {
       const currentPrices = useTradeStore.getState().prices;

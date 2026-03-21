@@ -30,8 +30,8 @@ class PriceFeedService:
 
     async def get_price(self, pair: str) -> Optional[tuple[float, int]]:
         """
-        Get current price for a pair using Avantis SDK.
-        Returns (price, timestamp) or None if not available.
+        Get current price for a pair via the Avantis SDK feed client.
+        Returns (price, timestamp_unix_seconds) or None if not available.
         """
         # Check cache first
         if pair in self._cache:
@@ -75,11 +75,13 @@ class PriceFeedService:
         return None
 
     async def get_prices(self, pairs: list[str]) -> dict[str, tuple[float, int]]:
-        """Get prices for multiple pairs using Avantis SDK."""
-        results = {}
-        
+        """Get prices for multiple pairs via the Avantis SDK feed client."""
+        results: dict[str, tuple[float, int]] = {}
+
         if not pairs:
             return results
+
+        remaining = list(pairs)
 
         try:
             # Ensure pair feeds are loaded
@@ -91,13 +93,13 @@ class PriceFeedService:
             # Get price updates for all pairs at once with timeout
             try:
                 response = await asyncio.wait_for(
-                    feed_client.get_latest_price_updates(pairs),
+                    feed_client.get_latest_price_updates(remaining),
                     timeout=10.0  # 10 second timeout for price feed
                 )
             except asyncio.TimeoutError:
                 logger.warning("Price feed timeout for multiple pairs, using cached prices where available")
                 # Return cached prices for pairs that have them
-                for pair in pairs:
+                for pair in remaining:
                     if pair in self._cache:
                         cached_price, cached_time = self._cache[pair]
                         results[pair] = (cached_price, int(cached_time))
@@ -107,8 +109,8 @@ class PriceFeedService:
                 timestamp = int(time.time())
                 # The response may not have pair info, so match by index
                 for i, item in enumerate(response.parsed):
-                    if i < len(pairs):
-                        pair = pairs[i]
+                    if i < len(remaining):
+                        pair = remaining[i]
                         price = item.converted_price
                         results[pair] = (price, timestamp)
                         self._cache[pair] = (price, timestamp)

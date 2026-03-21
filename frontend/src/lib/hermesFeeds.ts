@@ -1,10 +1,12 @@
 /**
- * Pyth Hermes feed IDs and REST helpers (used by usePythPrices and avantisApi).
+ * Hermes (Pyth Network public) REST helpers — one-shot / fallback when the store is cold.
+ * Live streaming: Avantis feed-v3 SSE primary, Hermes SSE/REST fallback (`useLivePrices`).
  */
 
-const PYTH_HERMES_BASE = 'https://hermes.pyth.network';
+const HERMES_API_BASE = 'https://hermes.pyth.network';
 
-export const PYTH_FEED_IDS: Record<string, string> = {
+/** Price account IDs for Hermes latest/stream APIs */
+export const HERMES_FEED_IDS: Record<string, string> = {
   'BTC/USD': '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43',
   'ETH/USD': '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace',
   'SOL/USD': '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
@@ -13,12 +15,6 @@ export const PYTH_FEED_IDS: Record<string, string> = {
   'XAG/USD': '0xf2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e',
 };
 
-/**
- * Fetch latest price for a pair from Pyth REST API.
- *
- * @param pair - Pair name (e.g. 'ETH/USD')
- * @returns Price or null if fetch fails / pair not supported
- */
 export type HermesParsedPriceBody = {
   parsed?: Array<{
     id: string;
@@ -26,12 +22,15 @@ export type HermesParsedPriceBody = {
   }>;
 };
 
-export async function fetchPythPrice(pair: string): Promise<number | null> {
-  const feedId = PYTH_FEED_IDS[pair];
+/**
+ * Latest price for one pair (Hermes REST).
+ */
+export async function fetchHermesPrice(pair: string): Promise<number | null> {
+  const feedId = HERMES_FEED_IDS[pair];
   if (!feedId) return null;
 
   try {
-    const url = `${PYTH_HERMES_BASE}/v2/updates/price/latest?ids[]=${encodeURIComponent(feedId)}`;
+    const url = `${HERMES_API_BASE}/v2/updates/price/latest?ids[]=${encodeURIComponent(feedId)}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
 
@@ -50,12 +49,12 @@ export async function fetchPythPrice(pair: string): Promise<number | null> {
 }
 
 /**
- * One Hermes REST round-trip for all configured feeds (mobile polling + cold fallbacks).
+ * One Hermes REST round-trip for all configured feeds (SSE complement / mobile Hermes path).
  */
-export async function fetchPythLatestAllParsed(): Promise<HermesParsedPriceBody | null> {
+export async function fetchHermesLatestAllParsed(): Promise<HermesParsedPriceBody | null> {
   const params = new URLSearchParams();
-  Object.values(PYTH_FEED_IDS).forEach((id) => params.append('ids[]', id));
-  const url = `${PYTH_HERMES_BASE}/v2/updates/price/latest?${params.toString()}`;
+  Object.values(HERMES_FEED_IDS).forEach((id) => params.append('ids[]', id));
+  const url = `${HERMES_API_BASE}/v2/updates/price/latest?${params.toString()}`;
 
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });

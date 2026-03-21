@@ -11,8 +11,20 @@ interface TradeWithPnL {
   pnlData?: PnLData;
 }
 
+/** Fast while user likely cares about fresh position list; slower when idle to limit API load */
+const POLL_INTERVAL_IDLE_MS = 2500;
+const POLL_INTERVAL_ACTIVE_MS = 500;
+
 export function useOpenTrades() {
-  const { userAddress, setOpenTrades, updateActivePositions, incrementVolume, popPendingOpenTxHash } = useTradeStore();
+  const userAddress = useTradeStore((s) => s.userAddress);
+  const openTradesLength = useTradeStore((s) => s.openTrades.length);
+  const isIntentionalClose = useTradeStore((s) => s.isIntentionalClose);
+  const pendingTradeHashesSize = useTradeStore((s) => s.pendingTradeHashes.size);
+  const pendingOpenTxCount = useTradeStore((s) => s.pendingOpenTxHashes.length);
+  const setOpenTrades = useTradeStore((s) => s.setOpenTrades);
+  const updateActivePositions = useTradeStore((s) => s.updateActivePositions);
+  const incrementVolume = useTradeStore((s) => s.incrementVolume);
+  const popPendingOpenTxHash = useTradeStore((s) => s.popPendingOpenTxHash);
   const { getTrades, getPnL } = useAvantisAPI();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   // Track which trades we've already counted for volume (by pairIndex-tradeIndex)
@@ -88,7 +100,14 @@ export function useOpenTrades() {
     }
   }, [userAddress, getTrades, getPnL, setOpenTrades, updateActivePositions, incrementVolume, popPendingOpenTxHash]);
 
-  // Fetch on mount and poll for updates
+  const pollAggressively =
+    openTradesLength > 0 ||
+    isIntentionalClose ||
+    pendingTradeHashesSize > 0 ||
+    pendingOpenTxCount > 0;
+  const pollIntervalMs = pollAggressively ? POLL_INTERVAL_ACTIVE_MS : POLL_INTERVAL_IDLE_MS;
+
+  // Fetch on mount and poll for updates (interval speeds up when trades / pending txs / close in flight)
   useEffect(() => {
     if (!userAddress) {
       countedTradesRef.current.clear();
@@ -98,15 +117,13 @@ export function useOpenTrades() {
 
     let isMounted = true;
 
-    // Fetch immediately
     fetchTrades();
 
-    // Poll every 2 seconds
     intervalRef.current = setInterval(() => {
-      if (isMounted) {
+      if (isMounted && !document.hidden) {
         fetchTrades();
       }
-    }, 2000);
+    }, pollIntervalMs);
 
     return () => {
       isMounted = false;
@@ -115,7 +132,21 @@ export function useOpenTrades() {
         intervalRef.current = null;
       }
     };
-  }, [userAddress, fetchTrades]); // Reset when user changes
+  }, [userAddress, fetchTrades, pollIntervalMs]);
+
+  // One immediate refresh when the tab becomes visible (catches closes done elsewhere / indexing lag)
+  useEffect(() => {
+    if (!userAddress) return;
+
+    const onVisible = () => {
+      if (!document.hidden) {
+        fetchTrades();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [userAddress, fetchTrades]);
 
   return { fetchTrades };
 }

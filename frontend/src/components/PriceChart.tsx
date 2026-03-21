@@ -1,6 +1,6 @@
 'use client';
 
-import React, { memo, useEffect, useMemo, useRef } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AreaSeries,
   createChart,
@@ -14,6 +14,8 @@ import {
   UTCTimestamp,
 } from 'lightweight-charts';
 import { getTickData, type Resolution } from '@/hooks/useChartDataCollector';
+import { fetchAvantisTradingViewHistory } from '@/lib/avantisTradingView';
+import { useTradeStore } from '@/store/tradeStore';
 
 interface PricePoint {
   time: number;
@@ -31,7 +33,6 @@ interface PriceChartProps {
   stream?: PricePoint[];
 }
 
-const STREAM_SYNC_MS = 200; // 5x faster visual updates – feels alive
 const VISIBLE_POINTS = 60; // ~1 min window – tighter = more dramatic swings
 const RIGHT_OFFSET_BARS = 2; // Price at right edge – line runs left-to-right across screen
 const VERTICAL_PADDING_RATIO = 0.12; // Less dead space – price fills the chart
@@ -101,8 +102,31 @@ function PriceChartComponent({
   const lastKnownPriceRef = useRef<number | null>(null);
   const lastEmittedSecondRef = useRef<number | null>(null);
   const smoothedVisibleRangeRef = useRef<{ min: number; max: number } | null>(null);
+  /** 1m OHLC from Avantis TV history → line points; consumed once to seed buffer */
+  const avantisHistoryLineRef = useRef<LineData[] | null>(null);
+  const [historyReadyTick, setHistoryReadyTick] = useState(0);
 
   const initialLineColor = useMemo(() => (pnl >= 0 ? COLORS.lineUp : COLORS.lineDown), [pnl]);
+
+  useEffect(() => {
+    if (!assetPair) return;
+    const ac = new AbortController();
+    avantisHistoryLineRef.current = null;
+    void fetchAvantisTradingViewHistory(assetPair, {
+      resolutionMinutes: 1,
+      lookbackSec: 5400,
+      signal: ac.signal,
+    }).then(bars => {
+      if (bars.length === 0) return;
+      const lineData: LineData[] = bars.map(b => ({
+        time: Math.floor(b.time / 1000) as UTCTimestamp,
+        value: b.close,
+      }));
+      avantisHistoryLineRef.current = lineData;
+      setHistoryReadyTick(n => n + 1);
+    });
+    return () => ac.abort();
+  }, [assetPair]);
 
   useEffect(() => {
     if (!containerRef.current || !assetPair || chartRef.current) return;
@@ -309,6 +333,17 @@ function PriceChartComponent({
     };
 
     const seedFromChartCollector = () => {
+      // Prefer Avantis TradingView 1m history for initial context (then live ticks extend).
+      if (seriesBufferRef.current.length === 0 && avantisHistoryLineRef.current?.length) {
+        const pts = avantisHistoryLineRef.current.slice(-VISIBLE_POINTS * 2);
+        seriesBufferRef.current = pts.map(p => ({ time: p.time, value: p.value }));
+        const last = pts[pts.length - 1];
+        lastKnownPriceRef.current = last.value;
+        lastEmittedSecondRef.current = last.time as number;
+        avantisHistoryLineRef.current = null;
+        return;
+      }
+
       const ticks = getTickData(assetPair, VISIBLE_POINTS * 2);
       const points = ticks
         .map(tick => ({ time: toSecondTimestamp(tick.time), price: tick.price }))
@@ -355,6 +390,21 @@ function PriceChartComponent({
       previousLineColorRef.current = nextColor;
     };
 
+    const mergeLiveStorePrice = () => {
+      if (!assetPair) return;
+      const row = useTradeStore.getState().prices[assetPair];
+      if (!row?.price || !Number.isFinite(row.price) || row.price <= 0) return;
+      if (lastEmittedSecondRef.current === null) return;
+
+      const nowS = Math.floor(Date.now() / 1000);
+      if (nowS > lastEmittedSecondRef.current) {
+        emitFlatThrough(nowS - 1);
+      }
+      appendPoint(nowS, row.price);
+      lastKnownPriceRef.current = row.price;
+      lastEmittedSecondRef.current = nowS;
+    };
+
     const sync = () => {
       if (!seriesRef.current || !chartRef.current) return;
 
@@ -378,6 +428,7 @@ function PriceChartComponent({
         streamCursorRef.current = stream.length;
       } else {
         seedFromChartCollector();
+        mergeLiveStorePrice();
       }
 
       const nowSec = Math.floor(Date.now() / 1000);
@@ -442,11 +493,18 @@ function PriceChartComponent({
     };
 
     sync();
-    const intervalId = window.setInterval(sync, STREAM_SYNC_MS);
-    return () => {
-      window.clearInterval(intervalId);
+
+    let rafId = 0;
+    const loop = () => {
+      sync();
+      rafId = window.requestAnimationFrame(loop);
     };
-  }, [assetPair, stream, pnl, entryPrice, liquidationPrice, targetPrice]);
+    rafId = window.requestAnimationFrame(loop);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [assetPair, stream, pnl, entryPrice, liquidationPrice, targetPrice, historyReadyTick]);
 
   useEffect(() => {
     if (!chartRef.current) return;

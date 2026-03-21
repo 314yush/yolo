@@ -57,11 +57,11 @@ export function usePrebuiltFlipTx() {
       return;
     }
 
-    // Get current price from Pyth
+    // Live mark from store (Avantis / Hermes)
     const pair = currentTrade.pair;
     const currentPrice = prices[pair]?.price;
     
-    if (!currentPrice) return; // Wait for Pyth price
+    if (!currentPrice) return; // Wait for live price
 
     if (isBuildingRef.current) return;
 

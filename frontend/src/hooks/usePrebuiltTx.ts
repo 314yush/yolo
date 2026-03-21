@@ -76,7 +76,7 @@ export function usePrebuiltTx() {
     const pair = `${selection.asset.name}/USD`;
     const currentPrice = prices[pair]?.price;
     
-    if (!currentPrice) return; // Wait for Pyth price
+    if (!currentPrice) return; // Wait for live price
 
     isBuildingRef.current = true;
     setIsPrebuilding(true);

@@ -8,7 +8,7 @@ export { usePrebuiltTx } from './usePrebuiltTx';
 export { usePrebuiltCloseTx } from './usePrebuiltCloseTx';
 export { usePrebuiltFlipTx } from './usePrebuiltFlipTx';
 export { usePusherEvents, useAutoPusherEvents } from './usePusherEvents';
-export { usePythPrices, usePythPricesSync } from './usePythPrices';
+export { useLivePrices, useLivePricesSync, type LiveMark, type UseLivePricesReturn } from './useLivePrices';
 export { useChartDataCollector, useChartData, getChartData, clearChartData, clearAllChartData } from './useChartDataCollector';
 export { useSound } from './useSound';
 export { useTxSigner } from './useTxSigner';

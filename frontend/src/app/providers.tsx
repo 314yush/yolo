@@ -6,14 +6,7 @@ import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useState, type ReactNode } from 'react';
 import { OfflineBanner } from '@/components/OfflineBanner';
-import { OriginDebug } from '@/components/OriginDebug';
-import { usePythPricesSync } from '@/hooks/usePythPrices';
-
-/** Runs Pyth price streaming at app level so all pages have fresh prices */
-function GlobalPriceSync() {
-  usePythPricesSync();
-  return null;
-}
+import { AuthenticatedPriceSync } from '@/components/AuthenticatedPriceSync';
 
 // Wagmi config for Base
 const wagmiConfig = createConfig({
@@ -75,8 +68,7 @@ export function Providers({ children }: ProvidersProps) {
       <QueryClientProvider client={queryClient}>
         <WagmiProvider config={wagmiConfig}>
           <OfflineBanner />
-          <GlobalPriceSync />
-          <OriginDebug />
+          <AuthenticatedPriceSync />
           {children}
         </WagmiProvider>
       </QueryClientProvider>

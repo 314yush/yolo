@@ -18,7 +18,6 @@ import { useAccessCheck } from '@/hooks/useAccessCheck';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { PickerWheel } from '@/components/PickerWheel';
 import { AccessCodeGate } from '@/components/AccessCodeGate';
-import { PnLScreen } from '@/components/PnLScreen';
 import { LoginButton } from '@/components/LoginButton';
 import { SetupFlow } from '@/components/SetupFlow';
 import { OnboardingFlow } from '@/components/OnboardingFlow';
@@ -31,6 +30,7 @@ import { NavFooter } from '@/components/NavFooter';
 import { FinancialInfoBar } from '@/components/FinancialInfoBar';
 import { MusicToggleButton } from '@/components/MusicToggleButton';
 import { StageRouter } from '@/components/StageRouter';
+import { PnLScreen } from '@/components/PnLScreen';
 import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
 import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
 import { clearLocalAccess } from '@/lib/access';
@@ -203,9 +203,9 @@ export default function HomePage() {
   const { hasAccess, isChecking: isCheckingAccess, grantAccess } = useAccessCheck(walletAddress);
   
   // Start fetching open trades + PnL immediately when user logs in
-  useOpenTrades();
+  const { fetchTrades: refetchOpenTrades } = useOpenTrades();
   
-  // Pyth prices now synced at app level (providers.tsx)
+  // Live marks: AuthenticatedPriceSync in providers (home + /activity only)
 
   // Collect chart data in background for all assets (pre-load for instant charts)
   useChartDataCollector();
@@ -608,6 +608,7 @@ export default function HomePage() {
   const handleCloseTradeRef = useRef<(() => Promise<void>) | null>(null);
 
   // Handle close trade - uses pre-built tx or direct encoding (no SDK)
+  // Optimized: Show success immediately using pnlData, reconcile in background
   const handleCloseTrade = useCallback(async () => {
     // CRITICAL: Prevent closing trades if setup is not complete (defensive check)
     if (!delegateStatus.isSetup) {
@@ -636,70 +637,33 @@ export default function HomePage() {
 
       const { hash: closeTxHash } = await signAndWait(closeTx);
 
-      const reconciled = await fetchRecentClosedTradeMatch(
-        userAddress,
-        currentTrade.pairIndex,
-        currentTrade.tradeIndex
-      );
-      const isLiquidatedClose = reconciled?.isLiquidated === true;
-      const closePrice =
-        reconciled?.closePrice ?? pnlData?.currentPrice ?? currentTrade.openPrice;
+      // Use existing pnlData for immediate feedback (Avantis v3 feed prices)
+      const closePrice = pnlData?.currentPrice ?? currentTrade.openPrice;
+      const pnlPct = pnlData?.pnlPercentage ?? 0;
+      const gross = pnlData?.grossPnl ?? 0;
+      const grossPct = pnlData?.grossPnlPercentage ?? 0;
 
-      let effectivePnL: PnLData | null = pnlData;
-      if (isLiquidatedClose) {
-        const coll = currentTrade.collateral;
-        effectivePnL = {
-          trade: currentTrade,
-          currentPrice: closePrice,
-          pnl: -coll,
-          pnlPercentage: -100,
-          grossPnl: -coll,
-          grossPnlPercentage: -100,
-        };
-      } else if (reconciled) {
-        const fp = reconciled.finalPnL;
-        const fpct = reconciled.finalPnLPercentage;
-        effectivePnL = pnlData
-          ? {
-              ...pnlData,
-              currentPrice: closePrice,
-              pnl: fp,
-              pnlPercentage: fpct,
-              grossPnl: fp,
-              grossPnlPercentage: fpct,
-            }
-          : {
-              trade: currentTrade,
-              currentPrice: closePrice,
-              pnl: fp,
-              pnlPercentage: fpct,
-              grossPnl: fp,
-              grossPnlPercentage: fpct,
-            };
-      }
-
-      const pnlPct = effectivePnL?.pnlPercentage ?? pnlData?.pnlPercentage ?? 0;
+      // Play sound immediately based on current pnlData
       if (pnlPct >= 0) {
         playWin();
       } else {
         playLose();
       }
 
+      // Save and log with current data immediately
       if (userAddress && currentTrade) {
-        saveClosedTrade(userAddress, currentTrade, effectivePnL, {
+        saveClosedTrade(userAddress, currentTrade, pnlData, {
           closeTxHash,
-          isLiquidated: isLiquidatedClose,
+          isLiquidated: false,
         });
-        const gross = effectivePnL?.grossPnl ?? pnlData?.grossPnl ?? 0;
-        const grossPct = effectivePnL?.grossPnlPercentage ?? pnlData?.grossPnlPercentage ?? 0;
         const closedTrade: ClosedTrade = {
           ...currentTrade,
           closedAt: Date.now(),
-          finalPnL: isLiquidatedClose ? -currentTrade.collateral : gross,
-          finalPnLPercentage: isLiquidatedClose ? -100 : grossPct,
+          finalPnL: gross,
+          finalPnLPercentage: grossPct,
           closePrice,
           closeTxHash,
-          isLiquidated: isLiquidatedClose,
+          isLiquidated: false,
           isTakeProfitHit: false,
         };
         setLastClosedTradeForShare(closedTrade);
@@ -711,22 +675,41 @@ export default function HomePage() {
           pnl: gross,
           closedAt: new Date().toISOString(),
           txHash: closeTxHash,
-          isLiquidated: isLiquidatedClose,
+          isLiquidated: false,
         });
       }
 
-      const pnl = effectivePnL?.grossPnl ?? pnlData?.grossPnl ?? 0;
-      const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
-      const toastMsg = isLiquidatedClose
-        ? `Liquidated · ${pnlStr} (-100%)`
-        : `Closed! PnL: ${pnlStr}`;
-      showToast(toastMsg, 'success', undefined, {
+      const pnlStr = gross >= 0 ? `+$${gross.toFixed(2)}` : `-$${Math.abs(gross).toFixed(2)}`;
+      showToast(`Closed! PnL: ${pnlStr}`, 'success', undefined, {
         label: 'SHARE',
         onClick: () => router.push('/activity'),
       });
       
-      // Reset and go back to idle
+      // Reset and go back to idle immediately (don't wait for reconciliation)
       reset();
+      void refetchOpenTrades();
+
+      // Background reconciliation: update saved trade if API shows different data (e.g., liquidation)
+      const tradeToReconcile = currentTrade;
+      const userToReconcile = userAddress;
+      void (async () => {
+        try {
+          const reconciled = await fetchRecentClosedTradeMatch(
+            userToReconcile,
+            tradeToReconcile.pairIndex,
+            tradeToReconcile.tradeIndex
+          );
+          if (reconciled && reconciled.isLiquidated) {
+            // Update saved trade with liquidation data
+            saveClosedTrade(userToReconcile, tradeToReconcile, null, {
+              closeTxHash,
+              isLiquidated: true,
+            });
+          }
+        } catch {
+          // Ignore reconciliation errors — we already saved with best-effort data
+        }
+      })();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to close trade';
       setError(msg);
@@ -735,7 +718,7 @@ export default function HomePage() {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare]);
+  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades, router]);
 
   handleCloseTradeRef.current = handleCloseTrade;
 

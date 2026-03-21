@@ -108,13 +108,13 @@ export function grossPnlPForNetPnlP(
 
 /**
  * Compute net PnL client-side for ZFP trades (no Avantis API needed).
- * Used for instant display when we have temp trade + Pyth price but Avantis hasn't indexed yet.
+ * Used for instant display when we have temp trade + live mark but Avantis hasn't indexed yet.
  *
  * @param collateral - Position collateral in USDC
  * @param leverage - Leverage (e.g. 250)
  * @param isLong - true for LONG
  * @param openPrice - Entry price
- * @param currentPrice - Current price (from Pyth)
+ * @param currentPrice - Current oracle mark (Avantis / Hermes)
  * @param isPnl - true for ZFP trades (default); applies tiered fee on profits
  * @param rolloverFee - Rollover fee to deduct (default 0 for new positions)
  * @returns { pnl, pnlPercentage } - Net values for display

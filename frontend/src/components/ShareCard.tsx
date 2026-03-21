@@ -1,6 +1,6 @@
 'use client';
 
-import React, { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ClosedTrade } from '@/types';
 import { ASSETS, DIRECTIONS } from '@/lib/constants';
 import { pickShareCardBackground } from '@/lib/shareCardBackgrounds';
@@ -51,12 +51,24 @@ export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function Share
   const isProfit = trade.finalPnL >= 0;
   const accent = isProfit ? LIME : PINK;
 
-  const bgUrl = useMemo(
-    () => pickShareCardBackground(isProfit, trade.pairIndex, trade.tradeIndex, trade.closedAt),
-    [isProfit, trade.pairIndex, trade.tradeIndex, trade.closedAt]
-  );
+  const bgUrl = useMemo(() => {
+    const url = pickShareCardBackground(
+      isProfit,
+      trade.pairIndex,
+      trade.tradeIndex,
+      trade.closedAt
+    );
+    return url || (isProfit ? '/share-cards/positive-1.png' : '/share-cards/negative-1.png');
+  }, [isProfit, trade.pairIndex, trade.tradeIndex, trade.closedAt]);
 
+  const defaultBg = isProfit ? '/share-cards/positive-1.png' : '/share-cards/negative-1.png';
+  const [bgSrc, setBgSrc] = useState(bgUrl);
   const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setBgSrc(bgUrl);
+    setImageError(false);
+  }, [bgUrl]);
 
   const pctStr =
     trade.finalPnLPercentage >= 0
@@ -97,11 +109,16 @@ export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function Share
       {!imageError && (
         // eslint-disable-next-line @next/next/no-img-element -- canvas export compat + /public assets
         <img
-          src={bgUrl}
+          src={bgSrc}
           alt=""
           className="absolute inset-0 h-full w-full object-cover"
-          onError={() => setImageError(true)}
-          decoding="async"
+          onError={() => {
+            if (bgSrc !== defaultBg) setBgSrc(defaultBg);
+            else setImageError(true);
+          }}
+          loading="eager"
+          decoding="sync"
+          fetchPriority="high"
         />
       )}
 

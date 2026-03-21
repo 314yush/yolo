@@ -9,7 +9,11 @@
 import type { ClosedTrade } from '@/types';
 import type { ShareCardFormat } from '@/components/ShareCard';
 import { ASSETS, DIRECTIONS } from '@/lib/constants';
-import { pickShareCardBackground } from '@/lib/shareCardBackgrounds';
+import {
+  pickShareCardBackground,
+  SHARE_CARD_NEGATIVE_BACKGROUNDS,
+  SHARE_CARD_POSITIVE_BACKGROUNDS,
+} from '@/lib/shareCardBackgrounds';
 
 const LIME = '#CCFF00';
 const PINK = '#FF006E';
@@ -119,9 +123,25 @@ export async function renderShareCardToBlob(
 
   await ensureFonts();
 
+  async function loadBackgroundWithFallback(): Promise<HTMLImageElement | null> {
+    const fallbacks = isProfit
+      ? [...SHARE_CARD_POSITIVE_BACKGROUNDS]
+      : [...SHARE_CARD_NEGATIVE_BACKGROUNDS];
+    const tryOrder = [bgUrl, ...fallbacks.filter((u) => u !== bgUrl)];
+    for (const src of tryOrder) {
+      if (!src) continue;
+      try {
+        return await loadImage(src);
+      } catch {
+        /* try next */
+      }
+    }
+    return null;
+  }
+
   const [bgImg, logoImg] = await Promise.all([
-    loadImage(bgUrl),
-    loadImage('/yolo-logo.svg'),
+    loadBackgroundWithFallback(),
+    loadImage('/yolo-logo.svg').catch(() => null),
   ]);
 
   const { w, h } = CANVAS_DIMS[format];
@@ -144,7 +164,9 @@ export async function renderShareCardToBlob(
   ctx.fillRect(0, 0, w, h);
 
   // --- 2. Background image (cover-fit) ---
-  drawImageCover(ctx, bgImg, w, h);
+  if (bgImg && bgImg.naturalWidth > 0) {
+    drawImageCover(ctx, bgImg, w, h);
+  }
 
   // --- 3. Scrim gradient ---
   const scrim = ctx.createLinearGradient(0, 0, 0, h);
@@ -162,7 +184,9 @@ export async function renderShareCardToBlob(
   // --- 4. Logo (top-left, 18% of width) ---
   const logoW = pw(0.18);
   const logoH = Math.round(logoW * (28 / 80));
-  ctx.drawImage(logoImg, pw(0.05), pw(0.05), logoW, logoH);
+  if (logoImg && logoImg.naturalWidth > 0) {
+    ctx.drawImage(logoImg, pw(0.05), pw(0.05), logoW, logoH);
+  }
 
   // --- 5. Direction pill (top-right) ---
   const pillFontSize = pw(0.035);
