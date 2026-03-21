@@ -1,19 +1,28 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { debug } from '@/lib/debug';
 
-import { PYTH_FEED_IDS } from '@/lib/pythFeeds';
+import { PYTH_FEED_IDS, fetchPythLatestAllParsed } from '@/lib/pythFeeds';
 
-// Pyth Hermes SSE streaming endpoint (WebSocket at /ws is NOT part of Hermes API)
 const PYTH_HERMES_BASE = 'https://hermes.pyth.network';
 const PYTH_SSE_PATH = '/v2/updates/price/stream';
 
-// Reverse mapping for quick lookup (strip 0x for matching - Hermes returns id without 0x)
+const REST_POLL_INTERVAL_MS = 2500;
+const STALE_CONNECTION_THRESHOLD_MS = 30000;
+
 const FEED_ID_TO_PAIR: Record<string, string> = Object.fromEntries(
   Object.entries(PYTH_FEED_IDS).map(([pair, id]) => [id.toLowerCase().replace(/^0x/, ''), pair])
 );
+
+/** Mobile / coarse pointer: Hermes SSE is unreliable — poll REST only. Desktop uses Hermes SSE. */
+function pythUseRestInsteadOfSse(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (/(iPhone|iPod|iPad|Android)/i.test(navigator.userAgent)) return true;
+  if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) return true;
+  return false;
+}
 
 export interface PythPrice {
   price: number;
@@ -30,22 +39,23 @@ export interface UsePythPricesReturn {
   lastUpdate: number | null;
 }
 
+type HermesParsedBody = {
+  parsed?: Array<{
+    id: string;
+    price?: { price: string; conf: string; expo: number; publish_time: number };
+  }>;
+};
+
 /**
- * Hook for streaming real-time prices from Pyth Network via SSE.
- *
- * Hermes provides streaming via Server-Sent Events at /v2/updates/price/stream.
- * The legacy WebSocket endpoint (wss://hermes.pyth.network/ws) is NOT part of
- * the Hermes API and will fail to connect.
- *
- * @example
- * const { prices, getPrice, isConnected } = usePythPrices();
- * const ethPrice = getPrice('ETH/USD'); // Returns current ETH price or null
+ * Pyth Hermes: **SSE** on desktop, **REST polling** on mobile (iOS/Android / coarse pointer).
  */
 export function usePythPrices(): UsePythPricesReturn {
   const [prices, setPrices] = useState<Record<string, PythPrice>>({});
   const [isConnected, setIsConnected] = useState(false);
   const [connectionState, setConnectionState] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
+
+  const useRestOnly = useMemo(() => pythUseRestInsteadOfSse(), []);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -54,16 +64,15 @@ export function usePythPrices(): UsePythPricesReturn {
   const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastUpdateRef = useRef<number | null>(null);
   const isConnectingRef = useRef(false);
-  const STALE_CONNECTION_THRESHOLD = 30000; // 30 seconds without updates = stale
+  const restPollInFlightRef = useRef(false);
+  const restFailStreakRef = useRef(0);
 
-  // Get price for a pair
   const getPrice = useCallback((pair: string): number | null => {
     const priceData = prices[pair];
     return priceData ? priceData.price : null;
   }, [prices]);
 
-  // Parse Hermes SSE price update (parsed format from /v2/updates/price/stream)
-  const parsePriceUpdate = useCallback((data: { parsed?: Array<{ id: string; price?: { price: string; conf: string; expo: number; publish_time: number } }> }): void => {
+  const parsePriceUpdate = useCallback((data: HermesParsedBody) => {
     try {
       if (!data.parsed || !Array.isArray(data.parsed)) return;
 
@@ -96,13 +105,12 @@ export function usePythPrices(): UsePythPricesReturn {
         lastUpdateRef.current = now;
       }
     } catch (err) {
-      console.error('[PythPrices] Error parsing price update:', err);
+      console.error('[PythPrices] Error parsing Hermes update:', err);
     }
   }, []);
 
   const connectRef = useRef<() => void>(() => {});
 
-  // Connect to Pyth Hermes SSE stream
   const connect = useCallback(() => {
     const currentEs = eventSourceRef.current;
     if (currentEs?.readyState === EventSource.OPEN) return;
@@ -116,7 +124,7 @@ export function usePythPrices(): UsePythPricesReturn {
     if (currentEs) {
       try {
         currentEs.close();
-      } catch (e) {
+      } catch {
         /* ignore */
       }
       eventSourceRef.current = null;
@@ -124,17 +132,16 @@ export function usePythPrices(): UsePythPricesReturn {
 
     isConnectingRef.current = true;
     setConnectionState('connecting');
-    debug('[PythPrices] Connecting to Pyth Hermes SSE...');
-
     const feedIds = Object.values(PYTH_FEED_IDS);
     const params = new URLSearchParams();
     feedIds.forEach(id => params.append('ids[]', id));
     const url = `${PYTH_HERMES_BASE}${PYTH_SSE_PATH}?${params.toString()}`;
+    debug('[PythPrices] Connecting to Hermes SSE...');
 
     const es = new EventSource(url);
 
     es.onopen = () => {
-      debug('[PythPrices] Connected to Pyth Hermes SSE');
+      debug('[PythPrices] Hermes SSE connected');
       isConnectingRef.current = false;
       setIsConnected(true);
       setConnectionState('connected');
@@ -147,8 +154,8 @@ export function usePythPrices(): UsePythPricesReturn {
         const now = Date.now();
         const lastUpdateTime = lastUpdateRef.current ?? 0;
         const timeSinceLastUpdate = now - lastUpdateTime;
-        if (es.readyState === EventSource.OPEN && timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD && lastUpdateTime > 0) {
-          console.warn(`[PythPrices] Stale connection detected (${timeSinceLastUpdate}ms since last update), reconnecting...`);
+        if (es.readyState === EventSource.OPEN && timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD_MS && lastUpdateTime > 0) {
+          console.warn(`[PythPrices] Stale Hermes SSE (${timeSinceLastUpdate}ms), reconnecting...`);
           es.close();
         }
       }, 10000);
@@ -156,10 +163,10 @@ export function usePythPrices(): UsePythPricesReturn {
 
     es.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data) as HermesParsedBody;
         parsePriceUpdate(data);
       } catch (err) {
-        console.error('[PythPrices] Error processing message:', err);
+        console.error('[PythPrices] Error processing Hermes SSE message:', err);
       }
     };
 
@@ -176,14 +183,14 @@ export function usePythPrices(): UsePythPricesReturn {
         }
         if (!reconnectTimeoutRef.current && reconnectAttempts.current < maxReconnectAttempts) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-          debug(`[PythPrices] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+          debug(`[PythPrices] Hermes SSE reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current++;
             reconnectTimeoutRef.current = null;
             connectRef.current();
           }, delay);
         } else if (reconnectAttempts.current >= maxReconnectAttempts) {
-          console.error('[PythPrices] Max reconnection attempts reached');
+          console.error('[PythPrices] Max Hermes SSE reconnection attempts reached');
           setConnectionState('error');
         }
       }
@@ -196,8 +203,67 @@ export function usePythPrices(): UsePythPricesReturn {
     connectRef.current = connect;
   }, [connect]);
 
-  // Connect on mount
+  // Mobile: Hermes REST only
   useEffect(() => {
+    if (!useRestOnly) return;
+
+    setConnectionState('connecting');
+    debug('[PythPrices] Using Hermes REST polling (mobile)');
+
+    const poll = async () => {
+      if (document.visibilityState !== 'visible') return;
+      if (restPollInFlightRef.current) return;
+      restPollInFlightRef.current = true;
+      try {
+        const data = await fetchPythLatestAllParsed();
+        if (data?.parsed?.length) {
+          parsePriceUpdate(data);
+          restFailStreakRef.current = 0;
+          setIsConnected(true);
+          setConnectionState('connected');
+        } else {
+          restFailStreakRef.current += 1;
+          if (restFailStreakRef.current >= 10) {
+            console.error('[PythPrices] Hermes REST polling failed repeatedly');
+            setConnectionState('error');
+            setIsConnected(false);
+          }
+        }
+      } catch {
+        restFailStreakRef.current += 1;
+        if (restFailStreakRef.current >= 10) {
+          setConnectionState('error');
+          setIsConnected(false);
+        }
+      } finally {
+        restPollInFlightRef.current = false;
+      }
+    };
+
+    void poll();
+    const id = window.setInterval(poll, REST_POLL_INTERVAL_MS);
+
+    const onVisibility = () => {
+      if (!document.hidden) void poll();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) void poll();
+    };
+    window.addEventListener('pageshow', onPageShow);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onPageShow);
+    };
+  }, [parsePriceUpdate, useRestOnly]);
+
+  // Desktop: Hermes SSE
+  useEffect(() => {
+    if (useRestOnly) return;
+
     queueMicrotask(() => connect());
 
     return () => {
@@ -215,10 +281,11 @@ export function usePythPrices(): UsePythPricesReturn {
       }
       isConnectingRef.current = false;
     };
-  }, [connect]);
+  }, [connect, useRestOnly]);
 
-  // Reconnect on visibility change
   useEffect(() => {
+    if (useRestOnly) return;
+
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         const es = eventSourceRef.current;
@@ -226,10 +293,10 @@ export function usePythPrices(): UsePythPricesReturn {
         const now = Date.now();
         const lastUpdateTime = lastUpdateRef.current ?? 0;
         const timeSinceLastUpdate = now - lastUpdateTime;
-        const isStale = timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD && lastUpdateTime > 0;
+        const isStale = timeSinceLastUpdate > STALE_CONNECTION_THRESHOLD_MS && lastUpdateTime > 0;
 
         if ((!isActuallyConnected || isStale || (!isConnected && connectionState !== 'connecting')) && !isConnectingRef.current) {
-          debug('[PythPrices] Tab visible, reconnecting...', {
+          debug('[PythPrices] Tab visible, reconnecting Hermes SSE...', {
             isActuallyConnected,
             isStale,
             connectionState,
@@ -239,7 +306,7 @@ export function usePythPrices(): UsePythPricesReturn {
           if (es && (es.readyState === EventSource.CLOSED || isStale)) {
             try {
               es.close();
-            } catch (e) {
+            } catch {
               /* ignore */
             }
           }
@@ -250,7 +317,30 @@ export function usePythPrices(): UsePythPricesReturn {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [connect, isConnected, connectionState]);
+  }, [connect, isConnected, connectionState, useRestOnly]);
+
+  useEffect(() => {
+    if (useRestOnly) return;
+
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      reconnectAttempts.current = 0;
+      try {
+        eventSourceRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      eventSourceRef.current = null;
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+        healthCheckIntervalRef.current = null;
+      }
+      queueMicrotask(() => connectRef.current());
+    };
+
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, [useRestOnly]);
 
   return {
     prices,
@@ -261,15 +351,10 @@ export function usePythPrices(): UsePythPricesReturn {
   };
 }
 
-/**
- * Hook that syncs Pyth prices to the trade store.
- * Use this at app level to keep store prices updated.
- */
 export function usePythPricesSync(): UsePythPricesReturn {
   const pythPrices = usePythPrices();
   const setPrices = useTradeStore(state => state.setPrices);
 
-  // Sync prices to store
   useEffect(() => {
     if (Object.keys(pythPrices.prices).length > 0) {
       const storePrices: Record<string, { price: number; timestamp: number }> = {};

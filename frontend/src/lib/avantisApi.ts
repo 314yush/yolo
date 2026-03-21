@@ -1,7 +1,7 @@
 /**
  * Avantis API Client
  *
- * Uses /api/avantis proxy to avoid CORS (browser cannot call Avantis directly from prod).
+ * Uses /api/avantis/* proxies to avoid CORS (browser cannot call Avantis directly from prod).
  */
 
 import { ASSETS } from './constants';
