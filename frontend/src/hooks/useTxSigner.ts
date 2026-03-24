@@ -175,7 +175,7 @@ export function useTxSigner() {
             console.warn(LOG_PREFIX, '⚠️ Could not verify Avantis delegate (continuing anyway):', e);
           }
         }
-        
+
         // Use relay service (supports multiple providers)
         const result = await relayService.relayTrade({
           delegatePrivateKey: wallet.privateKey,

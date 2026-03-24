@@ -104,8 +104,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   usePrebuiltCloseTx();
   usePrebuiltFlipTx();
 
-  // Start PnL polling — 500ms when placeholder for faster Avantis discovery
-  const pollInterval = currentTrade?.tradeIndex === 0 ? 500 : 1000;
+  // usePositionSync is mounted in page.tsx (has access to balance refetch + open trades).
+  // usePnL runs as reconciliation + liquidation monitor at a slower interval.
+  const pollInterval = currentTrade?.tradeIndex === 0 ? 1500 : 4000;
   usePnL({ enabled: true, interval: pollInterval });
 
   // Live mark from store (Avantis feed-v3 → Hermes fallback, via useLivePricesSync)

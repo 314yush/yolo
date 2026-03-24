@@ -69,6 +69,12 @@ interface TradeState {
   flipExcludedPositionKey: string | null;
   setFlipExcludedPositionKey: (key: string | null) => void;
 
+  // Tracks where currentTrade data originated so polling doesn't overwrite fresher Pusher data
+  positionSource: 'placeholder' | 'pusher' | 'poll';
+  setPositionSource: (source: 'placeholder' | 'pusher' | 'poll') => void;
+  lastPositionEventAt: number | null;
+  setLastPositionEventAt: (ts: number | null) => void;
+
   // Trade execution state
   txHash: `0x${string}` | null;
   setTxHash: (hash: `0x${string}` | null) => void;
@@ -169,6 +175,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   isTakeProfitHit: false,
   isIntentionalClose: false,
   flipExcludedPositionKey: null,
+  positionSource: 'placeholder',
+  lastPositionEventAt: null,
   txHash: null,
   isExecuting: false,
   error: null,
@@ -241,6 +249,13 @@ export const useTradeStore = create<TradeState>((set, get) => ({
         // New live position supersedes any pending "share last close" from a prior session
         lastClosedTradeForShare: null,
       });
+    } else if (currentTrade == null) {
+      set({
+        currentTrade: null,
+        rememberedPairIndex: null,
+        rememberedTradeIndex: null,
+        pnlData: null,
+      });
     } else {
       set({ currentTrade });
     }
@@ -273,6 +288,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   setIsTakeProfitHit: (isTakeProfitHit) => set({ isTakeProfitHit }),
   setIsIntentionalClose: (isIntentionalClose) => set({ isIntentionalClose }),
   setFlipExcludedPositionKey: (flipExcludedPositionKey) => set({ flipExcludedPositionKey }),
+  setPositionSource: (positionSource) => set({ positionSource }),
+  setLastPositionEventAt: (lastPositionEventAt) => set({ lastPositionEventAt }),
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
   setError: (error) => set({ error }),
@@ -504,5 +521,7 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     prebuiltFlipTxs: null,
     isPrebuildingFlip: false,
     flipExcludedPositionKey: null,
+    positionSource: 'placeholder',
+    lastPositionEventAt: null,
   }),
 }));

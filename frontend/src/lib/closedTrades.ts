@@ -97,6 +97,15 @@ export function saveClosedTrade(
       if (closeTxHash && t.closeTxHash) {
         return t.closeTxHash.toLowerCase() === closeTxHash.toLowerCase();
       }
+      // Match by pairIndex + tradeIndex + openedAt to avoid clobbering
+      // when Avantis reuses the same trade slot (e.g. after a flip).
+      if (trade.openedAt && trade.openedAt > 0 && t.openedAt && t.openedAt > 0) {
+        return (
+          t.pairIndex === trade.pairIndex &&
+          t.tradeIndex === trade.tradeIndex &&
+          t.openedAt === trade.openedAt
+        );
+      }
       return (
         t.pairIndex === trade.pairIndex &&
         t.tradeIndex === trade.tradeIndex

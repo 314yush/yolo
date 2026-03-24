@@ -1,10 +1,49 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTradeStore } from '@/store/tradeStore';
 import { TradeCard } from '@/components/TradeCard';
 import { ActivityListSkeleton } from '@/components/ActivityListSkeleton';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
+
+/**
+ * Compute live PnL for an open trade using the real-time price feed.
+ * Falls back to the polled pnlData when no live price is available.
+ */
+function computeLivePnL(
+  trade: Trade,
+  polledPnL: PnLData | undefined,
+  livePrice: number | undefined,
+): PnLData | undefined {
+  if (!livePrice || !Number.isFinite(livePrice) || livePrice <= 0) return polledPnL;
+  if (!trade.openPrice || !Number.isFinite(trade.openPrice) || trade.openPrice <= 0) return polledPnL;
+  if (!Number.isFinite(trade.collateral) || !Number.isFinite(trade.leverage)) return polledPnL;
+
+  const positionSize = trade.collateral * trade.leverage;
+  const grossPnl = trade.isLong
+    ? positionSize * (livePrice - trade.openPrice) / trade.openPrice
+    : positionSize * (trade.openPrice - livePrice) / trade.openPrice;
+  const grossPnlPct = trade.collateral > 0 ? (grossPnl / trade.collateral) * 100 : 0;
+
+  // Use polled net PnL ratio to estimate net from gross (accounts for fees/funding)
+  let netPnl = grossPnl;
+  let netPnlPct = grossPnlPct;
+  if (polledPnL && polledPnL.grossPnl !== 0 && Number.isFinite(polledPnL.pnl / polledPnL.grossPnl)) {
+    const netRatio = polledPnL.pnl / polledPnL.grossPnl;
+    netPnl = grossPnl * netRatio;
+    netPnlPct = grossPnlPct * netRatio;
+  }
+
+  return {
+    trade,
+    currentPrice: livePrice,
+    pnl: Number.isFinite(netPnl) ? netPnl : grossPnl,
+    pnlPercentage: Number.isFinite(netPnlPct) ? netPnlPct : grossPnlPct,
+    grossPnl: Number.isFinite(grossPnl) ? grossPnl : 0,
+    grossPnlPercentage: Number.isFinite(grossPnlPct) ? grossPnlPct : 0,
+  };
+}
 
 interface TradeListProps {
   showClosedTrades: boolean;
@@ -142,7 +181,7 @@ export const TradeList = React.memo(function TradeList({
       <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-6">
         {closedTrades.slice(0, displayedClosedCount).map((closedTrade) => (
           <TradeCard
-            key={`closed-${closedTrade.pairIndex}-${closedTrade.tradeIndex}`}
+            key={`closed-${closedTrade.pairIndex}-${closedTrade.tradeIndex}-${closedTrade.openedAt || 0}`}
             trade={closedTrade}
             pnlData={{
               trade: closedTrade,
@@ -173,7 +212,19 @@ export const TradeList = React.memo(function TradeList({
     );
   }
 
-  // Open trades
+  // Open trades — enhanced with live price feed for real-time PnL ticking
+  const prices = useTradeStore((s) => s.prices);
+
+  const openTradesWithLivePnL = useMemo(() => {
+    return openTrades.map((item) => {
+      const livePrice = prices[item.trade.pair]?.price;
+      return {
+        ...item,
+        livePnL: computeLivePnL(item.trade, item.pnlData, livePrice),
+      };
+    });
+  }, [openTrades, prices]);
+
   if (isLoadingOpen) {
     return <ActivityListSkeleton count={3} label="Loading open positions…" />;
   }
@@ -189,11 +240,11 @@ export const TradeList = React.memo(function TradeList({
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:gap-4 pb-6">
-      {openTrades.map((item, index) => (
+      {openTradesWithLivePnL.map((item, index) => (
         <TradeCard
           key={`${item.trade.pairIndex}-${item.trade.tradeIndex}`}
           trade={item.trade}
-          pnlData={item.pnlData}
+          pnlData={item.livePnL}
           onFlip={onFlip}
           onClose={onClose}
           isFlipping={flippingIndex === index}

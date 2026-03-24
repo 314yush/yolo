@@ -59,6 +59,8 @@ export interface UseActivityDataReturn {
   error: string | null;
   computedVolume: number;
   refresh: () => void;
+  /** Immediately re-fetch open trades (for event-driven updates via usePositionSync). */
+  refetchOpenTrades: () => Promise<void>;
   setClosedTrades: React.Dispatch<React.SetStateAction<ClosedTrade[]>>;
   setOpenTrades: React.Dispatch<React.SetStateAction<Array<{ trade: Trade; pnlData?: PnLData }>>>;
 }
@@ -168,8 +170,15 @@ export function useActivityData(userAddress: string | null): UseActivityDataRetu
           ?.filter((t) => t.status === 'closed' || t.status === 'liquidated')
           .map(activityTradeToClosedTrade) ?? [];
 
+        // Include openedAt in the key so that slot-reused positions (e.g. flip: close LONG at
+        // index 0, open+close SHORT at index 0) are tracked separately.
+        const closedTradeKey = (t: ClosedTrade) =>
+          t.openedAt && t.openedAt > 0
+            ? `${t.pairIndex}-${t.tradeIndex}-${t.openedAt}`
+            : `${t.pairIndex}-${t.tradeIndex}`;
+
         const mergePut = (trade: ClosedTrade) => {
-          const key = `${trade.pairIndex}-${trade.tradeIndex}`;
+          const key = closedTradeKey(trade);
           const existing = mergedMap.get(key);
           mergedMap.set(key, existing ? mergeClosedTradesDuplicate(existing, trade) : trade);
         };
@@ -267,8 +276,10 @@ export function useActivityData(userAddress: string | null): UseActivityDataRetu
       }
     };
 
+    // usePositionSync handles the fast path via Pusher events.
+    // Polling here is reconciliation-only: faster when pending txs, slower otherwise.
     const hasPending = pendingTradeHashes.size > 0 || pendingOpenTxCount > 0;
-    const interval = hasPending ? 500 : 2000;
+    const interval = hasPending ? 2000 : 5000;
 
     loadTrades();
 
@@ -301,6 +312,21 @@ export function useActivityData(userAddress: string | null): UseActivityDataRetu
     return openVol + closedVol;
   }, [openTrades, closedTrades]);
 
+  const refetchOpenTrades = useCallback(async () => {
+    if (!userAddress) return;
+    try {
+      const positions = await getPnL(userAddress);
+      const combined = positions.map((pos) => ({
+        trade: pos.trade,
+        pnlData: pos,
+      }));
+      setOpenTrades(combined);
+      updateActivePositions(positions.length);
+    } catch (err) {
+      console.error('[useActivityData] refetchOpenTrades failed:', err);
+    }
+  }, [userAddress, getPnL, updateActivePositions]);
+
   return {
     openTrades,
     closedTrades,
@@ -311,6 +337,7 @@ export function useActivityData(userAddress: string | null): UseActivityDataRetu
     error,
     computedVolume,
     refresh,
+    refetchOpenTrades,
     setClosedTrades,
     setOpenTrades,
   };

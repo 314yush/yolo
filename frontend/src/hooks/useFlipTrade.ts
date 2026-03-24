@@ -64,6 +64,8 @@ export function useFlipTrade() {
     setFlipExcludedPositionKey,
     setCurrentTrade,
     setPnLData,
+    setPositionSource,
+    setLastPositionEventAt,
     incrementTotalTrades,
     incrementVolume,
     setSelection,
@@ -187,24 +189,39 @@ export function useFlipTrade() {
         addPendingTradeHash(openTxHash);
         addPendingOpenTxHash(openTxHash);
 
-        const optimisticTrade: Trade = {
-          ...trade,
-          isLong: flippedIsLong,
-          openPrice: currentPrice,
-          collateral: availableCollateral,
-          tradeIndex: 0,
-          openedAt: Math.floor(Date.now() / 1000),
-        };
+        // Check if usePositionSync already resolved the new position via Pusher
+        // while we were awaiting signAndBroadcast. If so, don't overwrite with oracle price.
+        const storeNow = useTradeStore.getState();
+        const pusherAlreadyResolved =
+          storeNow.positionSource === 'pusher' &&
+          storeNow.currentTrade?.pairIndex === trade.pairIndex &&
+          storeNow.currentTrade?.tradeIndex !== 0 &&
+          storeNow.currentTrade?.isLong === flippedIsLong;
 
-        setCurrentTrade(optimisticTrade);
-        setPnLData({
-          trade: optimisticTrade,
-          currentPrice,
-          pnl: 0,
-          pnlPercentage: 0,
-          grossPnl: 0,
-          grossPnlPercentage: 0,
-        });
+        if (!pusherAlreadyResolved) {
+          const optimisticTrade: Trade = {
+            ...trade,
+            isLong: flippedIsLong,
+            openPrice: currentPrice,
+            collateral: availableCollateral,
+            tradeIndex: 0,
+            openedAt: Math.floor(Date.now() / 1000),
+          };
+
+          setCurrentTrade(optimisticTrade);
+          setPnLData({
+            trade: optimisticTrade,
+            currentPrice,
+            pnl: 0,
+            pnlPercentage: 0,
+            grossPnl: 0,
+            grossPnlPercentage: 0,
+          });
+          setPositionSource('placeholder');
+          setLastPositionEventAt(null);
+        } else {
+          debug('[flipTrade] Pusher already resolved the new position — skipping oracle placeholder');
+        }
 
         if (selection) {
           const newDirection = DIRECTIONS.find((d) => d.isLong === flippedIsLong) || DIRECTIONS[0];
@@ -244,6 +261,8 @@ export function useFlipTrade() {
       signAndBroadcast,
       setCurrentTrade,
       setPnLData,
+      setPositionSource,
+      setLastPositionEventAt,
       incrementTotalTrades,
       incrementVolume,
       setSelection,

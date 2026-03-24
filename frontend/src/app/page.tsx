@@ -16,6 +16,7 @@ import { useChartDataCollector } from '@/hooks/useChartDataCollector';
 import { usePrebuiltTx } from '@/hooks/usePrebuiltTx';
 import { useAccessCheck } from '@/hooks/useAccessCheck';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { usePositionSync } from '@/hooks/usePositionSync';
 import { PickerWheel } from '@/components/PickerWheel';
 import { AccessCodeGate } from '@/components/AccessCodeGate';
 import { LoginButton } from '@/components/LoginButton';
@@ -75,11 +76,18 @@ export default function HomePage() {
     showToast,
     prices,
     setLastClosedTradeForShare,
+    setPositionSource,
   } = useTradeStore();
+
+  /** Latest trade while on PnL — read inside async after await (avoids stale effect closure). */
+  const pnlStageTradeRef = useRef(currentTrade);
+  pnlStageTradeRef.current = currentTrade;
+  const flipExcludedKeyRef = useRef(flipExcludedPositionKey);
+  flipExcludedKeyRef.current = flipExcludedPositionKey;
   
   const { delegateAddress } = useDelegateWallet();
   const { isOnline } = useNetworkStatus();
-  const { getPnL, checkDelegateStatus } = useAvantisAPI();  // Only read operations from backend
+  const { checkDelegateStatus } = useAvantisAPI();
   
   // Ensure userAddress is set when user is authenticated
   // Also load cached delegate status for this user
@@ -204,79 +212,33 @@ export default function HomePage() {
   
   // Start fetching open trades + PnL immediately when user logs in
   const { fetchTrades: refetchOpenTrades } = useOpenTrades();
+
+  // Pusher-driven position sync: on OrderFilled, immediately resolve position + refresh balance
+  usePositionSync({
+    enabled: stage === 'pnl' || stage === 'executing',
+    onFilled: () => {
+      refetchUsdcBalance();
+      refetchOpenTrades();
+    },
+    onClose: (closedTrade) => {
+      if (userAddress) {
+        saveClosedTrade(userAddress, closedTrade, null, {
+          closeTxHash: closedTrade.closeTxHash,
+          isLiquidated: closedTrade.isLiquidated,
+        });
+      }
+      refetchUsdcBalance();
+      refetchOpenTrades();
+    },
+    onCanceled: () => {
+      refetchUsdcBalance();
+    },
+  });
   
   // Live marks: AuthenticatedPriceSync in providers (home + /activity only)
 
   // Collect chart data in background for all assets (pre-load for instant charts)
   useChartDataCollector();
-
-  // Auto-detect and set currentTrade if we're in PnL stage but don't have a trade yet
-  // Also verify that currentTrade still exists if we have one
-  useEffect(() => {
-    if (stage === 'pnl' && userAddress) {
-      // Try to find the latest trade
-      const checkForTrade = async () => {
-        try {
-          let positions = await getPnL(userAddress);
-          if (flipExcludedPositionKey) {
-            positions = positions.filter(
-              (p) => `${p.trade.pairIndex}-${p.trade.tradeIndex}` !== flipExcludedPositionKey
-            );
-          }
-          if (positions.length === 0) return;
-
-          if (currentTrade) {
-            // Placeholder (tradeIndex 0): match newest on same pair within 60s
-            if (currentTrade.tradeIndex === 0) {
-              const nowSec = Math.floor(Date.now() / 1000);
-              const recent = positions
-                .filter(
-                  (p) =>
-                    p.trade.pairIndex === currentTrade.pairIndex &&
-                    p.trade.openedAt >= nowSec - 60
-                )
-                .sort((a, b) => b.trade.openedAt - a.trade.openedAt);
-              const match = recent[0];
-              if (match) {
-                setCurrentTrade(match.trade);
-                setPnLData(match);
-              }
-              return;
-            }
-            // Real tradeIndex: verify it still exists
-            const tradeStillExists = positions.some(
-              (p) =>
-                p.trade.pairIndex === currentTrade.pairIndex &&
-                p.trade.tradeIndex === currentTrade.tradeIndex
-            );
-            if (!tradeStillExists) {
-              setCurrentTrade(null);
-            }
-            return;
-          }
-
-          // No currentTrade, set the newest one
-          const sortedPositions = [...positions].sort((a, b) => b.trade.openedAt - a.trade.openedAt);
-          const latestPosition = sortedPositions[0];
-          setCurrentTrade(latestPosition.trade);
-          setPnLData(latestPosition);
-        } catch (err) {
-          console.error('Failed to auto-detect trade:', err);
-        }
-      };
-
-      const isPlaceholder = currentTrade?.tradeIndex === 0;
-      const intervalMs = isPlaceholder ? 500 : 2000;
-      checkForTrade();
-      const intervalId = setInterval(checkForTrade, intervalMs);
-      const timeoutId = setTimeout(() => clearInterval(intervalId), 10000);
-      
-      return () => {
-        clearInterval(intervalId);
-        clearTimeout(timeoutId);
-      };
-    }
-  }, [stage, currentTrade, userAddress, flipExcludedPositionKey, getPnL, setCurrentTrade, setPnLData]);
   
   // Pre-build transactions when selection changes
   usePrebuiltTx();
@@ -504,7 +466,9 @@ export default function HomePage() {
   // Transition to PnL — called when BOTH wheel finished AND confirmation received
   const transitionToPnL = useCallback(() => {
     const storeState = useTradeStore.getState();
-    if (storeState.selection && !storeState.currentTrade) {
+    // Always bind placeholder to current selection so a second open while another
+    // position is still tracked does not leave stale currentTrade / pnlData.
+    if (storeState.selection) {
       const openPrice = prices[`${storeState.selection.asset.name}/USD`]?.price || 0;
       const tpPercent = storeState.settings.takeProfitPercent ?? 200;
       const tpPrice = openPrice * calculateTakeProfitMultiplier(
@@ -534,9 +498,10 @@ export default function HomePage() {
         grossPnl: 0,
         grossPnlPercentage: 0,
       });
+      setPositionSource('placeholder');
     }
     setStage('pnl');
-  }, [prices, collateral, setCurrentTrade, setPnLData, setStage]);
+  }, [prices, collateral, setCurrentTrade, setPnLData, setStage, setPositionSource]);
 
   // Handle spin complete — wheel animation finished
   const handleSpinComplete = useCallback(async () => {

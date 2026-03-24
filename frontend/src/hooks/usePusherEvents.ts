@@ -13,6 +13,154 @@ export type PusherEventType =
   | 'OrderFilled'
   | 'OrderCanceled';
 
+/**
+ * Avantis OrderFilled payload shape (from real Pusher traffic).
+ *
+ * Position data lives in the nested `t` object with 10-decimal encoded prices
+ * and 6-decimal USDC amounts. Top-level fields provide event metadata.
+ * The `open` flag distinguishes trade-open fills from trade-close fills.
+ */
+export interface OrderFilledRaw {
+  eventType?: string;
+  eventId?: string;
+  trader?: string;
+  orderId?: number;
+  pairIndex?: number;
+  timestamp?: number;
+  transactionHash?: string;
+  /** true = position opened, false = position closed */
+  open?: boolean;
+  price?: string;
+  positionSizeUSDC?: string;
+  percentProfit?: string;
+  usdcSentToTrader?: string;
+  isPnl?: boolean;
+  /** Nested trade struct — contains canonical position data */
+  t?: {
+    index?: number;
+    initialPosToken?: string;
+    leverage?: string;
+    openPrice?: string;
+    pairIndex?: number;
+    positionSizeUSDC?: string;
+    sl?: string;
+    tp?: string;
+    trader?: string;
+    buy?: boolean;
+    timestamp?: number;
+  };
+}
+
+const PRICE_DECIMALS = 1e10;
+const USDC_DECIMALS = 1e6;
+const LEVERAGE_DECIMALS = 1e10;
+
+/** Normalized, human-readable fields from an OrderFilled event payload. */
+export interface ParsedOrderFilled {
+  /** Whether this fill opened a new position (true) or closed one (false). null if unknown. */
+  isOpen: boolean | null;
+  tradeIndex: number | null;
+  pairIndex: number | null;
+  /** Canonical open price (human-readable, already divided by 1e10). */
+  openPrice: number | null;
+  orderId: number | null;
+  isLong: boolean | null;
+  /** Collateral in USDC (human-readable). */
+  collateral: number | null;
+  /** Leverage as a multiplier (e.g. 250). */
+  leverage: number | null;
+  tp: number | null;
+  sl: number | null;
+  /** Close/mark price for close events (human-readable). */
+  closePrice: number | null;
+  /** PnL percentage (raw from Avantis, 10-decimal encoded). Decoded to human-readable. */
+  percentProfit: number | null;
+  /** USDC returned to trader on close (human-readable). */
+  usdcSentToTrader: number | null;
+  /** Position opened-at timestamp in seconds (from t.timestamp). */
+  openedAt: number | null;
+  /** Event-level timestamp in seconds. */
+  eventTimestamp: number | null;
+  transactionHash: string | null;
+  raw: unknown;
+}
+
+/** Parse the 10-decimal encoded string Avantis uses for prices. Returns null for invalid input. */
+function parsePrice(v: unknown): number | null {
+  if (typeof v === 'string' && v.length > 0) {
+    const n = Number(v) / PRICE_DECIMALS;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
+    return v / PRICE_DECIMALS;
+  }
+  return null;
+}
+
+/** Parse Avantis OrderFilled Pusher payload into a normalized shape. */
+export function parseOrderFilledPayload(data: unknown): ParsedOrderFilled {
+  const d = (data && typeof data === 'object' ? data : {}) as OrderFilledRaw;
+  const t = (d.t && typeof d.t === 'object' ? d.t : null);
+
+  const tradeIndex = typeof t?.index === 'number' ? t.index : null;
+  const pairIndex = typeof d.pairIndex === 'number' ? d.pairIndex : (typeof t?.pairIndex === 'number' ? t.pairIndex : null);
+  const openPrice = parsePrice(t?.openPrice);
+  const tp = parsePrice(t?.tp);
+  const sl = parsePrice(t?.sl);
+  const closePrice = parsePrice(d.price);
+  const orderId = typeof d.orderId === 'number' ? d.orderId : null;
+  const isLong = typeof t?.buy === 'boolean' ? t.buy : null;
+  const isOpen = typeof d.open === 'boolean' ? d.open : null;
+  const transactionHash = typeof d.transactionHash === 'string' ? d.transactionHash : null;
+
+  let collateral: number | null = null;
+  if (typeof t?.initialPosToken === 'string') {
+    const c = Number(t.initialPosToken) / USDC_DECIMALS;
+    if (Number.isFinite(c) && c > 0) collateral = c;
+  }
+
+  let leverage: number | null = null;
+  if (typeof t?.leverage === 'string') {
+    const l = Number(t.leverage) / LEVERAGE_DECIMALS;
+    if (Number.isFinite(l) && l > 0) leverage = l;
+  }
+
+  let percentProfit: number | null = null;
+  if (typeof d.percentProfit === 'string' && d.percentProfit.length > 0) {
+    const pp = Number(d.percentProfit) / PRICE_DECIMALS;
+    if (Number.isFinite(pp)) percentProfit = pp;
+  }
+
+  let usdcSentToTrader: number | null = null;
+  if (typeof d.usdcSentToTrader === 'string' && d.usdcSentToTrader.length > 0) {
+    const u = Number(d.usdcSentToTrader) / USDC_DECIMALS;
+    if (Number.isFinite(u) && u >= 0) usdcSentToTrader = u;
+  }
+
+  const openedAt = typeof t?.timestamp === 'number' ? t.timestamp : null;
+  const eventTimestamp = typeof d.timestamp === 'number' ? d.timestamp : null;
+
+  return {
+    isOpen,
+    tradeIndex,
+    pairIndex,
+    openPrice,
+    orderId,
+    isLong,
+    collateral,
+    leverage,
+    tp,
+    sl,
+    closePrice,
+    percentProfit,
+    usdcSentToTrader,
+    openedAt,
+    eventTimestamp,
+    transactionHash,
+    raw: data,
+  };
+}
+
 export interface PusherEvent {
   type: PusherEventType;
   data: unknown;
@@ -30,6 +178,8 @@ export interface UsePusherEventsReturn {
   hasPreconfirmed: boolean;
   hasFilled: boolean;
   hasCanceled: boolean;
+  /** Parsed payload of the most recent OrderFilled event (null if none). */
+  lastFilledPayload: ParsedOrderFilled | null;
 }
 
 /**
@@ -155,6 +305,10 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
     });
 
     channel.bind('OrderFilled', (data: unknown) => {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[Pusher][DEV] OrderFilled raw payload:', JSON.stringify(data, null, 2));
+        console.log('[Pusher][DEV] OrderFilled parsed:', parseOrderFilledPayload(data));
+      }
       if (isValidOrderEvent(data)) {
         addEvent('OrderFilled', data);
       } else {
@@ -163,6 +317,9 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
     });
 
     channel.bind('OrderCanceled', (data: unknown) => {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[Pusher][DEV] OrderCanceled raw payload:', JSON.stringify(data, null, 2));
+      }
       if (isValidOrderEvent(data)) {
         addEvent('OrderCanceled', data);
       } else {
@@ -190,6 +347,11 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
 
   const lastEvent = events.length > 0 ? events[events.length - 1] : null;
 
+  const lastFilledEvent = [...events].reverse().find(e => e.type === 'OrderFilled');
+  const lastFilledPayload = lastFilledEvent
+    ? parseOrderFilledPayload(lastFilledEvent.data)
+    : null;
+
   return {
     isConnected,
     connectionState,
@@ -200,6 +362,7 @@ export function usePusherEvents(walletAddress?: string | null): UsePusherEventsR
     hasPreconfirmed,
     hasFilled,
     hasCanceled,
+    lastFilledPayload,
   };
 }
 

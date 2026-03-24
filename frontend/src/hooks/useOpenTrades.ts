@@ -11,9 +11,10 @@ interface TradeWithPnL {
   pnlData?: PnLData;
 }
 
-/** Fast while user likely cares about fresh position list; slower when idle to limit API load */
-const POLL_INTERVAL_IDLE_MS = 2500;
-const POLL_INTERVAL_ACTIVE_MS = 500;
+// usePositionSync handles the fast path via Pusher events (OrderFilled → store update).
+// Polling here is reconciliation-only: faster when pending txs/close in flight, slower otherwise.
+const POLL_INTERVAL_IDLE_MS = 5000;
+const POLL_INTERVAL_ACTIVE_MS = 2000;
 
 export function useOpenTrades() {
   const userAddress = useTradeStore((s) => s.userAddress);

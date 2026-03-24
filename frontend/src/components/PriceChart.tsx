@@ -511,12 +511,19 @@ function PriceChartComponent({
     chartRef.current.applyOptions({ height });
   }, [height]);
 
+  const refLevelParts: string[] = [];
+  if (entryPrice != null && entryPrice > 0) refLevelParts.push('entry');
+  if (liquidationPrice != null && liquidationPrice > 0) refLevelParts.push('liquidation');
+  if (targetPrice != null && targetPrice > 0) refLevelParts.push('target');
+  const ariaRef =
+    refLevelParts.length > 0 ? ` with ${refLevelParts.join(', ')} reference levels` : '';
+
   return (
     <div
       className="relative w-full overflow-hidden"
       style={{ height, background: 'transparent' }}
       role="img"
-      aria-label={`Price chart for ${assetPair || 'asset'} with entry and liquidation levels.`}
+      aria-label={`Price chart for ${assetPair || 'asset'}${ariaRef}.`}
     >
       <div ref={containerRef} className="h-full w-full" />
     </div>

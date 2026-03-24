@@ -13,9 +13,9 @@ interface UsePnLOptions {
 }
 
 export function usePnL(options: UsePnLOptions = {}) {
-  const { enabled = true, interval = 2000 } = options;
+  const { enabled = true, interval = 4000 } = options;
   
-  const { userAddress, currentTrade, pnlData, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose, flipExcludedPositionKey } = useTradeStore();
+  const { userAddress, currentTrade, pnlData, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, stage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose, flipExcludedPositionKey, positionSource, lastPositionEventAt } = useTradeStore();
   const { getPnL } = useAvantisAPI();
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -43,6 +43,8 @@ export function usePnL(options: UsePnLOptions = {}) {
   const rememberedTradeIndexRef = useRef(rememberedTradeIndex);
   const isIntentionalCloseRef = useRef(isIntentionalClose);
   const flipExcludedPositionKeyRef = useRef(flipExcludedPositionKey);
+  const positionSourceRef = useRef(positionSource);
+  const lastPositionEventAtRef = useRef(lastPositionEventAt);
   const fetchPnLRef = useRef<(isRetry?: boolean) => Promise<void>>(async () => {});
 
   // Helper to create a unique key for a trade
@@ -68,7 +70,9 @@ export function usePnL(options: UsePnLOptions = {}) {
     rememberedTradeIndexRef.current = rememberedTradeIndex;
     isIntentionalCloseRef.current = isIntentionalClose;
     flipExcludedPositionKeyRef.current = flipExcludedPositionKey;
-  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose, flipExcludedPositionKey]);
+    positionSourceRef.current = positionSource;
+    lastPositionEventAtRef.current = lastPositionEventAt;
+  }, [userAddress, currentTrade, pnlData, stage, getPnL, setPnLData, setCurrentTrade, setRememberedIndices, setIsLiquidated, setIsTakeProfitHit, lastKnownPnLPercentage, rememberedPairIndex, rememberedTradeIndex, isIntentionalClose, flipExcludedPositionKey, positionSource, lastPositionEventAt]);
 
   const fetchPnL = useCallback(async (isRetry = false): Promise<void> => {
     const userAddr = userAddressRef.current;
@@ -100,20 +104,30 @@ export function usePnL(options: UsePnLOptions = {}) {
         );
         debug('[usePnL] Filtered out excluded position:', excludedKey, 'Remaining:', positions.length);
       }
-      debug('[usePnL] Fetched positions:', positions.length, 'Current trade:', { 
-        pairIndex: trade?.pairIndex, 
-        tradeIndex: trade?.tradeIndex,
-        rememberedPairIndex: rememberedPairIdx,
-        rememberedTradeIndex: rememberedTradeIdx,
+      // Re-read focus AFTER network — avoids matching/applying PnL for a stale trade when
+      // the user opened a new position while getPnL was in flight (multi-position / roll-again).
+      const tradeNow = currentTradeRef.current;
+      const rememberedPairNow = rememberedPairIndexRef.current;
+      const rememberedTradeNow = rememberedTradeIndexRef.current;
+
+      debug('[usePnL] Fetched positions:', positions.length, 'Current trade (at fetch start / after await):', {
+        pairIndexAtStart: trade?.pairIndex,
+        tradeIndexAtStart: trade?.tradeIndex,
+        pairIndexNow: tradeNow?.pairIndex,
+        tradeIndexNow: tradeNow?.tradeIndex,
+        rememberedPairIndex: rememberedPairNow,
+        rememberedTradeIndex: rememberedTradeNow,
       });
       
       // Reset retry count on success
       retryCountRef.current = 0;
       lastErrorRef.current = null;
       
-      // Use remembered indices if available (for multiple positions), otherwise fall back to currentTrade
-      const pairIndexToMatch = rememberedPairIdx !== null ? rememberedPairIdx : trade?.pairIndex;
-      const tradeIndexToMatch = rememberedTradeIdx !== null ? rememberedTradeIdx : trade?.tradeIndex;
+      // Prefer currentTrade for match keys; remembered only when trade is null.
+      const pairIndexToMatch =
+        tradeNow != null ? tradeNow.pairIndex : rememberedPairNow ?? undefined;
+      const tradeIndexToMatch =
+        tradeNow != null ? tradeNow.tradeIndex : rememberedTradeNow ?? undefined;
 
       // Find the current trade's PnL: exact match first, then placeholder fallback
       let currentPnL = positions.find(
@@ -124,15 +138,25 @@ export function usePnL(options: UsePnLOptions = {}) {
 
       // Placeholder fallback: tradeIndex 0 means we don't know the real index yet.
       // Match newest position on same pair opened within last 60s (our just-opened trade).
-      if (!currentPnL && tradeIndexToMatch === 0 && pairIndexToMatch !== undefined && trade) {
+      if (!currentPnL && tradeIndexToMatch === 0 && pairIndexToMatch !== undefined && tradeNow) {
         const nowSec = Math.floor(Date.now() / 1000);
+        const targetOpenedAt = tradeNow.openedAt;
         const recentPositions = positions
           .filter(
             (p) =>
               p.trade.pairIndex === pairIndexToMatch &&
               p.trade.openedAt >= nowSec - 60
           )
-          .sort((a, b) => b.trade.openedAt - a.trade.openedAt);
+          .sort((a, b) => {
+            // Same pair can have multiple opens in the window — pick the slot closest in time
+            // to this placeholder's openedAt (set at roll), not blindly "newest".
+            if (targetOpenedAt > 0) {
+              const da = Math.abs(a.trade.openedAt - targetOpenedAt);
+              const db = Math.abs(b.trade.openedAt - targetOpenedAt);
+              if (da !== db) return da - db;
+            }
+            return b.trade.openedAt - a.trade.openedAt;
+          });
         const match = recentPositions[0];
         if (match) {
           debug('[usePnL] Placeholder match: found newest position on pair', {
@@ -151,7 +175,9 @@ export function usePnL(options: UsePnLOptions = {}) {
         positionDisappearedAtRef.current = null;
         debug('[usePnL] Found matching PnL:', currentPnL);
 
-        const trade = currentTradeRef.current;
+        // Always use the polled row for this match — not currentTradeRef (can lag after
+        // setCurrentTrade in the same tick, or diverge when multiple positions share a pair).
+        const tradeRow = currentPnL.trade;
 
         if (isIntentionalCloseRef.current) {
           debug('[usePnL] Skipping liquidation check - intentional close in progress');
@@ -160,8 +186,7 @@ export function usePnL(options: UsePnLOptions = {}) {
         }
 
         const persistLiquidation = (reason: { byPrice: boolean; byPnL: boolean }) => {
-          if (!trade) return;
-          const liquidationPrice = currentPnL.trade.liquidationPrice;
+          const liquidationPrice = tradeRow.liquidationPrice;
           const currentPrice = currentPnL.currentPrice;
           debug('[usePnL] Position liquidated detected:', {
             ...reason,
@@ -169,13 +194,13 @@ export function usePnL(options: UsePnLOptions = {}) {
             liquidationPrice,
             pnlPercentage: currentPnL.pnlPercentage,
             grossPnlPercentage: currentPnL.grossPnlPercentage,
-            isLong: trade.isLong,
+            isLong: tradeRow.isLong,
           });
 
           setIsLiquidatedRef.current(true);
 
           const liqPct = -100;
-          const liqPnl = -trade.collateral;
+          const liqPnl = -tradeRow.collateral;
           const finalPnLData = {
             ...currentPnL,
             pnlPercentage: liqPct,
@@ -188,13 +213,13 @@ export function usePnL(options: UsePnLOptions = {}) {
           const userAddr = userAddressRef.current;
           if (userAddr) {
             try {
-              saveClosedTrade(userAddr, trade, finalPnLData, {
+              saveClosedTrade(userAddr, tradeRow, finalPnLData, {
                 isLiquidated: true,
               });
               logTradeCloseByPosition({
                 wallet: userAddr,
-                pairIndex: trade.pairIndex,
-                tradeIndex: trade.tradeIndex,
+                pairIndex: tradeRow.pairIndex,
+                tradeIndex: tradeRow.tradeIndex,
                 exitPrice: currentPnL.currentPrice,
                 pnl: finalPnLData.grossPnl,
                 closedAt: new Date().toISOString(),
@@ -206,32 +231,41 @@ export function usePnL(options: UsePnLOptions = {}) {
           }
         };
 
-        if (trade) {
-          const isLiquidatedByPnL =
-            (Number.isFinite(currentPnL.pnlPercentage) && currentPnL.pnlPercentage <= -85) ||
-            (Number.isFinite(currentPnL.grossPnlPercentage) && currentPnL.grossPnlPercentage <= -85);
+        const isLiquidatedByPnL =
+          (Number.isFinite(currentPnL.pnlPercentage) && currentPnL.pnlPercentage <= -85) ||
+          (Number.isFinite(currentPnL.grossPnlPercentage) && currentPnL.grossPnlPercentage <= -85);
 
-          let isLiquidatedByPrice = false;
-          const liquidationPrice = currentPnL.trade.liquidationPrice;
-          const currentPrice = currentPnL.currentPrice;
-          if (liquidationPrice > 0 && currentPrice > 0) {
-            if (trade.isLong) {
-              isLiquidatedByPrice = currentPrice <= liquidationPrice;
-            } else {
-              isLiquidatedByPrice = currentPrice >= liquidationPrice;
-            }
-          }
-
-          if (isLiquidatedByPnL || isLiquidatedByPrice) {
-            persistLiquidation({ byPrice: isLiquidatedByPrice, byPnL: isLiquidatedByPnL });
-            return;
-          }
-
-          if (currentPnL.pnlPercentage > -80 && currentPnL.grossPnlPercentage > -80) {
-            setIsLiquidatedRef.current(false);
+        let isLiquidatedByPrice = false;
+        const liquidationPrice = tradeRow.liquidationPrice;
+        const currentPrice = currentPnL.currentPrice;
+        if (liquidationPrice > 0 && currentPrice > 0) {
+          if (tradeRow.isLong) {
+            isLiquidatedByPrice = currentPrice <= liquidationPrice;
+          } else {
+            isLiquidatedByPrice = currentPrice >= liquidationPrice;
           }
         }
 
+        if (isLiquidatedByPnL || isLiquidatedByPrice) {
+          persistLiquidation({ byPrice: isLiquidatedByPrice, byPnL: isLiquidatedByPnL });
+          return;
+        }
+
+        if (currentPnL.pnlPercentage > -80 && currentPnL.grossPnlPercentage > -80) {
+          setIsLiquidatedRef.current(false);
+        }
+
+        // When Pusher already delivered authoritative data recently, don't overwrite currentTrade
+        // from a potentially-stale poll response. Still update PnL numbers for liquidation monitoring.
+        const PUSHER_FRESHNESS_MS = 5000;
+        const pusherIsFresh =
+          positionSourceRef.current === 'pusher' &&
+          lastPositionEventAtRef.current != null &&
+          Date.now() - lastPositionEventAtRef.current < PUSHER_FRESHNESS_MS;
+
+        if (!pusherIsFresh) {
+          setCurrentTradeRef.current(currentPnL.trade);
+        }
         setPnLDataRef.current(currentPnL);
       } else {
         console.warn('[usePnL] No matching PnL found. Available positions:', positions.map(p => ({
@@ -239,16 +273,24 @@ export function usePnL(options: UsePnLOptions = {}) {
           tradeIndex: p.trade.tradeIndex
         })));
         
-        // Check if this might be a liquidation
         // Skip if this is an intentional close (flip/manual close)
         if (isIntentionalCloseRef.current) {
           positionDisappearedAtRef.current = null;
           debug('[usePnL] Position not found - intentional close in progress, not marking as liquidated');
           return;
         }
+
+        // If usePositionSync already detected liquidation/TP via Pusher, don't run heuristics.
+        // Pusher resolves instantly; polling here is just catching up to the same conclusion.
+        const storeState = useTradeStore.getState();
+        if (storeState.isLiquidated || storeState.isTakeProfitHit) {
+          debug('[usePnL] Position vanished but Pusher already resolved (liq:', storeState.isLiquidated, 'tp:', storeState.isTakeProfitHit, ')');
+          positionDisappearedAtRef.current = null;
+          return;
+        }
         
-        // Position disappeared - could be liquidation, take-profit hit, or manual close
-        // Add 3s grace period to avoid false detection (API race with Close tx)
+        // Fallback heuristic: position disappeared and Pusher hasn't resolved it yet.
+        // This covers edge cases where Pusher event was missed or delayed.
         const lastPnL = lastKnownPnLPercentageRef.current;
         const lastPnLData = pnlDataRef.current;
         const userAddr = userAddressRef.current;
@@ -259,17 +301,15 @@ export function usePnL(options: UsePnLOptions = {}) {
           positionDisappearedAtRef.current = now;
         }
         const elapsed = positionDisappearedAtRef.current ? now - positionDisappearedAtRef.current : 0;
-        const LIQ_THRESHOLD = -75; // Avoid false positives at -65%; real liquidation is -85%
+        const LIQ_THRESHOLD = -75;
 
-        const sessionMin = useTradeStore.getState().sessionMinPnlPercentage;
+        const sessionMin = storeState.sessionMinPnlPercentage;
         const sawDeepLoss =
           (lastPnL !== null && lastPnL <= LIQ_THRESHOLD) ||
           (sessionMin !== null && Number.isFinite(sessionMin) && sessionMin <= LIQ_THRESHOLD);
 
-        // Position disappeared at a deep loss (not intentional close) = liquidated. Uses last poll and session
-        // minimum PnL% so a brief bounce to -44% before liq does not suppress detection.
         if (sawDeepLoss && lastPnLData && userAddr && trade && elapsed >= LIQUIDATION_GRACE_MS) {
-          debug('[usePnL] Position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL, '- Marking as liquidated');
+          debug('[usePnL] Fallback: position disappeared near liquidation threshold (after grace). Last PnL:', lastPnL);
           setIsLiquidatedRef.current(true);
           try {
             const liqPnLData = {
@@ -295,8 +335,7 @@ export function usePnL(options: UsePnLOptions = {}) {
             console.error('[usePnL] Failed to save liquidated trade:', error);
           }
         } else if (lastPnL !== null && lastPnL >= 50 && lastPnLData && userAddr && trade && elapsed >= LIQUIDATION_GRACE_MS) {
-          // Position closed at significant profit - take profit hit (or manual close at profit)
-          debug('[usePnL] Position disappeared at profit (after grace). Last PnL:', lastPnL, '- Marking as take profit hit');
+          debug('[usePnL] Fallback: position disappeared at profit (after grace). Last PnL:', lastPnL);
           setIsTakeProfitHitRef.current(true);
           try {
             saveClosedTrade(userAddr, trade, lastPnLData, {
@@ -361,7 +400,7 @@ export function usePnL(options: UsePnLOptions = {}) {
   // Start/stop polling based on stage
   useEffect(() => {
     // Use current values from props/state, not refs (refs are for the fetch function)
-    const shouldPoll = enabled && stage === 'pnl' && userAddress && (currentTrade || (rememberedPairIndex !== null && rememberedTradeIndex !== null));
+    const shouldPoll = enabled && stage === 'pnl' && userAddress && currentTrade;
     const currentTradeKey = getTradeKey(currentTrade);
     const tradeChanged = currentTradeKey !== lastTradeKeyRef.current;
     
@@ -438,7 +477,7 @@ export function usePnL(options: UsePnLOptions = {}) {
       }
       isPollingRef.current = false;
     };
-  }, [enabled, stage, userAddress, currentTrade, fetchPnL, interval, getTradeKey, rememberedPairIndex, rememberedTradeIndex]);
+  }, [enabled, stage, userAddress, currentTrade, fetchPnL, interval, getTradeKey]);
 
   return { fetchPnL };
 }

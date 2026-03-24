@@ -8,6 +8,7 @@ import { useTradeStore } from '@/store/tradeStore';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useActivityData } from '@/hooks/useActivityData';
 import { useActivityActions } from '@/hooks/useActivityActions';
+import { usePositionSync } from '@/hooks/usePositionSync';
 import { ToastContainer } from '@/components/Toast';
 import { AvantisFooter } from '@/components/AvantisFooter';
 import { StatsPanel } from '@/components/StatsPanel';
@@ -56,9 +57,40 @@ export default function ActivityPage() {
     error,
     computedVolume,
     refresh,
+    refetchOpenTrades,
     setClosedTrades,
     setOpenTrades,
   } = useActivityData(userAddress);
+
+  // Pusher-driven position sync
+  usePositionSync({
+    enabled: !!userAddress,
+    onFilled: () => {
+      refetchOpenTrades();
+      refresh();
+    },
+    onClose: (closedTrade) => {
+      // Immediately inject the closed trade at the top of the list.
+      // Key includes openedAt so slot-reused positions (flip scenarios) aren't deduped.
+      setClosedTrades((prev) => {
+        const key = closedTrade.openedAt && closedTrade.openedAt > 0
+          ? `${closedTrade.pairIndex}-${closedTrade.tradeIndex}-${closedTrade.openedAt}`
+          : `${closedTrade.pairIndex}-${closedTrade.tradeIndex}`;
+        const toKey = (t: ClosedTrade) =>
+          t.openedAt && t.openedAt > 0
+            ? `${t.pairIndex}-${t.tradeIndex}-${t.openedAt}`
+            : `${t.pairIndex}-${t.tradeIndex}`;
+        const exists = prev.some((t) => toKey(t) === key);
+        if (exists) return prev;
+        return [closedTrade, ...prev];
+      });
+      refetchOpenTrades();
+      refresh();
+    },
+    onCanceled: () => {
+      refresh();
+    },
+  });
 
   // UI state
   const [showClosedTrades, setShowClosedTrades] = useState(false);
