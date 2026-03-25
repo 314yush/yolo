@@ -163,10 +163,21 @@ export const TradeList = React.memo(function TradeList({
   hasActionInProgress,
 }: TradeListProps) {
   const [displayedClosedCount, setDisplayedClosedCount] = useState(12);
+  const prices = useTradeStore((s) => s.prices);
 
   const handleLoadMore = useCallback(() => {
     setDisplayedClosedCount((prev) => Math.min(prev + 10, closedTrades.length));
   }, [closedTrades.length]);
+
+  const openTradesWithLivePnL = useMemo(() => {
+    return openTrades.map((item) => {
+      const livePrice = prices[item.trade.pair]?.price;
+      return {
+        ...item,
+        livePnL: computeLivePnL(item.trade, item.pnlData, livePrice),
+      };
+    });
+  }, [openTrades, prices]);
 
   if (showClosedTrades) {
     if (isLoadingClosed && closedTrades.length === 0) {
@@ -211,19 +222,6 @@ export const TradeList = React.memo(function TradeList({
       </div>
     );
   }
-
-  // Open trades — enhanced with live price feed for real-time PnL ticking
-  const prices = useTradeStore((s) => s.prices);
-
-  const openTradesWithLivePnL = useMemo(() => {
-    return openTrades.map((item) => {
-      const livePrice = prices[item.trade.pair]?.price;
-      return {
-        ...item,
-        livePnL: computeLivePnL(item.trade, item.pnlData, livePrice),
-      };
-    });
-  }, [openTrades, prices]);
 
   if (isLoadingOpen) {
     return <ActivityListSkeleton count={3} label="Loading open positions…" />;
