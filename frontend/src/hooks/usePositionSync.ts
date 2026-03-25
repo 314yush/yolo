@@ -25,10 +25,11 @@ function closedTradeFromEvent(parsed: ParsedOrderFilled): ClosedTrade | null {
   const pair = asset ? `${asset.name}/USD` : `Pair ${parsed.pairIndex}`;
   const closePrice = parsed.closePrice ?? parsed.openPrice;
 
+  // Net PnL: what the user actually receives minus collateral (after all fees)
   const pnlUsd = parsed.usdcSentToTrader != null
     ? parsed.usdcSentToTrader - parsed.collateral
     : 0;
-  const pnlPct = parsed.percentProfit ?? (parsed.collateral > 0 ? (pnlUsd / parsed.collateral) * 100 : 0);
+  const pnlPct = parsed.collateral > 0 ? (pnlUsd / parsed.collateral) * 100 : 0;
 
   // Liquidation: PnL at or near -100% (protocol takes full collateral, usdcSentToTrader ≈ 0)
   const isLiquidated = pnlPct <= -90 || (parsed.usdcSentToTrader != null && parsed.usdcSentToTrader < parsed.collateral * 0.05);

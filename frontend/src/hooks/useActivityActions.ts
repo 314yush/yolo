@@ -247,8 +247,8 @@ export function useActivityActions({
 
       const { hash: closeTxHash } = await signAndWait(closeTx);
 
-      const pnlPct = finalPnL?.grossPnlPercentage ?? 0;
-      if (pnlPct >= 0) {
+      const netPnlPct = finalPnL?.pnlPercentage ?? 0;
+      if (netPnlPct >= 0) {
         playWin();
       } else {
         playLose();
@@ -261,7 +261,7 @@ export function useActivityActions({
           pairIndex: trade.pairIndex,
           tradeIndex: trade.tradeIndex,
           exitPrice: finalPnL?.currentPrice,
-          pnl: finalPnL?.grossPnl,
+          pnl: finalPnL?.pnl,
           closedAt: new Date().toISOString(),
           txHash: closeTxHash,
           isLiquidated: false,
@@ -277,8 +277,8 @@ export function useActivityActions({
         const newClosed: ClosedTrade = {
           ...trade,
           closedAt: Date.now(),
-          finalPnL: finalPnL?.grossPnl ?? 0,
-          finalPnLPercentage: finalPnL?.grossPnlPercentage ?? 0,
+          finalPnL: finalPnL?.pnl ?? 0,
+          finalPnLPercentage: finalPnL?.pnlPercentage ?? 0,
           closePrice: finalPnL?.currentPrice ?? trade.openPrice,
           closeTxHash: closeTxHash as `0x${string}`,
           isLiquidated: false,
@@ -286,13 +286,13 @@ export function useActivityActions({
         setClosedTrades((prev) => [newClosed, ...prev.filter((t) => t.pairIndex !== trade.pairIndex || t.tradeIndex !== trade.tradeIndex)]);
       }
 
-      const pnl = finalPnL?.grossPnl ?? 0;
-      const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+      const netPnl = finalPnL?.pnl ?? 0;
+      const pnlStr = netPnl >= 0 ? `+$${netPnl.toFixed(2)}` : `-$${Math.abs(netPnl).toFixed(2)}`;
       const closedForShare: ClosedTrade = {
         ...trade,
         closedAt: Date.now(),
-        finalPnL: finalPnL?.grossPnl ?? 0,
-        finalPnLPercentage: finalPnL?.grossPnlPercentage ?? 0,
+        finalPnL: finalPnL?.pnl ?? 0,
+        finalPnLPercentage: finalPnL?.pnlPercentage ?? 0,
         closePrice: finalPnL?.currentPrice ?? trade.openPrice,
         closeTxHash: closeTxHash as `0x${string}`,
         isLiquidated: false,

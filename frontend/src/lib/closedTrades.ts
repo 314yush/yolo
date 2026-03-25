@@ -76,13 +76,13 @@ export function saveClosedTrade(
 
   try {
     const isLiquidated = options?.isLiquidated ?? false;
-    const grossPnl = isLiquidated ? -trade.collateral : (Number.isFinite(Number(effectivePnL.grossPnl)) ? Number(effectivePnL.grossPnl) : 0);
-    const grossPnlPct = isLiquidated ? -100 : (Number.isFinite(Number(effectivePnL.grossPnlPercentage)) ? Number(effectivePnL.grossPnlPercentage) : 0);
+    const netPnl = isLiquidated ? -trade.collateral : (Number.isFinite(Number(effectivePnL.pnl)) ? Number(effectivePnL.pnl) : 0);
+    const netPnlPct = isLiquidated ? -100 : (Number.isFinite(Number(effectivePnL.pnlPercentage)) ? Number(effectivePnL.pnlPercentage) : 0);
     const closedTrade: ClosedTrade = {
       ...trade,
       closedAt: Date.now(),
-      finalPnL: grossPnl,
-      finalPnLPercentage: grossPnlPct,
+      finalPnL: netPnl,
+      finalPnLPercentage: netPnlPct,
       closePrice: Number.isFinite(Number(effectivePnL.currentPrice)) ? Number(effectivePnL.currentPrice) : trade.openPrice,
       txHash: options?.txHash,
       closeTxHash: options?.closeTxHash,

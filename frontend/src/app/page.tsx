@@ -227,6 +227,29 @@ export default function HomePage() {
           isLiquidated: closedTrade.isLiquidated,
         });
       }
+
+      // Reconcile the pending share card with authoritative Pusher data
+      const store = useTradeStore.getState();
+      const pending = store.lastClosedTradeForShare;
+      if (pending) {
+        const samePosition =
+          pending.pairIndex === closedTrade.pairIndex &&
+          pending.tradeIndex === closedTrade.tradeIndex;
+        const sameTx =
+          pending.closeTxHash && closedTrade.closeTxHash &&
+          pending.closeTxHash.toLowerCase() === closedTrade.closeTxHash.toLowerCase();
+        if (samePosition || sameTx) {
+          store.setLastClosedTradeForShare({
+            ...pending,
+            finalPnL: closedTrade.finalPnL,
+            finalPnLPercentage: closedTrade.finalPnLPercentage,
+            closePrice: closedTrade.closePrice,
+            isLiquidated: closedTrade.isLiquidated,
+            isTakeProfitHit: closedTrade.isTakeProfitHit,
+          });
+        }
+      }
+
       refetchUsdcBalance();
       refetchOpenTrades();
     },
@@ -603,19 +626,17 @@ export default function HomePage() {
       const { hash: closeTxHash } = await signAndWait(closeTx);
 
       // Use existing pnlData for immediate feedback (Avantis v3 feed prices)
+      // Use NET PnL (what user sees on screen) for share card consistency
       const closePrice = pnlData?.currentPrice ?? currentTrade.openPrice;
-      const pnlPct = pnlData?.pnlPercentage ?? 0;
-      const gross = pnlData?.grossPnl ?? 0;
-      const grossPct = pnlData?.grossPnlPercentage ?? 0;
+      const netPnl = pnlData?.pnl ?? 0;
+      const netPnlPct = pnlData?.pnlPercentage ?? 0;
 
-      // Play sound immediately based on current pnlData
-      if (pnlPct >= 0) {
+      if (netPnlPct >= 0) {
         playWin();
       } else {
         playLose();
       }
 
-      // Save and log with current data immediately
       if (userAddress && currentTrade) {
         saveClosedTrade(userAddress, currentTrade, pnlData, {
           closeTxHash,
@@ -624,8 +645,8 @@ export default function HomePage() {
         const closedTrade: ClosedTrade = {
           ...currentTrade,
           closedAt: Date.now(),
-          finalPnL: gross,
-          finalPnLPercentage: grossPct,
+          finalPnL: netPnl,
+          finalPnLPercentage: netPnlPct,
           closePrice,
           closeTxHash,
           isLiquidated: false,
@@ -637,14 +658,14 @@ export default function HomePage() {
           pairIndex: currentTrade.pairIndex,
           tradeIndex: currentTrade.tradeIndex,
           exitPrice: closePrice,
-          pnl: gross,
+          pnl: netPnl,
           closedAt: new Date().toISOString(),
           txHash: closeTxHash,
           isLiquidated: false,
         });
       }
 
-      const pnlStr = gross >= 0 ? `+$${gross.toFixed(2)}` : `-$${Math.abs(gross).toFixed(2)}`;
+      const pnlStr = netPnl >= 0 ? `+$${netPnl.toFixed(2)}` : `-$${Math.abs(netPnl).toFixed(2)}`;
       showToast(`Closed! PnL: ${pnlStr}`, 'success', undefined, {
         label: 'SHARE',
         onClick: () => router.push('/activity'),

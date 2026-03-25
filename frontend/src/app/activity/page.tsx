@@ -62,6 +62,10 @@ export default function ActivityPage() {
     setOpenTrades,
   } = useActivityData(userAddress);
 
+  // UI state (declared before usePositionSync so onClose can reconcile shareTrade)
+  const [showClosedTrades, setShowClosedTrades] = useState(false);
+  const [shareTrade, setShareTrade] = useState<ClosedTrade | null>(null);
+
   // Pusher-driven position sync
   usePositionSync({
     enabled: !!userAddress,
@@ -71,7 +75,6 @@ export default function ActivityPage() {
     },
     onClose: (closedTrade) => {
       // Immediately inject the closed trade at the top of the list.
-      // Key includes openedAt so slot-reused positions (flip scenarios) aren't deduped.
       setClosedTrades((prev) => {
         const key = closedTrade.openedAt && closedTrade.openedAt > 0
           ? `${closedTrade.pairIndex}-${closedTrade.tradeIndex}-${closedTrade.openedAt}`
@@ -84,6 +87,26 @@ export default function ActivityPage() {
         if (exists) return prev;
         return [closedTrade, ...prev];
       });
+
+      // Reconcile the share card if one is pending for the same position
+      setShareTrade((prev) => {
+        if (!prev) return prev;
+        const samePos = prev.pairIndex === closedTrade.pairIndex && prev.tradeIndex === closedTrade.tradeIndex;
+        const sameTx = prev.closeTxHash && closedTrade.closeTxHash &&
+          prev.closeTxHash.toLowerCase() === closedTrade.closeTxHash.toLowerCase();
+        if (samePos || sameTx) {
+          return {
+            ...prev,
+            finalPnL: closedTrade.finalPnL,
+            finalPnLPercentage: closedTrade.finalPnLPercentage,
+            closePrice: closedTrade.closePrice,
+            isLiquidated: closedTrade.isLiquidated,
+            isTakeProfitHit: closedTrade.isTakeProfitHit,
+          };
+        }
+        return prev;
+      });
+
       refetchOpenTrades();
       refresh();
     },
@@ -91,10 +114,6 @@ export default function ActivityPage() {
       refresh();
     },
   });
-
-  // UI state
-  const [showClosedTrades, setShowClosedTrades] = useState(false);
-  const [shareTrade, setShareTrade] = useState<ClosedTrade | null>(null);
   const [mounted, setMounted] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
