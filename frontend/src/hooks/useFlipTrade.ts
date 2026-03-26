@@ -27,6 +27,7 @@ import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
 import { publicClient } from '@/lib/viemClient';
 import { debug } from '@/lib/debug';
+import { buildFlipExcludedPositionKey } from '@/lib/flipExcludedPosition';
 
 const BALANCE_OF_ABI = [
   { constant: true, inputs: [{ name: '_owner', type: 'address' }], name: 'balanceOf', outputs: [{ name: 'balance', type: 'uint256' }], type: 'function' },
@@ -94,7 +95,7 @@ export function useFlipTrade() {
         throw new Error('Missing user address or delegate address');
       }
 
-      const excludedKey = `${trade.pairIndex}-${trade.tradeIndex}`;
+      const excludedKey = buildFlipExcludedPositionKey(trade);
       setFlipExcludedPositionKey(excludedKey);
 
       if (trade.pairIndex === undefined || trade.tradeIndex === undefined) {

@@ -6,6 +6,7 @@ import { useAvantisAPI } from './useAvantisAPI';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { logTradeCloseByPosition } from '@/lib/activityApi';
 import { debug } from '@/lib/debug';
+import { shouldExcludePositionForFlip } from '@/lib/flipExcludedPosition';
 
 interface UsePnLOptions {
   enabled?: boolean;
@@ -99,10 +100,9 @@ export function usePnL(options: UsePnLOptions = {}) {
       let positions = await getPnLRef.current(userAddr);
       const excludedKey = flipExcludedPositionKeyRef.current;
       if (excludedKey) {
-        positions = positions.filter(
-          (p) => `${p.trade.pairIndex}-${p.trade.tradeIndex}` !== excludedKey
-        );
-        debug('[usePnL] Filtered out excluded position:', excludedKey, 'Remaining:', positions.length);
+        const before = positions.length;
+        positions = positions.filter((p) => !shouldExcludePositionForFlip(p, excludedKey));
+        debug('[usePnL] Flip exclusion applied:', excludedKey, 'before:', before, 'after:', positions.length);
       }
       // Re-read focus AFTER network — avoids matching/applying PnL for a stale trade when
       // the user opened a new position while getPnL was in flight (multi-position / roll-again).

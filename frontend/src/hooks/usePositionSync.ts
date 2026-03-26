@@ -8,6 +8,7 @@ import type { PusherEvent, ParsedOrderFilled } from './usePusherEvents';
 import type { ClosedTrade } from '@/types';
 import { ASSETS } from '@/lib/constants';
 import { debug } from '@/lib/debug';
+import { shouldExcludePositionForFlip } from '@/lib/flipExcludedPosition';
 
 /** Build a ClosedTrade from an OrderFilled close event's parsed payload. */
 function closedTradeFromEvent(parsed: ParsedOrderFilled): ClosedTrade | null {
@@ -210,7 +211,7 @@ export function usePositionSync(options: UsePositionSyncOptions = {}) {
         const trade = currentTradeRef.current;
         if (trade && trade.tradeIndex === 0 && parsed.openPrice != null && parsed.openPrice > 0) {
           debug('[PositionSync] Patching placeholder with event data — openPrice:', parsed.openPrice);
-          setCurrentTrade({
+          const patched: typeof trade = {
             ...trade,
             openPrice: parsed.openPrice,
             ...(parsed.tradeIndex != null ? { tradeIndex: parsed.tradeIndex } : {}),
@@ -218,7 +219,12 @@ export function usePositionSync(options: UsePositionSyncOptions = {}) {
             ...(parsed.sl != null && parsed.sl > 0 ? { sl: parsed.sl } : {}),
             ...(parsed.leverage != null ? { leverage: parsed.leverage } : {}),
             ...(parsed.isLong != null ? { isLong: parsed.isLong } : {}),
-          });
+          };
+          setCurrentTrade(patched);
+          const prevPnl = useTradeStore.getState().pnlData;
+          if (prevPnl) {
+            setPnLData({ ...prevPnl, trade: patched });
+          }
           setPositionSource('pusher');
           setLastPositionEventAt(Date.now());
         }
@@ -227,12 +233,10 @@ export function usePositionSync(options: UsePositionSyncOptions = {}) {
       // Step 2: Targeted fetch for full position data (gets liq price, accurate PnL, etc.)
       let positions = await getPnL(addr);
 
-      // Apply flip exclusion filter
+      // Apply flip exclusion filter (triple-key when openedAt known — see flipExcludedPosition)
       const excl = flipExcludedKeyRef.current;
       if (excl) {
-        positions = positions.filter(
-          (p) => `${p.trade.pairIndex}-${p.trade.tradeIndex}` !== excl
-        );
+        positions = positions.filter((p) => !shouldExcludePositionForFlip(p, excl));
       }
 
       // Step 3: Update open trades list (benefits /activity + home banner) regardless of match

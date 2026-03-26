@@ -81,7 +81,8 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   }, [isFlipping]);
 
   // Elapsed timer — ticks every 100ms from trade.openedAt
-  const displayTrade = pnlData?.trade ?? currentTrade;
+  // Prefer currentTrade so flip / Pusher patches (new entry, direction) aren't masked by stale pnlData.trade.
+  const displayTrade = currentTrade ?? pnlData?.trade;
   useEffect(() => {
     const openedAt = displayTrade?.openedAt;
     if (!openedAt) {
@@ -110,7 +111,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   usePnL({ enabled: true, interval: pollInterval });
 
   // Live mark from store (Avantis feed-v3 → Hermes fallback, via useLivePricesSync)
-  const assetPair = pnlData?.trade?.pair ?? currentTrade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
+  const assetPair = currentTrade?.pair ?? pnlData?.trade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
   /** Granular subscription: re-render when this pair’s mark changes, not on every store field */
   const liveMarkPrice = useTradeStore(
     (s) => (assetPair ? s.prices[assetPair]?.price ?? null : null)
@@ -258,13 +259,13 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const isNearLiq = liqDistance < 20;
 
   // Liq line: only after real position (placeholder trade has liquidationPrice: 0 until Avantis poll).
-  const rawLiqPrice = pnlData?.trade?.liquidationPrice ?? currentTrade?.liquidationPrice ?? 0;
+  const rawLiqPrice = currentTrade?.liquidationPrice ?? pnlData?.trade?.liquidationPrice ?? 0;
   const hasRealTradeData = rawLiqPrice > 0 || isLiquidated || isTakeProfitHit;
   const liquidationPrice = hasRealTradeData ? rawLiqPrice : null;
 
   // Entry line: use open price as soon as it exists (wheel placeholder + API). Do NOT gate on
   // hasRealTradeData — that waits for liquidation from Avantis (~15–20s), so the entry line was late or missing.
-  const openForEntryLine = pnlData?.trade?.openPrice ?? currentTrade?.openPrice ?? null;
+  const openForEntryLine = currentTrade?.openPrice ?? pnlData?.trade?.openPrice ?? null;
   const entryPrice =
     openForEntryLine != null && Number.isFinite(openForEntryLine) && openForEntryLine > 0
       ? openForEntryLine
@@ -273,7 +274,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
 
   // Target price: prefer tp from API when > 0, else compute from settings
   const takeProfitPercent = settings.takeProfitPercent ?? 200;
-  const tradeForTarget = pnlData?.trade ?? currentTrade;
+  const tradeForTarget = currentTrade ?? pnlData?.trade;
   const apiTp = tradeForTarget?.tp ?? 0;
   const targetPrice = entryPrice && tradeForTarget
     ? (apiTp > 0
