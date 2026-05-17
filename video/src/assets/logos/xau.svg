@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Gold bar icon -->
+  <defs>
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFE55C"/>
+      <stop offset="50%" style="stop-color:#FFD700"/>
+      <stop offset="100%" style="stop-color:#C9A227"/>
+    </linearGradient>
+    <linearGradient id="goldSide" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#C9A227"/>
+      <stop offset="100%" style="stop-color:#8B7500"/>
+    </linearGradient>
+  </defs>
+  <!-- Top face of gold bar -->
+  <polygon points="50,15 85,35 50,55 15,35" fill="url(#goldGradient)" stroke="#8B7500" stroke-width="2"/>
+  <!-- Right side -->
+  <polygon points="85,35 85,65 50,85 50,55" fill="url(#goldSide)" stroke="#8B7500" stroke-width="2"/>
+  <!-- Left side -->
+  <polygon points="15,35 50,55 50,85 15,65" fill="#B8960C" stroke="#8B7500" stroke-width="2"/>
+  <!-- Shine effect -->
+  <polygon points="50,20 70,32 50,44 30,32" fill="#FFF8DC" opacity="0.4"/>
+</svg>

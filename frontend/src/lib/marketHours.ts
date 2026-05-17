@@ -1,13 +1,17 @@
 /**
  * Market Hours Utility
- * 
- * Checks if commodities (XAU/XAG) market is currently open.
- * 
- * Schedule (America/New_York timezone):
+ *
+ * Two schedules:
+ *
+ * **Commodities (XAU/XAG)** — America/New_York:
  * - Mon-Thu: 00:00-17:00 & 18:00-24:00 (1 hour break at 5pm ET)
  * - Friday: 00:00-17:00 only
  * - Saturday: CLOSED
  * - Sunday: 18:00-24:00 only
+ *
+ * **Forex weekend (USD/JPY)** — America/New_York:
+ * - Closed Friday 17:00 ET through Sunday 17:00 ET (approx. retail forex weekend)
+ * - Otherwise treated as open (no commodities-style intraday break)
  */
 
 const WEEKDAY_ORDER = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
@@ -30,15 +34,38 @@ function getETParts(now: Date): { day: number; hour: number } {
   return { day: day >= 0 ? day : 0, hour };
 }
 
-/** Asset names that have market hours (XAU/XAG) - when commodities market is closed, these are unavailable */
+/** Asset names using the commodities (metals) schedule */
 export const COMMODITIES_ASSETS = ['XAU', 'XAG'] as const;
+
+/** Asset names closed on forex weekends only (Fri close – Sun open, ET) */
+export const FX_WEEKEND_ASSETS = ['USDJPY'] as const;
+
+/**
+ * Forex “weekend”: closed Fri >= 17:00 ET until Sun >= 17:00 ET.
+ */
+export function isFxWeekendMarketOpen(): boolean {
+  const now = new Date();
+  const { day, hour } = getETParts(now);
+
+  if (day === 5 && hour >= 17) return false;
+  if (day === 6) return false;
+  if (day === 0 && hour < 17) return false;
+
+  return true;
+}
 
 /**
  * Get list of asset names that are currently closed (market hours).
- * Returns empty array when commodities market is open.
  */
 export function getMarketClosedAssets(): string[] {
-  return isCommoditiesMarketOpen() ? [] : [...COMMODITIES_ASSETS];
+  const closed: string[] = [];
+  if (!isCommoditiesMarketOpen()) {
+    closed.push(...COMMODITIES_ASSETS);
+  }
+  if (!isFxWeekendMarketOpen()) {
+    closed.push(...FX_WEEKEND_ASSETS);
+  }
+  return closed;
 }
 
 /**
@@ -48,30 +75,26 @@ export function getMarketClosedAssets(): string[] {
 export function isCommoditiesMarketOpen(): boolean {
   const now = new Date();
   const { day, hour } = getETParts(now);
-  
+
   // Saturday - fully closed
   if (day === 6) {
     return false;
   }
-  
+
   // Sunday - only open 18:00-24:00 ET
   if (day === 0) {
     return hour >= 18;
   }
-  
+
   // Friday - only open 00:00-17:00 ET
   if (day === 5) {
     return hour < 17;
   }
-  
+
   // Mon-Thu - open 00:00-17:00 and 18:00-24:00 ET (1 hour break at 5pm)
   return hour < 17 || hour >= 18;
 }
 
-/**
- * Get the next time the commodities market will open.
- * Useful for displaying "Market opens in X hours" messages.
- */
 /**
  * Get ET date parts (year, month, day) for constructing dates.
  */
@@ -103,36 +126,36 @@ export function getNextMarketOpen(): Date | null {
   const now = new Date();
   const { day, hour } = getETParts(now);
   const { year, month, day: dayNum } = getETDateParts(now);
-  
+
   // If market is open, return null
   if (isCommoditiesMarketOpen()) {
     return null;
   }
-  
+
   // Saturday -> Sunday 6pm ET
   if (day === 6) {
     const nextDay = new Date(year, month - 1, dayNum);
     nextDay.setDate(nextDay.getDate() + 1);
     return createETDate(nextDay.getFullYear(), nextDay.getMonth() + 1, nextDay.getDate(), 18);
   }
-  
+
   // Sunday before 6pm -> Sunday 6pm ET
   if (day === 0 && hour < 18) {
     return createETDate(year, month, dayNum, 18);
   }
-  
+
   // Friday after 5pm -> Sunday 6pm ET
   if (day === 5 && hour >= 17) {
     const twoDaysLater = new Date(year, month - 1, dayNum);
     twoDaysLater.setDate(twoDaysLater.getDate() + 2);
     return createETDate(twoDaysLater.getFullYear(), twoDaysLater.getMonth() + 1, twoDaysLater.getDate(), 18);
   }
-  
+
   // Mon-Thu during 5pm-6pm break -> same day 6pm ET
   if (day >= 1 && day <= 4 && hour === 17) {
     return createETDate(year, month, dayNum, 18);
   }
-  
+
   return null;
 }
 
@@ -143,17 +166,17 @@ export function getMarketStatusMessage(): string {
   if (isCommoditiesMarketOpen()) {
     return 'Commodities market is open';
   }
-  
+
   const nextOpen = getNextMarketOpen();
   if (!nextOpen) {
     return 'Commodities market is closed';
   }
-  
+
   const now = new Date();
   const diff = nextOpen.getTime() - now.getTime();
   const hours = Math.floor(diff / (1000 * 60 * 60));
   const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-  
+
   if (hours > 0) {
     return `Commodities market opens in ${hours}h ${minutes}m`;
   }

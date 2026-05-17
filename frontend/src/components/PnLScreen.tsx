@@ -13,6 +13,7 @@ import { vibrateMedium } from '@/lib/haptics';
 import confetti from 'canvas-confetti';
 import { PriceChart } from './PriceChart';
 import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
+import { getPairKey } from '@/lib/assetPair';
 import { calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
 import { computeClientPnL } from '@/lib/pnlFees';
 import { ArrowUpDown, Dice5, Loader2 } from 'lucide-react';
@@ -111,7 +112,7 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   usePnL({ enabled: true, interval: pollInterval });
 
   // Live mark from store (Avantis feed-v3 → Hermes fallback, via useLivePricesSync)
-  const assetPair = currentTrade?.pair ?? pnlData?.trade?.pair ?? (selection?.asset ? `${selection.asset.name}/USD` : null);
+  const assetPair = currentTrade?.pair ?? pnlData?.trade?.pair ?? (selection?.asset ? getPairKey(selection.asset) : null);
   /** Granular subscription: re-render when this pair’s mark changes, not on every store field */
   const liveMarkPrice = useTradeStore(
     (s) => (assetPair ? s.prices[assetPair]?.price ?? null : null)

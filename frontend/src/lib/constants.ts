@@ -1,13 +1,23 @@
 import type { Asset, Leverage, Direction } from '@/types';
 
 // Assets available for zero-fee perps (PnL order type)
-// Data from Avantis SDK - pairIndex and max leverage verified
-// All assets support 500x leverage for maximum degen energy
+// Pair indices verified via Avantis pairs_cache on Base; leverage capped per asset (protocol limits).
 export const ASSETS: Asset[] = [
   { name: 'ETH', color: '#627EEA', icon: '/logos/eth.svg', pairIndex: 0, maxLeverage: 500 },
   { name: 'BTC', color: '#FF9500', icon: '/logos/btc.svg', pairIndex: 1, maxLeverage: 500 },
   { name: 'SOL', color: '#14F195', icon: '/logos/sol.svg', pairIndex: 2, maxLeverage: 500 },
-  { name: 'XRP', color: '#00AAE4', icon: '/logos/xrp.svg', pairIndex: 59, maxLeverage: 500 },
+  // Forex — closed Fri 17:00 ET – Sun 17:00 ET; protocol caps ZFP leverage (~50x on socket)
+  {
+    name: 'USDJPY',
+    pairKey: 'USD/JPY',
+    color: '#2DD4BF',
+    icon: '/logos/usdjpy.svg',
+    pairIndex: 12,
+    maxLeverage: 50,
+    fixedLeverage: 50,
+    hasMarketHours: true,
+    marketHoursKind: 'fx_weekends',
+  },
   // Commodities - fixed 250x leverage, market hours restricted (closed on weekends)
   { name: 'XAU', color: '#FFD700', icon: '/logos/xau.svg', pairIndex: 21, maxLeverage: 250, fixedLeverage: 250, hasMarketHours: true },
   { name: 'XAG', color: '#C0C0C0', icon: '/logos/xag.svg', pairIndex: 20, maxLeverage: 250, fixedLeverage: 250, hasMarketHours: true },

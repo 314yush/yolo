@@ -6,11 +6,16 @@ import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { loadClosedTrades, mergeClosedTradesDuplicate } from '@/lib/closedTrades';
 import { getActivityStats, getActivityTrades, type ActivityTrade } from '@/lib/activityApi';
 import { ASSETS } from '@/lib/constants';
+import { getPairKey } from '@/lib/assetPair';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 /** Map Activity API trade to ClosedTrade for TradeCard. */
 function activityTradeToClosedTrade(at: ActivityTrade): ClosedTrade {
-  const pairIndex = at.pair_index ?? ASSETS.find((a) => at.pair.includes(a.name))?.pairIndex ?? 0;
+  const assetMatch =
+    ASSETS.find((a) => a.pairIndex === at.pair_index) ??
+    ASSETS.find((a) => at.pair === getPairKey(a)) ??
+    ASSETS.find((a) => !a.pairKey && at.pair.includes(a.name));
+  const pairIndex = assetMatch?.pairIndex ?? at.pair_index ?? 0;
   const collateral = Math.max(Number(at.collateral) || 1, 1e-10);
   const pnlRaw = at.pnl;
   const pnl = Number.isFinite(Number(pnlRaw)) ? Number(pnlRaw) : 0;

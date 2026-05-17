@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { useFundWallet } from '@privy-io/react-auth';
 import { base } from 'viem/chains';
@@ -16,12 +16,17 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
   const { fundWallet } = useFundWallet();
   const { balance, isLoading } = useUsdcBalance();
   const userAddress = user?.wallet?.address;
+  const [fundingError, setFundingError] = useState<string | null>(null);
 
   const hasEnoughBalance = balance !== null && balance >= MIN_DEPOSIT;
 
   const handleFundWallet = useCallback(async () => {
-    if (!userAddress) return;
+    if (!userAddress?.trim()) {
+      setFundingError('Wallet not ready. Please wait a moment.');
+      return;
+    }
 
+    setFundingError(null);
     try {
       await fundWallet({
         address: userAddress,
@@ -33,6 +38,11 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
       });
     } catch (error) {
       console.error('Failed to open fund wallet:', error);
+      setFundingError(
+        error instanceof Error
+          ? error.message
+          : 'Could not open funding. Enable Base USDC funding in the Privy dashboard and try again.'
+      );
     }
   }, [fundWallet, userAddress]);
 
@@ -93,6 +103,11 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
           >
             ADD USDC
           </button>
+          {fundingError && (
+            <p className="mt-4 text-[#FF006E] text-sm font-bold text-center" role="alert">
+              {fundingError}
+            </p>
+          )}
           <p className="mt-4 text-white/40 text-xs">
             Buy with card, or transfer from another wallet or exchange
           </p>

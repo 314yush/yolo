@@ -4,9 +4,13 @@ export interface Asset {
   color: string;
   icon: string;
   pairIndex: number;
+  /** When set (e.g. USD/JPY), used as the canonical pair key instead of `${name}/USD`. */
+  pairKey?: string;
   maxLeverage: number; // Max leverage for ZFP (PnL mode)
   fixedLeverage?: number; // If set, always use this leverage (ignores wheel randomization)
   hasMarketHours?: boolean; // If true, check market open/closed status before allowing trades
+  /** When hasMarketHours — commodities NY schedule vs Fri–Sun forex closure */
+  marketHoursKind?: 'commodities' | 'fx_weekends';
 }
 
 // Leverage types

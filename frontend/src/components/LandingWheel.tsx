@@ -11,7 +11,7 @@ const SEGMENTS = [
   { label: '300x', type: 'multiplier', color: '#1a1a1a' },
   { label: 'SOL', type: 'logo', icon: '/logos/sol.svg', color: '#1a1a1a' },
   { label: '250x', type: 'multiplier', color: '#1a1a1a' },
-  { label: 'XRP', type: 'logo', icon: '/logos/xrp.svg', color: '#1a1a1a' },
+  { label: 'USDJPY', type: 'logo', icon: '/logos/usdjpy.svg', color: '#1a1a1a' },
 ];
 
 const SIZE = 200;

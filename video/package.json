@@ -1,0 +1,24 @@
+{
+  "name": "yolo-video",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx remotion studio",
+    "build": "npx remotion render HeroPromo out/hero-promo.mp4",
+    "render:story": "npx remotion render HeroPromoStory out/hero-promo-story.mp4",
+    "render:landscape": "npx remotion render HeroPromo out/hero-promo-landscape.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.261",
+    "@remotion/tailwind-v4": "4.0.261",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "4.0.261"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/react": "^19.0.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.7.0"
+  }
+}

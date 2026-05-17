@@ -54,10 +54,13 @@ export function PickerWheelAssetGlyph({
           />
         </svg>
       );
-    case 'XRP':
+    case 'USDJPY':
       return (
-        <svg {...common} viewBox="0 0 24 24" fill="#000000">
-          <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 16.894a.954.954 0 0 1-1.35 0l-3.544-3.544a.954.954 0 0 0-1.35 0l-3.544 3.544a.954.954 0 0 1-1.35-1.35l3.544-3.544a.954.954 0 0 0 0-1.35L6.106 7.456a.954.954 0 0 1 1.35-1.35l3.544 3.544a.954.954 0 0 0 1.35 0l3.544-3.544a.954.954 0 0 1 1.35 1.35l-3.544 3.544a.954.954 0 0 0 0 1.35l3.544 3.544a.954.954 0 0 1 0 1.35z" />
+        <svg {...common} viewBox="0 0 64 64" fill="none">
+          <circle cx="32" cy="32" r="26" stroke="#000000" strokeWidth="3" fill="#E0FDFA" />
+          <text x="32" y="40" textAnchor="middle" fontSize="22" fontWeight={700} fill="#000000" fontFamily="system-ui,sans-serif">
+            &#165;
+          </text>
         </svg>
       );
     case 'XAU':

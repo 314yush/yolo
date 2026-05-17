@@ -5,7 +5,7 @@ Spin the wheel, open a trade. Zero-fee perpetuals on Base.
 ## Overview
 
 YOLO is a hypercasual trading app where users spin a wheel to randomly select:
-- **Asset**: BTC, ETH, SOL, XRP, XAU (Gold), XAG (Silver)
+- **Asset**: BTC, ETH, SOL, USD/JPY, XAU (Gold), XAG (Silver)
 - **Leverage**: 100x-500x
 - **Direction**: LONG or SHORT
 

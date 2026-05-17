@@ -1,8 +1,14 @@
 'use client';
 
 import React, { useCallback } from 'react';
-import { useFundWallet } from '@privy-io/react-auth';
+import { useFundWallet, usePrivy } from '@privy-io/react-auth';
 import { base } from 'viem/chains';
+
+function fundingErrorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : 'Could not open funding. Try again, or enable funding methods for Base USDC in the Privy dashboard.';
+}
 
 interface InsufficientFundsModalProps {
   isOpen: boolean;
@@ -11,6 +17,8 @@ interface InsufficientFundsModalProps {
   requiredAmount: number;
   userAddress: string;
   onFundingComplete?: () => void | Promise<void>;
+  /** Shown after the modal closes so failures are still visible (e.g. toast). */
+  onFundingError?: (message: string) => void;
 }
 
 export function InsufficientFundsModal({
@@ -20,16 +28,32 @@ export function InsufficientFundsModal({
   requiredAmount,
   userAddress,
   onFundingComplete,
+  onFundingError,
 }: InsufficientFundsModalProps) {
   const { fundWallet } = useFundWallet();
-  
+  const { user } = usePrivy();
+
   const shortfall = Math.max(0, requiredAmount - currentBalance);
   const shortfallDisplay = shortfall.toFixed(2);
 
+  /** Must match Privy embedded wallet — prop can lag the store after login. */
+  const resolveFundingAddress = useCallback((): string | null => {
+    const fromProp = userAddress.trim();
+    const fromPrivy = user?.wallet?.address?.trim();
+    const addr = fromProp || fromPrivy || '';
+    return addr || null;
+  }, [userAddress, user?.wallet?.address]);
+
   const handleFundWithCard = useCallback(async () => {
+    const addr = resolveFundingAddress();
+    if (!addr) {
+      onFundingError?.('Wallet address not ready. Please wait and try again.');
+      return;
+    }
+    // Do not call onClose() before fundWallet: closing unmounts this component and tears down useFundWallet.
     try {
       await fundWallet({
-        address: userAddress,
+        address: addr,
         options: {
           chain: base,
           asset: 'USDC',
@@ -40,13 +64,26 @@ export function InsufficientFundsModal({
       onClose();
     } catch (error) {
       console.error('Fund wallet error:', error);
+      onFundingError?.(fundingErrorMessage(error));
     }
-  }, [fundWallet, userAddress, shortfallDisplay, onClose, onFundingComplete]);
+  }, [
+    fundWallet,
+    resolveFundingAddress,
+    shortfallDisplay,
+    onClose,
+    onFundingComplete,
+    onFundingError,
+  ]);
 
   const handleFundFromWallet = useCallback(async () => {
+    const addr = resolveFundingAddress();
+    if (!addr) {
+      onFundingError?.('Wallet address not ready. Please wait and try again.');
+      return;
+    }
     try {
       await fundWallet({
-        address: userAddress,
+        address: addr,
         options: {
           chain: base,
           asset: 'USDC',
@@ -58,13 +95,26 @@ export function InsufficientFundsModal({
       onClose();
     } catch (error) {
       console.error('Fund from wallet error:', error);
+      onFundingError?.(fundingErrorMessage(error));
     }
-  }, [fundWallet, userAddress, shortfallDisplay, onClose, onFundingComplete]);
+  }, [
+    fundWallet,
+    resolveFundingAddress,
+    shortfallDisplay,
+    onClose,
+    onFundingComplete,
+    onFundingError,
+  ]);
 
   const handleFundFromExchange = useCallback(async () => {
+    const addr = resolveFundingAddress();
+    if (!addr) {
+      onFundingError?.('Wallet address not ready. Please wait and try again.');
+      return;
+    }
     try {
       await fundWallet({
-        address: userAddress,
+        address: addr,
         options: {
           chain: base,
           asset: 'USDC',
@@ -76,8 +126,16 @@ export function InsufficientFundsModal({
       onClose();
     } catch (error) {
       console.error('Fund from exchange error:', error);
+      onFundingError?.(fundingErrorMessage(error));
     }
-  }, [fundWallet, userAddress, shortfallDisplay, onClose, onFundingComplete]);
+  }, [
+    fundWallet,
+    resolveFundingAddress,
+    shortfallDisplay,
+    onClose,
+    onFundingComplete,
+    onFundingError,
+  ]);
 
   if (!isOpen) return null;
 

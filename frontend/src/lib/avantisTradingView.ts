@@ -12,7 +12,7 @@ const TV_SYMBOL_BY_PAIR: Record<string, string> = {
   'BTC/USD': 'Crypto.BTC/USD',
   'ETH/USD': 'Crypto.ETH/USD',
   'SOL/USD': 'Crypto.SOL/USD',
-  'XRP/USD': 'Crypto.XRP/USD',
+  'USD/JPY': 'FX.USD/JPY',
   'XAU/USD': 'Metal.XAU/USD',
   'XAG/USD': 'Metal.XAG/USD',
 };

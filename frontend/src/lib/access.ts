@@ -112,6 +112,14 @@ export async function redeemAccessCode(
   code: string,
   walletAddress: string
 ): Promise<RedeemCodeResponse> {
+  if (!walletAddress?.trim()) {
+    return {
+      success: false,
+      error: 'invalid_wallet',
+      message: 'Wallet not ready.',
+    };
+  }
+
   const url = `${API_BASE}/access/redeem`;
   try {
     const response = await fetch(url, {
@@ -163,6 +171,7 @@ export function getErrorMessage(error?: string): string {
     already_used: 'This code has already been used.',
     rate_limited: 'Too many attempts. Wait a moment.',
     network_error: 'Connection failed. Please try again.',
+    invalid_wallet: 'Wallet not ready. Please wait and try again.',
   };
   return messages[error || ''] || 'Something went wrong. Try again.';
 }

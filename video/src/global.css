@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Oswald:wght@400;500;600;700&family=Syne:wght@400;500;600;700;800&display=swap");
+
+:root {
+  /* Brand */
+  --color-brand: #ccff00;
+  --color-danger: #ff006e;
+  --color-bg: #000000;
+  --color-surface: #0b0f14;
+  --color-border: #1a1a2e;
+  --color-text: #ffffff;
+  --color-text-muted: rgba(255, 255, 255, 0.5);
+  --color-warning: #ffd60a;
+
+  /* Assets */
+  --color-btc: #ff9500;
+  --color-eth: #627eea;
+  --color-sol: #14f195;
+  --color-usdjpy: #2dd4bf;
+  --color-xau: #ffd700;
+  --color-xag: #c0c0c0;
+
+  /* Borders */
+  --shadow-brutal: 8px 8px 0px #000;
+  --shadow-brutal-sm: 4px 4px 0px #000;
+}
+
+body {
+  background-color: #000000;
+  font-family: "Outfit", sans-serif;
+  color: #ffffff;
+}

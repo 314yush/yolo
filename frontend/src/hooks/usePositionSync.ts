@@ -7,6 +7,7 @@ import { useAutoPusherEvents, parseOrderFilledPayload } from './usePusherEvents'
 import type { PusherEvent, ParsedOrderFilled } from './usePusherEvents';
 import type { ClosedTrade } from '@/types';
 import { ASSETS } from '@/lib/constants';
+import { getPairKey } from '@/lib/assetPair';
 import { debug } from '@/lib/debug';
 import { shouldExcludePositionForFlip } from '@/lib/flipExcludedPosition';
 
@@ -23,7 +24,7 @@ function closedTradeFromEvent(parsed: ParsedOrderFilled): ClosedTrade | null {
   }
 
   const asset = ASSETS.find((a) => a.pairIndex === parsed.pairIndex);
-  const pair = asset ? `${asset.name}/USD` : `Pair ${parsed.pairIndex}`;
+  const pair = asset ? getPairKey(asset) : `Pair ${parsed.pairIndex}`;
   const closePrice = parsed.closePrice ?? parsed.openPrice;
 
   // Net PnL: what the user actually receives minus collateral (after all fees)

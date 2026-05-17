@@ -93,7 +93,7 @@ export const metadata: Metadata = {
       'max-snippet': -1,
     },
   },
-  keywords: ['trading', 'crypto', 'leverage', 'perpetuals', 'Base', 'DeFi', 'hypercasual', 'gaming', 'BTC', 'ETH', 'SOL', 'XRP'],
+  keywords: ['trading', 'crypto', 'leverage', 'perpetuals', 'Base', 'DeFi', 'hypercasual', 'gaming', 'BTC', 'ETH', 'SOL', 'USD/JPY'],
   authors: [{ name: 'YOLO' }],
   creator: 'YOLO',
   publisher: 'YOLO',

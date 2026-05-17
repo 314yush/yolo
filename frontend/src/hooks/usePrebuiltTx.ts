@@ -3,11 +3,12 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from './useDelegateWallet';
-import { 
+import {
   buildOpenTradeTx as buildOpenTradeTxDirect, 
   validatePositionSize,
   calculateTakeProfitMultiplier,
 } from '@/lib/avantisEncoder';
+import { getPairKey } from '@/lib/assetPair';
 
 // How long a pre-built tx is considered valid (30 seconds)
 const PREBUILD_TTL_MS = 30000;
@@ -73,7 +74,7 @@ export function usePrebuiltTx() {
       return;
     }
 
-    const pair = `${selection.asset.name}/USD`;
+    const pair = getPairKey(selection.asset);
     const currentPrice = prices[pair]?.price;
     
     if (!currentPrice) return; // Wait for live price
@@ -157,7 +158,7 @@ export function usePrebuiltTx() {
   useEffect(() => {
     if (!selection || !prebuiltTx || !prebuildMetaRef.current) return;
 
-    const pair = `${selection.asset.name}/USD`;
+    const pair = getPairKey(selection.asset);
     const currentPrice = prices[pair]?.price;
     if (!currentPrice) return;
 

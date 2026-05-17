@@ -33,10 +33,10 @@ export function useAccessCheck(walletAddress: string | null): UseAccessCheckRetu
         return;
       }
 
-      // 2. If no wallet connected yet, we can't check API
+      // 2. Embedded wallet may still be provisioning — don't treat as "no access"
       if (!walletAddress) {
-        setHasAccess(false);
-        setIsChecking(false);
+        setHasAccess(null);
+        setIsChecking(true);
         return;
       }
 

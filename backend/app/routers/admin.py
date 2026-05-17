@@ -41,21 +41,27 @@ ACTIONS = [
 # Combine all word lists for variety
 ALL_WORDS = TRADING_WORDS + ADJECTIVES + NOUNS + ACTIONS
 
+# Must match access.py redeem validation (YOLO-WORD-WORD total length)
+_ACCESS_CODE_MIN_LEN = 13
+_ACCESS_CODE_MAX_LEN = 30
+
 
 def generate_code() -> str:
     """
     Generate a memorable/funny access code.
     Format: YOLO-{WORD1}-{WORD2}
     Examples: YOLO-MOON-APE, YOLO-REKT-CHAD, YOLO-GIGA-DEGEN
+    Retries until length is within bounds (short words like GM/GN alone can violate min length).
     """
-    word1 = secrets.choice(ALL_WORDS)
-    word2 = secrets.choice(ALL_WORDS)
-    
-    # Avoid same word twice
-    while word2 == word1:
+    for _ in range(2000):
+        word1 = secrets.choice(ALL_WORDS)
         word2 = secrets.choice(ALL_WORDS)
-    
-    return f"YOLO-{word1}-{word2}"
+        while word2 == word1:
+            word2 = secrets.choice(ALL_WORDS)
+        code = f"YOLO-{word1}-{word2}"
+        if _ACCESS_CODE_MIN_LEN <= len(code) <= _ACCESS_CODE_MAX_LEN:
+            return code
+    raise RuntimeError("Failed to generate access code within length bounds")
 
 
 async def verify_admin_key(x_admin_key: str = Header(...)):

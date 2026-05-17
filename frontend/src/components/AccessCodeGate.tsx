@@ -55,6 +55,11 @@ export function AccessCodeGate({ walletAddress, onAccessGranted }: AccessCodeGat
   };
 
   const handleSubmit = useCallback(async () => {
+    if (!walletAddress?.trim()) {
+      setError('Wallet not ready. Please wait a moment.');
+      return;
+    }
+
     // Validate format: YOLO-WORD-WORD (at least 13 chars, has YOLO- prefix)
     if (!code.trim() || code.length < 13 || !code.startsWith('YOLO-')) {
       setError('Please enter a complete access code');

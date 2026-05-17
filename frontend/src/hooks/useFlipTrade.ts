@@ -114,7 +114,7 @@ export function useFlipTrade() {
       const flippedIsLong = !trade.isLong;
 
       try {
-        const currentPrice = prices[pairToUse]?.price ?? prices[`${pairToUse}/USD`]?.price;
+        const currentPrice = prices[pairToUse]?.price;
         if (!currentPrice || currentPrice <= 0) {
           throw new Error(`No price available for ${pairToUse}. Wait for the price feed.`);
         }

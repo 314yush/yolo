@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats, ClosedTrade } from '@/types';
-import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL } from '@/lib/constants';
+import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL, COLORS } from '@/lib/constants';
 import { loadSettings, DEFAULT_SETTINGS } from '@/lib/settings';
 import { loadStats, saveStats } from '@/lib/stats';
 import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
-import { isCommoditiesMarketOpen } from '@/lib/marketHours';
+import { isCommoditiesMarketOpen, isFxWeekendMarketOpen } from '@/lib/marketHours';
 import { debug } from '@/lib/debug';
 import type { Toast } from '@/components/Toast';
 import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
@@ -451,25 +451,30 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   // Randomly select asset, leverage, direction
   // Uses weighted random selection for leverage - higher leverage = more likely
-  // Filters out assets with closed markets (e.g., XAU/XAG on weekends)
+  // Filters out assets with closed markets (commodities vs forex weekend schedules)
   randomizeSelection: () => {
-    // Filter out assets with closed markets (e.g., XAU/XAG on weekends)
-    const marketOpen = isCommoditiesMarketOpen();
-    const availableAssets = ASSETS.filter(asset => {
-      if (asset.hasMarketHours && !marketOpen) {
-        return false; // Skip XAU/XAG when commodities market is closed
-      }
-      return true;
+    const availableAssets = ASSETS.filter((asset) => {
+      if (!asset.hasMarketHours) return true;
+      const kind = asset.marketHoursKind ?? 'commodities';
+      const open =
+        kind === 'fx_weekends' ? isFxWeekendMarketOpen() : isCommoditiesMarketOpen();
+      return open;
     });
-    
+
     // Random asset selection from available assets
     const asset = availableAssets[Math.floor(Math.random() * availableAssets.length)];
-    
+
     let leverage;
-    
-    // Check if asset has fixed leverage (e.g., XAU/XAG always use 250x)
+
+    // Fixed leverage — synthesize tier if not on the wheel list (e.g. 50x forex)
     if (asset.fixedLeverage) {
-      leverage = LEVERAGES.find(l => l.value === asset.fixedLeverage) || LEVERAGES[0];
+      leverage =
+        LEVERAGES.find((l) => l.value === asset.fixedLeverage) ?? {
+          name: `${asset.fixedLeverage}x`,
+          value: asset.fixedLeverage,
+          color: COLORS.WARNING,
+          weight: 0,
+        };
     } else {
       // Filter leverages that are compatible with this asset's max leverage
       const compatibleLeverages = LEVERAGES.filter(l => l.value <= asset.maxLeverage);

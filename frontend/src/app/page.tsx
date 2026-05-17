@@ -45,8 +45,8 @@ import {
 } from '@/lib/avantisEncoder';
 import type { Trade, ClosedTrade, PnLData } from '@/types';
 import { fetchRecentClosedTradeMatch } from '@/lib/avantisApi';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { DEFAULT_COLLATERAL, MIN_DEPOSIT } from '@/lib/constants';
+import { MIN_DEPOSIT } from '@/lib/constants';
+import { getPairKey } from '@/lib/assetPair';
 import { debug } from '@/lib/debug';
 import { Dice5, Loader2, Wallet } from 'lucide-react';
 
@@ -419,7 +419,7 @@ export default function HomePage() {
         collateral: collateral,
         leverage: currentSelection.leverage.value,
         isLong: currentSelection.direction.isLong,
-        openPrice: prices[`${currentSelection.asset.name}/USD`]?.price || 0,
+        openPrice: prices[getPairKey(currentSelection.asset)]?.price || 0,
         takeProfitMultiplier: calculateTakeProfitMultiplier(
           currentSelection.direction.isLong,
           currentSelection.leverage.value,
@@ -492,7 +492,7 @@ export default function HomePage() {
     // Always bind placeholder to current selection so a second open while another
     // position is still tracked does not leave stale currentTrade / pnlData.
     if (storeState.selection) {
-      const openPrice = prices[`${storeState.selection.asset.name}/USD`]?.price || 0;
+      const openPrice = prices[getPairKey(storeState.selection.asset)]?.price || 0;
       const tpPercent = storeState.settings.takeProfitPercent ?? 200;
       const tpPrice = openPrice * calculateTakeProfitMultiplier(
         storeState.selection.direction.isLong,
@@ -502,7 +502,7 @@ export default function HomePage() {
       const tempTrade: Trade = {
         tradeIndex: 0,
         pairIndex: storeState.selection.asset.pairIndex,
-        pair: `${storeState.selection.asset.name}/USD`,
+        pair: getPairKey(storeState.selection.asset),
         collateral: collateral,
         leverage: storeState.selection.leverage.value,
         isLong: storeState.selection.direction.isLong,
@@ -745,6 +745,17 @@ export default function HomePage() {
     );
   }
 
+  // Embedded wallet created after login — wait before access check / redeem
+  const bypassAccess = process.env.NEXT_PUBLIC_BYPASS_ACCESS_CODE === 'true';
+  if (authenticated && !user?.wallet?.address && !bypassAccess) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
+        <div className="text-xl sm:text-2xl font-bold text-[#CCFF00] mb-4 animate-pulse">PREPARING WALLET...</div>
+        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   // Checking access status
   if (isCheckingAccess) {
     return (
@@ -756,7 +767,7 @@ export default function HomePage() {
   }
 
   // No access - show access code gate
-  if (!hasAccess) {
+  if (hasAccess === false) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
         <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
@@ -765,10 +776,19 @@ export default function HomePage() {
         </header>
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
           <AccessCodeGate 
-            walletAddress={walletAddress!} 
-            onAccessGranted={() => grantAccess(walletAddress!)} 
+            walletAddress={walletAddress as string} 
+            onAccessGranted={() => grantAccess(walletAddress as string)} 
           />
         </main>
+      </div>
+    );
+  }
+
+  if (hasAccess !== true) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
+        <div className="text-xl sm:text-2xl font-bold text-[#CCFF00] mb-4 animate-pulse">CHECKING ACCESS...</div>
+        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -1101,6 +1121,7 @@ export default function HomePage() {
         requiredAmount={collateral}
         userAddress={userAddress ?? ''}
         onFundingComplete={refetchUsdcBalance}
+        onFundingError={(msg) => showToast(msg, 'error')}
       />
 
       {/* Toast notifications */}

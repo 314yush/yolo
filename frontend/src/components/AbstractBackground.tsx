@@ -65,7 +65,7 @@ export function AbstractBackground() {
         }}
       />
       
-      {/* XRP Blue accent */}
+      {/* Forex / metals accent */}
       <div 
         className="absolute w-12 h-12 sm:w-20 sm:h-20 border-4 border-[#00AAE4] opacity-5"
         style={{

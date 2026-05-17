@@ -61,26 +61,30 @@ class AvantisService:
         return self._client
 
     async def get_pair_index(self, pair: str) -> int:
-        """Get pair index from pair name (e.g., 'BTC/USD' -> 0)."""
+        """Get pair index from pair name (e.g., 'BTC/USD' -> 1)."""
         try:
             return await self.client.pairs_cache.get_pair_index(pair)
         except Exception:
             # Fallback mapping for common pairs
             pair_map = {
-                "BTC/USD": 0,
-                "ETH/USD": 1,
+                "ETH/USD": 0,
+                "BTC/USD": 1,
                 "SOL/USD": 2,
-                "XRP/USD": 3,
+                "USD/JPY": 12,
+                "XAG/USD": 20,
+                "XAU/USD": 21,
             }
             return pair_map.get(pair, 0)
 
     async def get_available_pairs(self) -> list[dict]:
         """Get list of available trading pairs."""
         return [
-            {"name": "BTC/USD", "pair_index": 0},
-            {"name": "ETH/USD", "pair_index": 1},
+            {"name": "ETH/USD", "pair_index": 0},
+            {"name": "BTC/USD", "pair_index": 1},
             {"name": "SOL/USD", "pair_index": 2},
-            {"name": "XRP/USD", "pair_index": 3},
+            {"name": "USD/JPY", "pair_index": 12},
+            {"name": "XAG/USD", "pair_index": 20},
+            {"name": "XAU/USD", "pair_index": 21},
         ]
 
     def _extract_tx_data(self, tx: dict) -> UnsignedTx:
@@ -439,26 +443,12 @@ class AvantisService:
             result = []
             for extended_trade in trades:
                 trade_data = extended_trade.trade
-                
-                # Get pair name from SDK
+
                 sdk_pair_name = await self.client.pairs_cache.get_pair_name_from_index(trade_data.pair_index)
-                
-                # Correct pair name based on price range
+                pair_name = sdk_pair_name
                 open_price = float(trade_data.open_price)
-                if open_price > 50000:
-                    correct_pair = "BTC/USD"
-                elif 1000 < open_price < 5000:
-                    correct_pair = "ETH/USD"
-                elif 50 < open_price < 500:
-                    correct_pair = "SOL/USD"
-                elif 0.1 < open_price < 5:
-                    correct_pair = "XRP/USD"
-                else:
-                    correct_pair = sdk_pair_name
-                
-                pair_name = correct_pair
-                
-                # Get current price
+
+                # Current mark price for gross PnL
                 price_data = prices.get(pair_name)
                 if not price_data and pair_name not in pair_names:
                     corrected_prices = await price_feed_service.get_prices([pair_name])

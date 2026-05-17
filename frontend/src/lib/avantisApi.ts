@@ -6,6 +6,7 @@
  */
 
 import { ASSETS } from './constants';
+import { getPairKey } from './assetPair';
 import { PNL_FEES, pnlFeeByGrossProfitP } from './pnlFees';
 import { logger } from './logger';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
@@ -48,7 +49,7 @@ interface AvantisUserDataResponse {
  */
 function getPairName(pairIndex: number): string {
   const asset = ASSETS.find(a => a.pairIndex === pairIndex);
-  return asset ? `${asset.name}/USD` : `PAIR_${pairIndex}/USD`;
+  return asset ? getPairKey(asset) : `PAIR_${pairIndex}`;
 }
 
 /**
@@ -341,7 +342,7 @@ export async function fetchClosedTrades(
       const t = item.event.args.t;
       const args = item.event.args;
       const asset = ASSETS.find(a => a.pairIndex === t.pairIndex);
-      const pair = asset ? asset.name + '/USD' : `PAIR_${t.pairIndex}/USD`;
+      const pair = asset ? getPairKey(asset) : `PAIR_${t.pairIndex}`;
       
       // Avantis history: closed collateral is args.positionSizeUSDC (fallback to initialPosToken)
       const collateral = Math.max(args.positionSizeUSDC > 0 ? args.positionSizeUSDC : t.initialPosToken, 1e-10);
