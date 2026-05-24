@@ -99,25 +99,32 @@ export default function HomePage() {
         const address = user.wallet.address as `0x${string}`;
         if (address !== userAddress) {
           setUserAddress(address);
-          // Load cached delegate status for this user
-          loadDelegateStatusForUser(address);
-          // Check onboarding: localStorage first (fast), then backend API (for new device / cleared storage)
+        }
+        // Always refresh delegate cache from localStorage when wallet is known (do not gate on
+        // address !== userAddress — Strict Mode / re-renders can skip that branch and leave stale
+        // delegateStatus so SetupFlow never appears.)
+        loadDelegateStatusForUser(address);
+
+        // Onboarding: once per wallet per mount session
+        if (onboardingBootstrappedForRef.current !== address) {
           if (hasCompletedOnboarding(address)) {
+            onboardingBootstrappedForRef.current = address;
             setIsOnboardingComplete(true);
-            setIsReturningUser(true); // Completed before - skip deposit
+            setIsReturningUser(true);
           } else {
             setIsCheckingOnboarding(true);
             try {
               const completed = await getOnboardingStatus(address);
               if (completed) {
                 setIsOnboardingComplete(true);
-                setIsReturningUser(true); // Completed before - skip deposit
-                markOnboardingComplete(address); // Cache locally for same-device fast path
+                setIsReturningUser(true);
+                markOnboardingComplete(address);
               }
             } catch (err) {
               console.warn('[page] getOnboardingStatus failed:', err);
             } finally {
               setIsCheckingOnboarding(false);
+              onboardingBootstrappedForRef.current = address;
             }
           }
         }
@@ -186,6 +193,7 @@ export default function HomePage() {
           setIsVerifyingDelegate(false);
         }
       } else if (!authenticated) {
+        onboardingBootstrappedForRef.current = null;
         // Clear delegate status, onboarding status, and access cache when logged out
         if (userAddress) {
           clearOnboardingStatus(userAddress);
@@ -204,7 +212,11 @@ export default function HomePage() {
   }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus, reset]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playWin, playLose } = useSound();
-  const { balance: usdcBalance, refetch: refetchUsdcBalance } = useUsdcBalance();
+  const {
+    balance: usdcBalance,
+    refetch: refetchUsdcBalance,
+    error: usdcBalanceError,
+  } = useUsdcBalance();
   
   // Access code check (for gating app access)
   const walletAddress = authenticated ? user?.wallet?.address || null : null;
@@ -320,6 +332,8 @@ export default function HomePage() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [showInsufficientFundsModal, setShowInsufficientFundsModal] = useState(false);
   const verifyingRef = useRef<string | null>(null); // Track which address is being verified
+  /** Ensures onboarding bootstrap runs once per wallet (avoids skipping when userAddress already matched Privy). */
+  const onboardingBootstrappedForRef = useRef<string | null>(null);
 
   // Calculate total gross PnL for open trades (for warning banner)
   const totalOpenPnL = React.useMemo(() => {
@@ -836,7 +850,14 @@ export default function HomePage() {
 
   // After onboarding: prompt to deposit USDC before setup (until they have enough and click Continue)
   // Only for first-time new users - returning users skip deposit
-  const needsDeposit = isOnboardingComplete && !isReturningUser && !delegateStatus.isSetup && !isSetupComplete &&
+  // If USDC balance RPC fails locally (bad key, rate limit), balance stays null and users were
+  // stuck on DEPOSIT forever while production skips this screen for returning users. Allow setup.
+  const needsDeposit =
+    isOnboardingComplete &&
+    !isReturningUser &&
+    !delegateStatus.isSetup &&
+    !isSetupComplete &&
+    !usdcBalanceError &&
     (usdcBalance === null || usdcBalance < MIN_DEPOSIT || !isDepositComplete);
   if (needsDeposit) {
     return (

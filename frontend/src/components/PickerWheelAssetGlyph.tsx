@@ -1,6 +1,6 @@
 import React from 'react';
 
-/** Inline SVGs for the picker outer ring — avoids async <image href> fetches so icons paint with the wheel. */
+/** Inline SVG glyphs for the picker ring; USD/JPY uses `/logos/usdjpy.svg` (official Avantis pair art). */
 export function PickerWheelAssetGlyph({
   name,
   x,
@@ -55,12 +55,17 @@ export function PickerWheelAssetGlyph({
         </svg>
       );
     case 'USDJPY':
+      // Official pair art (developer.avantisfi.com — embedded raster in SVG)
       return (
-        <svg {...common} viewBox="0 0 64 64" fill="none">
-          <circle cx="32" cy="32" r="26" stroke="#000000" strokeWidth="3" fill="#E0FDFA" />
-          <text x="32" y="40" textAnchor="middle" fontSize="22" fontWeight={700} fill="#000000" fontFamily="system-ui,sans-serif">
-            &#165;
-          </text>
+        <svg {...common} viewBox="0 0 60 60">
+          <image
+            href="/logos/usdjpy.svg"
+            x={0}
+            y={0}
+            width={60}
+            height={60}
+            preserveAspectRatio="xMidYMid meet"
+          />
         </svg>
       );
     case 'XAU':

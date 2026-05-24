@@ -37,5 +37,15 @@ export async function GET() {
     healthStatus,
     error: error ?? null,
     hint,
+    nodeEnv: process.env.NODE_ENV,
+    privyConfigured: !!process.env.NEXT_PUBLIC_PRIVY_APP_ID,
+    tachyonConfigured: !!process.env.NEXT_PUBLIC_TACHYON_API_KEY,
+    bypassAccessCode: process.env.NEXT_PUBLIC_BYPASS_ACCESS_CODE === 'true',
+    usePrivyExecutionWallet: process.env.NEXT_PUBLIC_USE_PRIVY_EXECUTION_WALLET === 'true',
+    checklist: [
+      'Privy dashboard: add http://localhost:3000 (and your LAN URL if used) under Allowed URLs.',
+      'frontend/.env.local: BACKEND_URL, NEXT_PUBLIC_BASE_RPC_URL, NEXT_PUBLIC_TACHYON_API_KEY (match Vercel).',
+      'Optional local: NEXT_PUBLIC_BYPASS_ACCESS_CODE=true to skip access-code gate.',
+    ],
   });
 }
