@@ -21,6 +21,7 @@ export function usePnL(options: UsePnLOptions = {}) {
   
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastIntervalRef = useRef<number>(interval);
   const retryCountRef = useRef<number>(0);
   const isPollingRef = useRef<boolean>(false);
   const lastErrorRef = useRef<Error | null>(null);
@@ -403,10 +404,11 @@ export function usePnL(options: UsePnLOptions = {}) {
     const shouldPoll = enabled && stage === 'pnl' && userAddress && currentTrade;
     const currentTradeKey = getTradeKey(currentTrade);
     const tradeChanged = currentTradeKey !== lastTradeKeyRef.current;
+    const intervalChanged = interval !== lastIntervalRef.current;
     
     if (shouldPoll) {
-      // Restart polling if trade changed or not currently polling
-      if (tradeChanged || !isPollingRef.current) {
+      // Restart polling if trade changed, interval changed, or not currently polling
+      if (tradeChanged || intervalChanged || !isPollingRef.current) {
         // Stop existing polling if any
         if (isPollingRef.current) {
           if (intervalRef.current) {
@@ -419,8 +421,9 @@ export function usePnL(options: UsePnLOptions = {}) {
           }
         }
         
-        // Update trade key
+        // Update trade key and interval
         lastTradeKeyRef.current = currentTradeKey;
+        lastIntervalRef.current = interval;
         isPollingRef.current = true;
         retryCountRef.current = 0;
         positionDisappearedAtRef.current = null;

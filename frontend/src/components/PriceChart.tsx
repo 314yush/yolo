@@ -78,6 +78,80 @@ function toSecondTimestamp(time: number): number {
   return time > 1e12 ? Math.floor(time / 1000) : Math.floor(time);
 }
 
+type ReferenceLineRefs = {
+  entry: React.MutableRefObject<IPriceLine | null>;
+  liq: React.MutableRefObject<IPriceLine | null>;
+  target: React.MutableRefObject<IPriceLine | null>;
+};
+
+function syncReferenceLines(
+  series: ISeriesApi<'Area'>,
+  lineRefs: ReferenceLineRefs,
+  entryPrice: number | null | undefined,
+  liquidationPrice: number | null | undefined,
+  targetPrice: number | null | undefined,
+) {
+  if (lineRefs.entry.current) {
+    try {
+      series.removePriceLine(lineRefs.entry.current);
+    } catch {
+      // no-op
+    }
+    lineRefs.entry.current = null;
+  }
+
+  if (lineRefs.liq.current) {
+    try {
+      series.removePriceLine(lineRefs.liq.current);
+    } catch {
+      // no-op
+    }
+    lineRefs.liq.current = null;
+  }
+
+  if (lineRefs.target.current) {
+    try {
+      series.removePriceLine(lineRefs.target.current);
+    } catch {
+      // no-op
+    }
+    lineRefs.target.current = null;
+  }
+
+  if (entryPrice && entryPrice > 0) {
+    lineRefs.entry.current = series.createPriceLine({
+      price: entryPrice,
+      color: COLORS.entry,
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'Entry',
+    });
+  }
+
+  if (liquidationPrice && liquidationPrice > 0) {
+    lineRefs.liq.current = series.createPriceLine({
+      price: liquidationPrice,
+      color: COLORS.liquidation,
+      lineWidth: 1,
+      lineStyle: LineStyle.SparseDotted,
+      axisLabelVisible: true,
+      title: 'Liq',
+    });
+  }
+
+  if (targetPrice && targetPrice > 0) {
+    lineRefs.target.current = series.createPriceLine({
+      price: targetPrice,
+      color: COLORS.target,
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      axisLabelVisible: true,
+      title: 'Target',
+    });
+  }
+}
+
 function PriceChartComponent({
   assetPair,
   entryPrice = null,
@@ -105,6 +179,10 @@ function PriceChartComponent({
   /** 1m OHLC from Avantis TV history → line points; consumed once to seed buffer */
   const avantisHistoryLineRef = useRef<LineData[] | null>(null);
   const [historyReadyTick, setHistoryReadyTick] = useState(0);
+  const referenceLineRefs = useMemo(
+    () => ({ entry: entryLineRef, liq: liqLineRef, target: targetLineRef }),
+    [],
+  );
 
   const initialLineColor = useMemo(() => (pnl >= 0 ? COLORS.lineUp : COLORS.lineDown), [pnl]);
 
@@ -209,6 +287,7 @@ function PriceChartComponent({
 
     chartRef.current = chart;
     seriesRef.current = series;
+    syncReferenceLines(series, referenceLineRefs, entryPrice, liquidationPrice, targetPrice);
     previousLineColorRef.current = initialLineColor;
     // Type assertion: lightweight-charts Time generic mismatch between series and plugin API
     seriesMarkersRef.current = createSeriesMarkers(series, []) as NonNullable<typeof seriesMarkersRef.current>;
@@ -245,67 +324,14 @@ function PriceChartComponent({
 
   useEffect(() => {
     if (!seriesRef.current) return;
-
-    if (entryLineRef.current) {
-      try {
-        seriesRef.current.removePriceLine(entryLineRef.current);
-      } catch {
-        // no-op
-      }
-      entryLineRef.current = null;
-    }
-
-    if (liqLineRef.current) {
-      try {
-        seriesRef.current.removePriceLine(liqLineRef.current);
-      } catch {
-        // no-op
-      }
-      liqLineRef.current = null;
-    }
-
-    if (targetLineRef.current) {
-      try {
-        seriesRef.current.removePriceLine(targetLineRef.current);
-      } catch {
-        // no-op
-      }
-      targetLineRef.current = null;
-    }
-
-    if (entryPrice && entryPrice > 0) {
-      entryLineRef.current = seriesRef.current.createPriceLine({
-        price: entryPrice,
-        color: COLORS.entry,
-        lineWidth: 2,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'Entry',
-      });
-    }
-
-    if (liquidationPrice && liquidationPrice > 0) {
-      liqLineRef.current = seriesRef.current.createPriceLine({
-        price: liquidationPrice,
-        color: COLORS.liquidation,
-        lineWidth: 1,
-        lineStyle: LineStyle.SparseDotted,
-        axisLabelVisible: true,
-        title: 'Liq',
-      });
-    }
-
-    if (targetPrice && targetPrice > 0) {
-      targetLineRef.current = seriesRef.current.createPriceLine({
-        price: targetPrice,
-        color: COLORS.target,
-        lineWidth: 2,
-        lineStyle: LineStyle.Solid,
-        axisLabelVisible: true,
-        title: 'Target',
-      });
-    }
-  }, [entryPrice, liquidationPrice, targetPrice]);
+    syncReferenceLines(
+      seriesRef.current,
+      referenceLineRefs,
+      entryPrice,
+      liquidationPrice,
+      targetPrice,
+    );
+  }, [entryPrice, liquidationPrice, targetPrice, referenceLineRefs]);
 
   useEffect(() => {
     if (!assetPair || !seriesRef.current || !chartRef.current) return;

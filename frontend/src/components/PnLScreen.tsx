@@ -108,7 +108,9 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
 
   // usePositionSync is mounted in page.tsx (has access to balance refetch + open trades).
   // usePnL runs as reconciliation + liquidation monitor at a slower interval.
-  const pollInterval = currentTrade?.tradeIndex === 0 ? 1500 : 4000;
+  const rawLiqForPoll = currentTrade?.liquidationPrice ?? pnlData?.trade?.liquidationPrice ?? 0;
+  const pollInterval =
+    rawLiqForPoll <= 0 ? 600 : currentTrade?.tradeIndex === 0 ? 1500 : 4000;
   usePnL({ enabled: true, interval: pollInterval });
 
   // Live mark from store (Avantis feed-v3 → Hermes fallback, via useLivePricesSync)
@@ -263,6 +265,12 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const rawLiqPrice = currentTrade?.liquidationPrice ?? pnlData?.trade?.liquidationPrice ?? 0;
   const hasRealTradeData = rawLiqPrice > 0 || isLiquidated || isTakeProfitHit;
   const liquidationPrice = hasRealTradeData ? rawLiqPrice : null;
+  const isLiqPending =
+    !isLiquidated &&
+    !isTakeProfitHit &&
+    !isConfirming &&
+    rawLiqPrice <= 0 &&
+    (currentTrade?.openPrice ?? pnlData?.trade?.openPrice ?? 0) > 0;
 
   // Entry line: use open price as soon as it exists (wheel placeholder + API). Do NOT gate on
   // hasRealTradeData — that waits for liquidation from Avantis (~15–20s), so the entry line was late or missing.
@@ -585,7 +593,11 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
         <div className="flex flex-col items-center">
           <span className="text-white/40" style={{ fontSize: '0.65rem' }}>Liq</span>
           <span className="font-bold" style={{ fontSize: '0.8rem', color: '#FF006E' }}>
-            -${collateral.toFixed(2)}
+            {isLiqPending ? (
+              <span className="text-white/50 font-normal" style={{ fontSize: '0.7rem' }}>Updating…</span>
+            ) : (
+              <>-${collateral.toFixed(2)}</>
+            )}
           </span>
         </div>
       </div>

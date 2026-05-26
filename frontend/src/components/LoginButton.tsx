@@ -15,19 +15,10 @@ interface LoginButtonProps {
 export function LoginButton({ label = 'SIGN IN', variant = 'default' }: LoginButtonProps) {
   const { login, logout, authenticated, user, ready } = usePrivy();
   const { fundWallet } = useFundWallet();
-  const { setUserAddress, reset } = useTradeStore();
+  const { reset } = useTradeStore();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-
-  // Update store with user address when authenticated
-  useEffect(() => {
-    if (authenticated && user?.wallet?.address) {
-      setUserAddress(user.wallet.address as `0x${string}`);
-    } else {
-      setUserAddress(null);
-    }
-  }, [authenticated, user, setUserAddress]);
 
   useEffect(() => {
     if (!isMenuOpen) return;

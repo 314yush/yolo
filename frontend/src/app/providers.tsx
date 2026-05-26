@@ -7,6 +7,7 @@ import { base } from 'wagmi/chains';
 import { useState, type ReactNode } from 'react';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { AuthenticatedPriceSync } from '@/components/AuthenticatedPriceSync';
+import { PrivyWalletAddressSync } from '@/components/PrivyWalletAddressSync';
 
 // Wagmi config for Base
 const wagmiConfig = createConfig({
@@ -67,6 +68,7 @@ export function Providers({ children }: ProvidersProps) {
     >
       <QueryClientProvider client={queryClient}>
         <WagmiProvider config={wagmiConfig}>
+          <PrivyWalletAddressSync />
           <OfflineBanner />
           <AuthenticatedPriceSync />
           {children}

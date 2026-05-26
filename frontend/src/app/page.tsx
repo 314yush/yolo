@@ -58,7 +58,6 @@ export default function HomePage() {
     flipExcludedPositionKey,
     setStage,
     userAddress,
-    setUserAddress,
     delegateStatus,
     loadDelegateStatusForUser,
     collateral,
@@ -89,17 +88,11 @@ export default function HomePage() {
   const { isOnline } = useNetworkStatus();
   const { checkDelegateStatus } = useAvantisAPI();
   
-  // Ensure userAddress is set when user is authenticated
-  // Also load cached delegate status for this user
-  // Check onboarding status
-  // CRITICAL: Verify on-chain delegate status before trusting cache
+  // Load cached delegate status for authenticated user; verify on-chain when cache says setup is complete.
   useEffect(() => {
     async function verifyDelegateStatus() {
       if (authenticated && user?.wallet?.address) {
         const address = user.wallet.address as `0x${string}`;
-        if (address !== userAddress) {
-          setUserAddress(address);
-        }
         // Always refresh delegate cache from localStorage when wallet is known (do not gate on
         // address !== userAddress — Strict Mode / re-renders can skip that branch and leave stale
         // delegateStatus so SetupFlow never appears.)
@@ -209,7 +202,7 @@ export default function HomePage() {
     }
 
     verifyDelegateStatus();
-  }, [authenticated, user, userAddress, setUserAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus, reset]);
+  }, [authenticated, user, userAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus, reset]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
   const { playWin, playLose } = useSound();
   const {
@@ -994,7 +987,7 @@ export default function HomePage() {
                     {openTrades.length} open • {totalOpenPnL >= 0 ? '+' : ''}${totalOpenPnL.toFixed(2)} P&L
                   </span>
                   {' '}
-                  <a
+                  <Link
                     href="/activity"
                     className="font-semibold underline hover:no-underline touch-manipulation font-mono"
                     style={{
@@ -1003,7 +996,7 @@ export default function HomePage() {
                     aria-label={`View ${openTrades.length} open position${openTrades.length !== 1 ? 's' : ''}`}
                   >
                     view
-                  </a>
+                  </Link>
                 </div>
               )}
               <div
