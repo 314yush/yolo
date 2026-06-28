@@ -30,8 +30,6 @@ export default function ActivityPage() {
     removeToast,
     tradeStats,
     showToast,
-    lastClosedTradeForShare,
-    setLastClosedTradeForShare,
   } = useTradeStore(
     useShallow((s) => ({
       userAddress: s.userAddress,
@@ -39,8 +37,6 @@ export default function ActivityPage() {
       removeToast: s.removeToast,
       tradeStats: s.tradeStats,
       showToast: s.showToast,
-      lastClosedTradeForShare: s.lastClosedTradeForShare,
-      setLastClosedTradeForShare: s.setLastClosedTradeForShare,
     }))
   );
 
@@ -65,6 +61,12 @@ export default function ActivityPage() {
   // UI state (declared before usePositionSync so onClose can reconcile shareTrade)
   const [showClosedTrades, setShowClosedTrades] = useState(false);
   const [shareTrade, setShareTrade] = useState<ClosedTrade | null>(null);
+  const [shareDismissNavigatesHome, setShareDismissNavigatesHome] = useState(false);
+
+  const openShareCard = useCallback((trade: ClosedTrade, navigateHomeOnDismiss = false) => {
+    setShareDismissNavigatesHome(navigateHomeOnDismiss);
+    setShareTrade(trade);
+  }, []);
 
   // Pusher-driven position sync
   usePositionSync({
@@ -129,7 +131,7 @@ export default function ActivityPage() {
     setOpenTrades,
     setClosedTrades,
     setShowClosedTrades,
-    setShareTrade,
+    openShareCard,
     setStats: () => refresh(), // Refresh stats after actions
     refresh,
   });
@@ -138,36 +140,6 @@ export default function ActivityPage() {
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  // Open share modal when arriving from home after closing a trade
-  useEffect(() => {
-    if (!lastClosedTradeForShare) return;
-    if (userAddress && isLoadingOpen) return;
-
-    if (openTrades.length > 0) {
-      setLastClosedTradeForShare(null);
-      return;
-    }
-
-    const toShare = lastClosedTradeForShare;
-    setShareTrade(toShare);
-    setLastClosedTradeForShare(null);
-    setShowClosedTrades(true);
-    setClosedTrades((prev) => {
-      const exists = prev.some(
-        (t) => t.pairIndex === toShare.pairIndex && t.tradeIndex === toShare.tradeIndex
-      );
-      if (exists) return prev;
-      return [toShare, ...prev];
-    });
-  }, [
-    lastClosedTradeForShare,
-    setLastClosedTradeForShare,
-    userAddress,
-    isLoadingOpen,
-    openTrades.length,
-    setClosedTrades,
-  ]);
 
   // Scroll to top when share modal opens
   useEffect(() => {
@@ -284,7 +256,7 @@ export default function ActivityPage() {
           isOnline={isOnline}
           onFlip={flip}
           onClose={close}
-          onShare={setShareTrade}
+          onShare={(trade) => openShareCard(trade)}
           onSwitchToOpen={() => setShowClosedTrades(false)}
           hasActionInProgress={hasActionInProgress}
         />
@@ -297,7 +269,13 @@ export default function ActivityPage() {
       {shareTrade && (
         <ShareBottomSheet
           trade={shareTrade}
-          onClose={() => setShareTrade(null)}
+          onClose={() => {
+            setShareTrade(null);
+            if (shareDismissNavigatesHome) {
+              setShareDismissNavigatesHome(false);
+              router.push('/');
+            }
+          }}
           onCopy={() => showToast('Copied to clipboard', 'success')}
           onDownload={() => showToast('Downloaded', 'success')}
           onShare={() => showToast('Shared!', 'success')}

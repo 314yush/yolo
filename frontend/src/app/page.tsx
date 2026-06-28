@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { usePrivy } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
@@ -50,8 +50,12 @@ import { getPairKey } from '@/lib/assetPair';
 import { debug } from '@/lib/debug';
 import { Dice5, Loader2, Wallet } from 'lucide-react';
 
+const ShareBottomSheet = dynamic(
+  () => import('@/components/ShareBottomSheet').then((m) => ({ default: m.ShareBottomSheet })),
+  { ssr: false }
+);
+
 export default function HomePage() {
-  const router = useRouter();
   const { authenticated, ready, user, login } = usePrivy();
   const {
     stage,
@@ -74,6 +78,7 @@ export default function HomePage() {
     removeToast,
     showToast,
     prices,
+    lastClosedTradeForShare,
     setLastClosedTradeForShare,
     setPositionSource,
   } = useTradeStore();
@@ -672,12 +677,6 @@ export default function HomePage() {
         });
       }
 
-      const pnlStr = netPnl >= 0 ? `+$${netPnl.toFixed(2)}` : `-$${Math.abs(netPnl).toFixed(2)}`;
-      showToast(`Closed! PnL: ${pnlStr}`, 'success', undefined, {
-        label: 'SHARE',
-        onClick: () => router.push('/activity'),
-      });
-      
       // Reset and go back to idle immediately (don't wait for reconciliation)
       reset();
       void refetchOpenTrades();
@@ -711,7 +710,7 @@ export default function HomePage() {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades, router]);
+  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades]);
 
   handleCloseTradeRef.current = handleCloseTrade;
 
@@ -1137,6 +1136,18 @@ export default function HomePage() {
         onFundingComplete={refetchUsdcBalance}
         onFundingError={(msg) => showToast(msg, 'error')}
       />
+
+      {/* Share card after user-initiated close */}
+      {lastClosedTradeForShare && (
+        <ShareBottomSheet
+          trade={lastClosedTradeForShare}
+          onClose={() => setLastClosedTradeForShare(null)}
+          onCopy={() => showToast('Copied to clipboard', 'success')}
+          onDownload={() => showToast('Downloaded', 'success')}
+          onShare={() => showToast('Shared!', 'success')}
+          onShareOnX={(m) => m === 'clipboard' && showToast('Image copied — paste it in your tweet', 'info')}
+        />
+      )}
 
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />

@@ -17,7 +17,7 @@ export interface UseActivityActionsProps {
   setOpenTrades: React.Dispatch<React.SetStateAction<Array<{ trade: Trade; pnlData?: PnLData }>>>;
   setClosedTrades: React.Dispatch<React.SetStateAction<ClosedTrade[]>>;
   setShowClosedTrades: (show: boolean) => void;
-  setShareTrade: (trade: ClosedTrade | null) => void;
+  openShareCard: (trade: ClosedTrade, navigateHomeOnDismiss?: boolean) => void;
   setStats: React.Dispatch<React.SetStateAction<{ total_trades: number; total_volume: number; total_pnl: number; win_rate: number; open_trades: number } | null>>;
   refresh: () => void;
 }
@@ -34,7 +34,7 @@ export function useActivityActions({
   setOpenTrades,
   setClosedTrades,
   setShowClosedTrades,
-  setShareTrade,
+  openShareCard,
   setStats,
   refresh,
 }: UseActivityActionsProps): UseActivityActionsReturn {
@@ -286,8 +286,6 @@ export function useActivityActions({
         setClosedTrades((prev) => [newClosed, ...prev.filter((t) => t.pairIndex !== trade.pairIndex || t.tradeIndex !== trade.tradeIndex)]);
       }
 
-      const netPnl = finalPnL?.pnl ?? 0;
-      const pnlStr = netPnl >= 0 ? `+$${netPnl.toFixed(2)}` : `-$${Math.abs(netPnl).toFixed(2)}`;
       const closedForShare: ClosedTrade = {
         ...trade,
         closedAt: Date.now(),
@@ -297,13 +295,7 @@ export function useActivityActions({
         closeTxHash: closeTxHash as `0x${string}`,
         isLiquidated: false,
       };
-      showToast(`Closed! PnL: ${pnlStr}`, 'success', undefined, {
-        label: 'SHARE',
-        onClick: () => {
-          setShowClosedTrades(true);
-          setShareTrade(closedForShare);
-        },
-      });
+      openShareCard(closedForShare, true);
 
       const refreshAfterClose = async () => {
         if (!userAddress) return;
@@ -346,7 +338,7 @@ export function useActivityActions({
       setClosingIndex(null);
       setIsIntentionalClose(false);
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, openTrades, showToast, setIsIntentionalClose, playWin, playLose, signAndWait, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setShowClosedTrades, setShareTrade, setStats, getTrades, getPnL]);
+  }, [userAddress, delegateAddress, delegateStatus.isSetup, openTrades, showToast, setIsIntentionalClose, playWin, playLose, signAndWait, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setShowClosedTrades, openShareCard, setStats, getTrades, getPnL]);
 
   return {
     flip,
