@@ -9,14 +9,25 @@ interface NavFooterProps {
   showRollButton?: boolean;
   rollButton?: React.ReactNode;
   warnOnNavigate?: boolean;
+  /** Base path for nav links (default `/`) */
+  basePath?: string;
 }
 
-export function NavFooter({ openTradesCount, showRollButton, rollButton, warnOnNavigate }: NavFooterProps) {
+export function NavFooter({
+  openTradesCount,
+  showRollButton,
+  rollButton,
+  warnOnNavigate,
+  basePath = '/',
+}: NavFooterProps) {
   const handleNavClick = (e: React.MouseEvent) => {
     if (warnOnNavigate && !window.confirm('A trade is in progress. Leave this page anyway?')) {
       e.preventDefault();
     }
   };
+
+  const activityHref = basePath === '/' ? '/activity' : `${basePath}/activity`;
+  const settingsHref = basePath === '/' ? '/settings' : `${basePath}/settings`;
 
   return (
     <footer
@@ -28,14 +39,14 @@ export function NavFooter({ openTradesCount, showRollButton, rollButton, warnOnN
 
         <nav className="flex justify-around items-center py-1.5" aria-label="Main navigation" role="navigation">
           <Link
-            href="/"
+            href={basePath}
             className="p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
             aria-label="Home"
           >
             <Dice5 className="w-5 h-5 text-[#CCFF00]" strokeWidth={2.5} />
           </Link>
           <Link
-            href="/activity"
+            href={activityHref}
             onClick={handleNavClick}
             className="relative p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
             aria-label={`Activity${openTradesCount > 0 ? `, ${openTradesCount} open trade${openTradesCount !== 1 ? 's' : ''}` : ''}`}
@@ -52,7 +63,7 @@ export function NavFooter({ openTradesCount, showRollButton, rollButton, warnOnN
             )}
           </Link>
           <Link
-            href="/settings"
+            href={settingsHref}
             onClick={handleNavClick}
             className="p-2 touch-manipulation min-h-[44px] min-w-[44px] flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black rounded"
             aria-label="Settings"

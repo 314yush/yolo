@@ -22,6 +22,10 @@ interface PnLScreenProps {
   onClose: () => void;
   onRollAgain: () => void;
   isClosing: boolean;
+  /** Paper mode: skip on-chain hooks and use external flip handler */
+  paperMode?: boolean;
+  onFlip?: () => Promise<void>;
+  isFlippingExternal?: boolean;
 }
 
 // Gamification messages based on PnL state
@@ -51,9 +55,17 @@ function formatElapsed(seconds: number): string {
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}m`;
 }
 
-export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
+export function PnLScreen({
+  onClose,
+  onRollAgain,
+  isClosing,
+  paperMode = false,
+  onFlip,
+  isFlippingExternal = false,
+}: PnLScreenProps) {
   const { selection, pnlData, currentTrade, confirmationStage, txHash, isLiquidated, isTakeProfitHit, lastKnownPnLPercentage, showToast, settings } = useTradeStore();
-  const { flipTrade, isFlipping } = useFlipTrade();
+  const { flipTrade, isFlipping: isFlippingOnChain } = useFlipTrade();
+  const isFlipping = paperMode ? isFlippingExternal : isFlippingOnChain;
   const { playFlip } = useSound();
   const { isOnline } = useNetworkStatus();
   const [prevPnl, setPrevPnl] = useState<number | null>(null);
@@ -103,15 +115,15 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
   const isConfirming = confirmationStage !== 'none' && confirmationStage !== 'confirmed' && confirmationStage !== 'failed';
 
   // Activate pre-building when trade exists
-  usePrebuiltCloseTx();
-  usePrebuiltFlipTx();
+  usePrebuiltCloseTx({ enabled: !paperMode });
+  usePrebuiltFlipTx({ enabled: !paperMode });
 
   // usePositionSync is mounted in page.tsx (has access to balance refetch + open trades).
   // usePnL runs as reconciliation + liquidation monitor at a slower interval.
   const rawLiqForPoll = currentTrade?.liquidationPrice ?? pnlData?.trade?.liquidationPrice ?? 0;
   const pollInterval =
     rawLiqForPoll <= 0 ? 600 : currentTrade?.tradeIndex === 0 ? 1500 : 4000;
-  usePnL({ enabled: true, interval: pollInterval });
+  usePnL({ enabled: !paperMode, interval: pollInterval });
 
   // Live mark from store (Avantis feed-v3 → Hermes fallback, via useLivePricesSync)
   const assetPair = currentTrade?.pair ?? pnlData?.trade?.pair ?? (selection?.asset ? getPairKey(selection.asset) : null);
@@ -195,7 +207,11 @@ export function PnLScreen({ onClose, onRollAgain, isClosing }: PnLScreenProps) {
     vibrateMedium();
     playFlip();
     try {
-      await flipTrade(currentTrade);
+      if (paperMode && onFlip) {
+        await onFlip();
+      } else {
+        await flipTrade(currentTrade);
+      }
     } catch (error) {
       console.error('Failed to flip trade:', error);
       showToast(

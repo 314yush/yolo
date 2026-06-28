@@ -8,7 +8,9 @@ import { useLivePricesSync } from '@/hooks/useLivePrices';
 function needsLivePrices(pathname: string | null): boolean {
   if (!pathname) return false;
   if (pathname === '/') return true;
-  return pathname === '/activity' || pathname.startsWith('/activity/');
+  if (pathname === '/activity' || pathname.startsWith('/activity/')) return true;
+  if (pathname === '/paper' || pathname.startsWith('/paper/')) return true;
+  return false;
 }
 
 function LivePricesSyncInner() {
@@ -17,14 +19,16 @@ function LivePricesSyncInner() {
 }
 
 /**
- * Mounts live oracle sync only when the user is signed in and on a trading surface.
- * Avoids price traffic on landing and static pages (privacy, terms, settings).
+ * Mounts live oracle sync when signed in on trading surfaces, or on paper routes (guest).
  */
 export function AuthenticatedPriceSync() {
   const { authenticated, ready } = usePrivy();
   const pathname = usePathname();
 
-  if (!ready || !authenticated || !needsLivePrices(pathname)) {
+  const isPaperRoute = pathname === '/paper' || pathname?.startsWith('/paper/');
+  const shouldSync = ready && needsLivePrices(pathname) && (authenticated || isPaperRoute);
+
+  if (!shouldSync) {
     return null;
   }
 

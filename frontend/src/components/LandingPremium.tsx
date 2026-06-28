@@ -1,8 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import React, { useCallback, useMemo } from 'react';
 import { motion, useMotionValue, useTransform, type MotionValue } from 'framer-motion';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, FileText } from 'lucide-react';
 import { ASSETS } from '@/lib/constants';
 
 function XIcon({ className }: { className?: string }) {
@@ -371,6 +372,14 @@ export function LandingPremium({ onLogin }: { onLogin: () => void }) {
           >
             <XIcon className="w-5 h-5 sm:w-5 sm:h-5" />
           </a>
+          <Link
+            href="/paper"
+            className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-white/60 hover:text-[#C6FF00] hover:bg-[#C6FF00]/10 transition-colors touch-manipulation border border-transparent hover:border-[#C6FF00]/30"
+            aria-label="Try paper trading — no wallet needed, live prices"
+            title="Paper Trading"
+          >
+            <FileText className="w-5 h-5 sm:w-5 sm:h-5" strokeWidth={2} />
+          </Link>
         </nav>
       </header>
 

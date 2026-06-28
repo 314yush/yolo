@@ -18,7 +18,8 @@ const TTL_MS = 30000; // 30 seconds
  * - Price moves significantly (> 0.5%)
  * - TTL expires (30 seconds)
  */
-export function usePrebuiltFlipTx() {
+export function usePrebuiltFlipTx(options: { enabled?: boolean } = {}) {
+  const { enabled = true } = options;
   const {
     currentTrade,
     userAddress,
@@ -102,16 +103,18 @@ export function usePrebuiltFlipTx() {
 
   // Rebuild when trade changes
   useEffect(() => {
+    if (!enabled) return;
     const currentKey = getTradeKey();
     if (currentKey && prebuildMetaRef.current?.tradeKey !== currentKey) {
       debouncedBuild();
     } else if (!currentKey) {
       setPrebuiltFlipTxs(null);
     }
-  }, [currentTrade, getTradeKey, debouncedBuild, setPrebuiltFlipTxs]);
+  }, [currentTrade, getTradeKey, debouncedBuild, setPrebuiltFlipTxs, enabled]);
 
   // Check price movement and TTL
   useEffect(() => {
+    if (!enabled) return;
     if (!currentTrade || !prebuiltFlipTxs || !prebuildMetaRef.current) return;
 
     const pair = currentTrade.pair;
@@ -126,14 +129,15 @@ export function usePrebuiltFlipTx() {
     if (now - meta.timestamp > TTL_MS || priceChange > PRICE_TOLERANCE_PERCENT) {
       debouncedBuild();
     }
-  }, [currentTrade, prebuiltFlipTxs, prices, debouncedBuild]);
+  }, [currentTrade, prebuiltFlipTxs, prices, debouncedBuild, enabled]);
 
   // Initial build
   useEffect(() => {
+    if (!enabled) return;
     if (currentTrade && userAddress && delegateAddress && !prebuiltFlipTxs && !isBuildingRef.current) {
       debouncedBuild();
     }
-  }, [currentTrade, userAddress, delegateAddress, prebuiltFlipTxs, debouncedBuild]);
+  }, [currentTrade, userAddress, delegateAddress, prebuiltFlipTxs, debouncedBuild, enabled]);
 
   // Cleanup
   useEffect(() => {

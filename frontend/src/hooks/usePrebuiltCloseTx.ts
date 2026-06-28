@@ -15,7 +15,8 @@ const REBUILD_DEBOUNCE_MS = 100;
  * - currentTrade changes
  * - openTrades changes (in case tradeIndex changes)
  */
-export function usePrebuiltCloseTx() {
+export function usePrebuiltCloseTx(options: { enabled?: boolean } = {}) {
+  const { enabled = true } = options;
   const {
     currentTrade,
     openTrades,
@@ -83,20 +84,22 @@ export function usePrebuiltCloseTx() {
 
   // Rebuild when trade changes
   useEffect(() => {
+    if (!enabled) return;
     const currentKey = getTradeKey();
     if (currentKey && prebuildMetaRef.current?.tradeKey !== currentKey) {
       debouncedBuild();
     } else if (!currentKey) {
       setPrebuiltCloseTx(null);
     }
-  }, [currentTrade, openTrades, getTradeKey, debouncedBuild, setPrebuiltCloseTx]);
+  }, [currentTrade, openTrades, getTradeKey, debouncedBuild, setPrebuiltCloseTx, enabled]);
 
   // Initial build
   useEffect(() => {
+    if (!enabled) return;
     if (currentTrade && userAddress && delegateAddress && !prebuiltCloseTx && !isBuildingRef.current) {
       debouncedBuild();
     }
-  }, [currentTrade, userAddress, delegateAddress, prebuiltCloseTx, debouncedBuild]);
+  }, [currentTrade, userAddress, delegateAddress, prebuiltCloseTx, debouncedBuild, enabled]);
 
   // Cleanup
   useEffect(() => {

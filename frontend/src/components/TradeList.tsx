@@ -59,14 +59,18 @@ interface TradeListProps {
   onShare: (trade: ClosedTrade) => void;
   onSwitchToOpen: () => void;
   hasActionInProgress: boolean;
+  /** Home route for empty-state "Roll now" (default `/`) */
+  homePath?: string;
 }
 
 const EmptyOpenState = React.memo(function EmptyOpenState({
   isOnline,
   hasActionInProgress,
+  homePath = '/',
 }: {
   isOnline: boolean;
   hasActionInProgress: boolean;
+  homePath?: string;
 }) {
   const router = useRouter();
 
@@ -74,8 +78,8 @@ const EmptyOpenState = React.memo(function EmptyOpenState({
     if (hasActionInProgress && !window.confirm('A trade action is in progress. Leave this page anyway?')) {
       return;
     }
-    router.push('/');
-  }, [hasActionInProgress, router]);
+    router.push(homePath);
+  }, [hasActionInProgress, router, homePath]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
@@ -161,6 +165,7 @@ export const TradeList = React.memo(function TradeList({
   onShare,
   onSwitchToOpen,
   hasActionInProgress,
+  homePath = '/',
 }: TradeListProps) {
   const [displayedClosedCount, setDisplayedClosedCount] = useState(12);
   const prices = useTradeStore((s) => s.prices);
@@ -232,6 +237,7 @@ export const TradeList = React.memo(function TradeList({
       <EmptyOpenState
         isOnline={isOnline}
         hasActionInProgress={hasActionInProgress}
+        homePath={homePath}
       />
     );
   }
