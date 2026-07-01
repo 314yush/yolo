@@ -10,6 +10,7 @@ import { vibrateMedium } from '@/lib/haptics';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { logTradeCloseByPosition, logTradeOpen, getActivityStats } from '@/lib/activityApi';
 import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
+import { POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 export interface UseActivityActionsProps {
@@ -254,6 +255,10 @@ export function useActivityActions({
         playLose();
       }
 
+      const netPnl = finalPnL?.pnl ?? 0;
+      const pnlStr = netPnl >= 0 ? `+$${netPnl.toFixed(2)}` : `-$${Math.abs(netPnl).toFixed(2)}`;
+      showToast(`Closed! PnL: ${pnlStr}`, 'success');
+
       if (userAddress) {
         saveClosedTrade(userAddress, trade, finalPnL, { closeTxHash });
         logTradeCloseByPosition({
@@ -295,7 +300,7 @@ export function useActivityActions({
         closeTxHash: closeTxHash as `0x${string}`,
         isLiquidated: false,
       };
-      openShareCard(closedForShare, true);
+      window.setTimeout(() => openShareCard(closedForShare, true), POST_CLOSE_SHARE_DELAY_MS);
 
       const refreshAfterClose = async () => {
         if (!userAddress) return;

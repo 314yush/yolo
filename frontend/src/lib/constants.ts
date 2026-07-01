@@ -121,3 +121,6 @@ export const TACHYON_BENEFICIARY = '0x4C16955d8A0DcB2e7826d50f4114990c787b21E7' 
 // Toggle Privy embedded-wallet execution path for trade relay.
 // Keep off by default so existing delegate flow remains unchanged unless explicitly enabled.
 export const USE_PRIVY_EXECUTION_WALLET = process.env.NEXT_PUBLIC_USE_PRIVY_EXECUTION_WALLET === 'true';
+
+/** Delay after close toast/sound before opening the share card. */
+export const POST_CLOSE_SHARE_DELAY_MS = 1200;

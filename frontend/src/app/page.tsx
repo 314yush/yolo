@@ -45,7 +45,7 @@ import {
 } from '@/lib/avantisEncoder';
 import type { Trade, ClosedTrade, PnLData } from '@/types';
 import { fetchRecentClosedTradeMatch } from '@/lib/avantisApi';
-import { MIN_DEPOSIT } from '@/lib/constants';
+import { MIN_DEPOSIT, POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
 import { getPairKey } from '@/lib/assetPair';
 import { debug } from '@/lib/debug';
 import { Dice5, Loader2, Wallet } from 'lucide-react';
@@ -329,6 +329,7 @@ export default function HomePage() {
   const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(false);
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [showInsufficientFundsModal, setShowInsufficientFundsModal] = useState(false);
+  const [showPostCloseShare, setShowPostCloseShare] = useState(false);
   const verifyingRef = useRef<string | null>(null); // Track which address is being verified
   /** Ensures onboarding bootstrap runs once per wallet (avoids skipping when userAddress already matched Privy). */
   const onboardingBootstrappedForRef = useRef<string | null>(null);
@@ -649,6 +650,9 @@ export default function HomePage() {
         playLose();
       }
 
+      const pnlStr = netPnl >= 0 ? `+$${netPnl.toFixed(2)}` : `-$${Math.abs(netPnl).toFixed(2)}`;
+      showToast(`Closed! PnL: ${pnlStr}`, 'success');
+
       if (userAddress && currentTrade) {
         saveClosedTrade(userAddress, currentTrade, pnlData, {
           closeTxHash,
@@ -713,6 +717,17 @@ export default function HomePage() {
   }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades]);
 
   handleCloseTradeRef.current = handleCloseTrade;
+
+  // Show share card after close notification (toast + sound) has a moment to land
+  useEffect(() => {
+    if (!lastClosedTradeForShare) {
+      setShowPostCloseShare(false);
+      return;
+    }
+    setShowPostCloseShare(false);
+    const timer = window.setTimeout(() => setShowPostCloseShare(true), POST_CLOSE_SHARE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [lastClosedTradeForShare]);
 
   // Handle roll again
   const handleRollAgain = useCallback(() => {
@@ -1138,10 +1153,13 @@ export default function HomePage() {
       />
 
       {/* Share card after user-initiated close */}
-      {lastClosedTradeForShare && (
+      {showPostCloseShare && lastClosedTradeForShare && (
         <ShareBottomSheet
           trade={lastClosedTradeForShare}
-          onClose={() => setLastClosedTradeForShare(null)}
+          onClose={() => {
+            setShowPostCloseShare(false);
+            setLastClosedTradeForShare(null);
+          }}
           onCopy={() => showToast('Copied to clipboard', 'success')}
           onDownload={() => showToast('Downloaded', 'success')}
           onShare={() => showToast('Shared!', 'success')}
