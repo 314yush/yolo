@@ -78,6 +78,10 @@ function isFinitePositive(n: number): boolean {
 /**
  * Calculate PnL for a position
  *
+ * v2 note: protocol PnL now includes funding and applies spread on close.
+ * This client estimate remains mark-vs-entry for UX speed; reconcile against
+ * history/user-data after fills. Full UI-parity compute can replace this later.
+ *
  * Formula (from Avantis):
  * - For LONG: grossPnl = collateral * leverage * (currentPrice - openPrice) / openPrice
  * - For SHORT: grossPnl = collateral * leverage * (openPrice - currentPrice) / openPrice

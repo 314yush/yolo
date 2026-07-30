@@ -8,6 +8,7 @@ import {
   validatePositionSize,
   calculateTakeProfitMultiplier,
 } from '@/lib/avantisEncoder';
+import { AVANTIS_V2_ENABLED } from '@/lib/avantisV2';
 import { getPairKey } from '@/lib/assetPair';
 
 // How long a pre-built tx is considered valid (30 seconds)
@@ -63,7 +64,12 @@ export function usePrebuiltTx() {
   }, [selection, collateral]);
 
   // Build the transaction (now entirely in frontend!)
+  // v2 intents are built at submit time (local, microseconds) — skip Tachyon prebuild.
   const buildTx = useCallback(() => {
+    if (AVANTIS_V2_ENABLED) {
+      setPrebuiltTx(null);
+      return;
+    }
     if (!selection || !userAddress || !delegateAddress) {
       setPrebuiltTx(null);
       return;

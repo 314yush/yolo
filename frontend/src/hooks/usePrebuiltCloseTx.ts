@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from './useDelegateWallet';
 import { buildCloseTradeTx } from '@/lib/avantisEncoder';
+import { AVANTIS_V2_ENABLED } from '@/lib/avantisV2';
 import { debug } from '@/lib/debug';
 
 const REBUILD_DEBOUNCE_MS = 100;
@@ -38,8 +39,12 @@ export function usePrebuiltCloseTx(options: { enabled?: boolean } = {}) {
 
   const prebuildMetaRef = useRef<{ tradeKey: string } | null>(null);
 
-  // Build close transaction
+  // Build close transaction (v2 builds at submit time — skip prebuild)
   const buildTx = useCallback(() => {
+    if (AVANTIS_V2_ENABLED) {
+      setPrebuiltCloseTx(null);
+      return;
+    }
     if (!currentTrade || !userAddress || !delegateAddress) {
       setPrebuiltCloseTx(null);
       return;

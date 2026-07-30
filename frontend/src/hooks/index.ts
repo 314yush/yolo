@@ -12,4 +12,5 @@ export { useLivePrices, useLivePricesSync, type LiveMark, type UseLivePricesRetu
 export { useChartDataCollector, useChartData, getChartData, clearChartData, clearAllChartData } from './useChartDataCollector';
 export { useSound } from './useSound';
 export { useTxSigner } from './useTxSigner';
+export { useAvantisTradeExecution } from './useAvantisTradeExecution';
 export { useViewportDimensions, getChartHeightCSS, getChartWidthCSS } from './useViewportDimensions';

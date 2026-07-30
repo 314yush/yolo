@@ -8,6 +8,7 @@ import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from '@/hooks/useDelegateWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { useTxSigner } from '@/hooks/useTxSigner';
+import { useAvantisTradeExecution } from '@/hooks/useAvantisTradeExecution';
 import { useSound } from '@/hooks/useSound';
 import { useUsdcBalance } from '@/hooks/useUsdcBalance';
 import { useOpenTrades } from '@/hooks/useOpenTrades';
@@ -43,6 +44,7 @@ import {
   buildOpenTradeTx as buildOpenTradeTxDirect,
   calculateTakeProfitMultiplier,
 } from '@/lib/avantisEncoder';
+import { AVANTIS_V2_ENABLED } from '@/lib/avantisV2';
 import type { Trade, ClosedTrade, PnLData } from '@/types';
 import { fetchRecentClosedTradeMatch } from '@/lib/avantisApi';
 import { MIN_DEPOSIT, POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
@@ -209,6 +211,7 @@ export default function HomePage() {
     verifyDelegateStatus();
   }, [authenticated, user, userAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus, reset]);
   const { signAndBroadcast, signAndWait } = useTxSigner();
+  const { openMarket, closeMarket } = useAvantisTradeExecution();
   const { playWin, playLose } = useSound();
   const {
     balance: usdcBalance,
@@ -425,39 +428,49 @@ export default function HomePage() {
 
     try {
       const txBuildStart = Date.now();
-      // Use pre-built tx if available, otherwise build on-demand with direct encoding
-      const unsignedTx = storedPrebuiltTx ?? buildOpenTradeTxDirect({
-        trader: traderAddress,
-        pairIndex: currentSelection.asset.pairIndex,
-        collateral: collateral,
-        leverage: currentSelection.leverage.value,
-        isLong: currentSelection.direction.isLong,
-        openPrice: prices[getPairKey(currentSelection.asset)]?.price || 0,
-        takeProfitMultiplier: calculateTakeProfitMultiplier(
-          currentSelection.direction.isLong,
-          currentSelection.leverage.value,
-          useTradeStore.getState().settings.takeProfitPercent
-        ),
-      });
-      const txEncodeTime = Date.now() - txBuildStart;
-      if (txEncodeTime > 10) {
-        debug(`⏱️  [Trade Timing] TX encoding took ${txEncodeTime}ms`);
-      }
-
-      if (!unsignedTx) {
-        setError('Failed to build trade transaction');
-        setStage('error');
-        return;
-      }
-
-      // Sign and broadcast with delegate key
+      const openPrice = prices[getPairKey(currentSelection.asset)]?.price || 0;
       const signStart = Date.now();
-      const hash = await signAndBroadcast({
-        to: unsignedTx.to as `0x${string}`,
-        data: unsignedTx.data as `0x${string}`,
-        value: unsignedTx.value,
-        chainId: unsignedTx.chainId,
-      });
+
+      let hash: `0x${string}`;
+      if (AVANTIS_V2_ENABLED) {
+        hash = await openMarket({
+          trader: traderAddress,
+          pairIndex: currentSelection.asset.pairIndex,
+          collateral,
+          leverage: currentSelection.leverage.value,
+          isLong: currentSelection.direction.isLong,
+          openPrice,
+          takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent,
+        });
+      } else {
+        // v1: Use pre-built tx if available, otherwise build on-demand
+        const unsignedTx = storedPrebuiltTx ?? buildOpenTradeTxDirect({
+          trader: traderAddress,
+          pairIndex: currentSelection.asset.pairIndex,
+          collateral: collateral,
+          leverage: currentSelection.leverage.value,
+          isLong: currentSelection.direction.isLong,
+          openPrice,
+          takeProfitMultiplier: calculateTakeProfitMultiplier(
+            currentSelection.direction.isLong,
+            currentSelection.leverage.value,
+            useTradeStore.getState().settings.takeProfitPercent
+          ),
+        });
+        if (!unsignedTx) {
+          setError('Failed to build trade transaction');
+          setStage('error');
+          return;
+        }
+        hash = await signAndBroadcast({
+          to: unsignedTx.to as `0x${string}`,
+          data: unsignedTx.data as `0x${string}`,
+          value: unsignedTx.value,
+          chainId: unsignedTx.chainId,
+        });
+      }
+
+      const txEncodeTime = Date.now() - txBuildStart;
       const txSentTime = Date.now();
       const signAndRelayTime = txSentTime - signStart;
       timingRef.current.txSent = txSentTime;
@@ -491,6 +504,7 @@ export default function HomePage() {
     usdcBalance,
     prices,
     signAndBroadcast,
+    openMarket,
     setTxHash,
     setStage,
     setError,
@@ -626,17 +640,34 @@ export default function HomePage() {
     setIsClosing(true);
 
     try {
-      // Use pre-built tx if available, otherwise build on-demand
-      const closeTx = prebuiltCloseTx 
-        ? (setPrebuiltCloseTx(null), prebuiltCloseTx)
-        : buildCloseTradeTxDirect({
-            trader: userAddress,
-            pairIndex: currentTrade.pairIndex,
-            tradeIndex: currentTrade.tradeIndex,
-            collateralToClose: currentTrade.collateral,
-          });
-
-      const { hash: closeTxHash } = await signAndWait(closeTx);
+      let closeTxHash: `0x${string}`;
+      if (AVANTIS_V2_ENABLED) {
+        const expectedPrice =
+          pnlData?.currentPrice ??
+          prices[currentTrade.pair]?.price ??
+          currentTrade.openPrice;
+        closeTxHash = await closeMarket({
+          trader: userAddress,
+          pairIndex: currentTrade.pairIndex,
+          tradeIndex: currentTrade.tradeIndex,
+          collateralToClose: currentTrade.collateral,
+          openTimestamp: currentTrade.openedAt,
+          expectedPrice,
+          isPnl: true,
+        });
+        setPrebuiltCloseTx(null);
+      } else {
+        // Use pre-built tx if available, otherwise build on-demand
+        const closeTx = prebuiltCloseTx 
+          ? (setPrebuiltCloseTx(null), prebuiltCloseTx)
+          : buildCloseTradeTxDirect({
+              trader: userAddress,
+              pairIndex: currentTrade.pairIndex,
+              tradeIndex: currentTrade.tradeIndex,
+              collateralToClose: currentTrade.collateral,
+            });
+        ({ hash: closeTxHash } = await signAndWait(closeTx));
+      }
 
       // Use existing pnlData for immediate feedback (Avantis v3 feed prices)
       // Use NET PnL (what user sees on screen) for share card consistency
@@ -714,7 +745,7 @@ export default function HomePage() {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades]);
+  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, closeMarket, prices, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades]);
 
   handleCloseTradeRef.current = handleCloseTrade;
 

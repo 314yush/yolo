@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const AVANTIS_CORE = 'https://core.avantisfi.com';
+const NETWORK =
+  process.env.NEXT_PUBLIC_AVANTIS_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+const V2 = process.env.NEXT_PUBLIC_AVANTIS_V2 === 'true';
+
+const AVANTIS_CORE = V2
+  ? NETWORK === 'mainnet'
+    ? 'https://core.avantisfi.com'
+    : 'https://core-testnet.avantisfi.com'
+  : 'https://core.avantisfi.com';
 
 /**
  * Proxy Avantis user-data (open positions) to avoid CORS.

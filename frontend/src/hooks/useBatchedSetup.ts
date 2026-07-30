@@ -5,6 +5,7 @@ import { useWallets, useSendTransaction } from '@privy-io/react-auth';
 import { useAvantisAPI } from './useAvantisAPI';
 import { useDelegateWallet } from './useDelegateWallet';
 import { buildUsdcApprovalTx } from '@/lib/avantisEncoder';
+import { AVANTIS_V2_ENABLED, buildUsdcApprovalTxV2 } from '@/lib/avantisV2';
 import { debug } from '@/lib/debug';
 import { base } from 'viem/chains';
 
@@ -20,7 +21,7 @@ interface BatchedSetupResult {
 /**
  * Setup flow uses Privy gas sponsorship for the FIRST signing only (setDelegate + approveUSDC).
  * When both are needed, tries wallet_sendCalls (EIP-5792) batch first, else falls back to separate txns.
- * After setup, Tachyon handles all trade transactions.
+ * After setup: v1 uses Tachyon for trades; v2 uses signed intents + Avantis batched-market.
  */
 export function useBatchedSetup() {
   const { wallets } = useWallets();
@@ -64,7 +65,9 @@ export function useBatchedSetup() {
 
       // When both setDelegate and approve are needed, try wallet_sendCalls (EIP-5792) batch first
       if (needsUsdcApproval) {
-        const approvalTx = buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
+        const approvalTx = AVANTIS_V2_ENABLED
+          ? buildUsdcApprovalTxV2(USDC_APPROVAL_LIMIT)
+          : buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
         const batchAttempt = await tryBatchedSendCalls(
           userWallet,
           delegateTx,
@@ -98,7 +101,9 @@ export function useBatchedSetup() {
       // 2. approveUSDC if needed - Privy sponsors gas
       if (needsUsdcApproval) {
         setSetupStatus('Approving USDC spending...');
-        const approvalTx = buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
+        const approvalTx = AVANTIS_V2_ENABLED
+          ? buildUsdcApprovalTxV2(USDC_APPROVAL_LIMIT)
+          : buildUsdcApprovalTx(USDC_APPROVAL_LIMIT);
         const approvalResult = await sendTransaction(
           {
             to: approvalTx.to as `0x${string}`,

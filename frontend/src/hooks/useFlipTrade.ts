@@ -14,6 +14,7 @@ import { useCallback, useState } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { useDelegateWallet } from './useDelegateWallet';
 import { useTxSigner } from './useTxSigner';
+import { useAvantisTradeExecution } from './useAvantisTradeExecution';
 import { useSound } from './useSound';
 import { useUsdcBalance } from './useUsdcBalance';
 import { saveClosedTrade } from '@/lib/closedTrades';
@@ -23,6 +24,7 @@ import {
   validatePositionSize,
   AVANTIS_CONTRACTS,
 } from '@/lib/avantisEncoder';
+import { AVANTIS_V2_ENABLED } from '@/lib/avantisV2';
 import type { Trade } from '@/types';
 import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
 import { publicClient } from '@/lib/viemClient';
@@ -80,6 +82,7 @@ export function useFlipTrade() {
   } = useTradeStore();
   const { delegateAddress } = useDelegateWallet();
   const { signAndBroadcast } = useTxSigner();
+  const { openMarket, closeMarket } = useAvantisTradeExecution();
   const { refetch: refetchBalance } = useUsdcBalance();
   const { playFlip } = useSound();
   const [isFlipping, setIsFlipping] = useState(false);
@@ -119,27 +122,41 @@ export function useFlipTrade() {
           throw new Error(`No price available for ${pairToUse}. Wait for the price feed.`);
         }
 
-        const closeTx = buildFlipTradeTxs({
-          trader: userAddress,
-          pairIndex: trade.pairIndex,
-          tradeIndex: trade.tradeIndex,
-          collateral: trade.collateral,
-          leverage: trade.leverage,
-          currentIsLong: trade.isLong,
-          currentPrice,
-          takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
-        }).closeTx;
-
         debug(`[flipTrade] Close then open: ${pairToUse} ${trade.isLong ? 'LONG' : 'SHORT'} → ${flippedIsLong ? 'LONG' : 'SHORT'}`);
 
-        const closeTxHash = await signAndBroadcast({
-          to: closeTx.to,
-          data: closeTx.data,
-          value: closeTx.value,
-          chainId: closeTx.chainId,
-        });
+        let closeTxHash: `0x${string}`;
+        let openTxHash: `0x${string}`;
 
-        // Read balance immediately — signAndBroadcast already waited for confirmation
+        if (AVANTIS_V2_ENABLED) {
+          closeTxHash = await closeMarket({
+            trader: userAddress,
+            pairIndex: trade.pairIndex,
+            tradeIndex: trade.tradeIndex,
+            collateralToClose: trade.collateral,
+            openTimestamp: trade.openedAt,
+            expectedPrice: currentPrice,
+            isPnl: true,
+          });
+        } else {
+          const closeTx = buildFlipTradeTxs({
+            trader: userAddress,
+            pairIndex: trade.pairIndex,
+            tradeIndex: trade.tradeIndex,
+            collateral: trade.collateral,
+            leverage: trade.leverage,
+            currentIsLong: trade.isLong,
+            currentPrice,
+            takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
+          }).closeTx;
+          closeTxHash = await signAndBroadcast({
+            to: closeTx.to,
+            data: closeTx.data,
+            value: closeTx.value,
+            chainId: closeTx.chainId,
+          });
+        }
+
+        // Read balance immediately — close already waited for confirmation/fill
         const actualUsdcBalance = await readUsdcBalanceWithRetry(userAddress);
         const availableCollateral = Math.min(actualUsdcBalance, trade.collateral);
 
@@ -151,23 +168,34 @@ export function useFlipTrade() {
           );
         }
 
-        const { openTx } = buildFlipTradeTxs({
-          trader: userAddress,
-          pairIndex: trade.pairIndex,
-          tradeIndex: trade.tradeIndex,
-          collateral: availableCollateral,
-          leverage: trade.leverage,
-          currentIsLong: trade.isLong,
-          currentPrice,
-          takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
-        });
-
-        const openTxHash = await signAndBroadcast({
-          to: openTx.to,
-          data: openTx.data,
-          value: openTx.value,
-          chainId: openTx.chainId,
-        });
+        if (AVANTIS_V2_ENABLED) {
+          openTxHash = await openMarket({
+            trader: userAddress,
+            pairIndex: trade.pairIndex,
+            collateral: availableCollateral,
+            leverage: trade.leverage,
+            isLong: flippedIsLong,
+            openPrice: currentPrice,
+            takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
+          });
+        } else {
+          const { openTx } = buildFlipTradeTxs({
+            trader: userAddress,
+            pairIndex: trade.pairIndex,
+            tradeIndex: trade.tradeIndex,
+            collateral: availableCollateral,
+            leverage: trade.leverage,
+            currentIsLong: trade.isLong,
+            currentPrice,
+            takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
+          });
+          openTxHash = await signAndBroadcast({
+            to: openTx.to,
+            data: openTx.data,
+            value: openTx.value,
+            chainId: openTx.chainId,
+          });
+        }
 
         const finalPnL =
           pnlData &&
@@ -260,6 +288,8 @@ export function useFlipTrade() {
       pnlData,
       setFlipExcludedPositionKey,
       signAndBroadcast,
+      openMarket,
+      closeMarket,
       setCurrentTrade,
       setPnLData,
       setPositionSource,

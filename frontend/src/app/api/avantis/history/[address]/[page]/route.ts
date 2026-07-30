@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const AVANTIS_HISTORY = 'https://api.avantisfi.com/v2/history/portfolio/history';
+const NETWORK =
+  process.env.NEXT_PUBLIC_AVANTIS_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+const V2 = process.env.NEXT_PUBLIC_AVANTIS_V2 === 'true';
+
+const HISTORY_BASE = V2
+  ? NETWORK === 'mainnet'
+    ? 'https://api.avantisfi.com/v2/history/portfolio/history'
+    : 'https://testnet-api.avantisfi.com/v2/history/portfolio/history'
+  : 'https://api.avantisfi.com/v2/history/portfolio/history';
 
 /**
  * Proxy Avantis portfolio history (closed trades) to avoid CORS.
@@ -19,7 +27,7 @@ export async function GET(
   }
 
   try {
-    const url = `${AVANTIS_HISTORY}/${address}/${page}`;
+    const url = `${HISTORY_BASE}/${address}/${page}`;
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },
       next: { revalidate: 0 },

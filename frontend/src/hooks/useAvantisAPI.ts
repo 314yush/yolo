@@ -11,6 +11,12 @@ import {
   DELEGATIONS_ABI,
   ERC20_ALLOWANCE_ABI,
 } from '@/lib/avantisEncoder';
+import {
+  AVANTIS_V2_ENABLED,
+  buildSetDelegateTxV2,
+  buildUsdcApprovalTxV2,
+  fetchDelegationStatus,
+} from '@/lib/avantisV2';
 import type { UnsignedTx } from '@/types';
 
 // Minimum USDC allowance considered "sufficient" (10,000 USDC in 6 decimals)
@@ -21,7 +27,9 @@ export function useAvantisAPI() {
   const buildDelegateSetupTx = useCallback(
     async (_trader: string, delegateAddress: string): Promise<UnsignedTx | null> => {
       try {
-        const tx = buildSetDelegateTx(delegateAddress as `0x${string}`);
+        const tx = AVANTIS_V2_ENABLED
+          ? buildSetDelegateTxV2(delegateAddress as `0x${string}`)
+          : buildSetDelegateTx(delegateAddress as `0x${string}`);
         return {
           to: tx.to,
           data: tx.data,
@@ -36,9 +44,32 @@ export function useAvantisAPI() {
     []
   );
 
-  // Check delegate status - Direct contract read with retries (no backend!)
+  // Check delegate status — v2 multi-delegate via API; v1 single mapping via RPC
   const checkDelegateStatus = useCallback(
     async (trader: string) => {
+      if (AVANTIS_V2_ENABLED) {
+        try {
+          const { getDelegateAddress } = await import('@/lib/delegateWallet');
+          const delegate = getDelegateAddress();
+          if (!delegate) {
+            return { isSetup: false, delegateAddress: null, error: null };
+          }
+          const status = await fetchDelegationStatus(trader, delegate);
+          const isSetup =
+            status.isEnabled &&
+            (status.canSignIntents || status.canDelegatedAction) &&
+            (status.expiry === 0 || status.expiry > Math.floor(Date.now() / 1000));
+          return {
+            isSetup,
+            delegateAddress: isSetup ? (delegate as `0x${string}`) : null,
+            error: null,
+          };
+        } catch (error) {
+          console.error('Failed to check v2 delegate status:', error);
+          return { isSetup: false, delegateAddress: null, error: 'Failed to read delegation' };
+        }
+      }
+
       const MAX_RETRIES = 3;
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
@@ -76,7 +107,9 @@ export function useAvantisAPI() {
       try {
         // 10,000 USDC in 6 decimals
         const approvalLimit = 10_000n * 10n ** 6n;
-        const tx = buildUsdcApprovalTxDirect(approvalLimit);
+        const tx = AVANTIS_V2_ENABLED
+          ? buildUsdcApprovalTxV2(approvalLimit)
+          : buildUsdcApprovalTxDirect(approvalLimit);
         return {
           to: tx.to,
           data: tx.data,
