@@ -5,16 +5,13 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { usePrivy } from '@privy-io/react-auth';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from '@/hooks/useDelegateWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
-import { useTxSigner } from '@/hooks/useTxSigner';
 import { useAvantisTradeExecution } from '@/hooks/useAvantisTradeExecution';
 import { useSound } from '@/hooks/useSound';
 import { useUsdcBalance } from '@/hooks/useUsdcBalance';
 import { useOpenTrades } from '@/hooks/useOpenTrades';
 import { useFastConfirmation } from '@/hooks/useFastConfirmation';
 import { useChartDataCollector } from '@/hooks/useChartDataCollector';
-import { usePrebuiltTx } from '@/hooks/usePrebuiltTx';
 import { useAccessCheck } from '@/hooks/useAccessCheck';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { usePositionSync } from '@/hooks/usePositionSync';
@@ -34,17 +31,17 @@ import { MusicToggleButton } from '@/components/MusicToggleButton';
 import { StageRouter } from '@/components/StageRouter';
 import { PnLScreen } from '@/components/PnLScreen';
 import { hasCompletedOnboarding, markOnboardingComplete, clearOnboardingStatus } from '@/lib/onboarding';
-import { hasDelegateWallet, getDelegateAddress } from '@/lib/delegateWallet';
+import { calculateTakeProfitMultiplier, validatePositionSize } from '@/lib/avantisTradeMath';
+import { isPairTradable, loadPairCatalog, maxLeverageFor } from '@/lib/avantisV2';
+import {
+  POSITION_NOT_READY_MESSAGE,
+  hasSyncedCloseIdentity,
+  resolveClosePosition,
+} from '@/lib/resolveClosePosition';
 import { clearLocalAccess } from '@/lib/access';
 import { vibrateDouble } from '@/lib/haptics';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { logTradeCloseByPosition, getOnboardingStatus } from '@/lib/activityApi';
-import { 
-  buildCloseTradeTx as buildCloseTradeTxDirect,
-  buildOpenTradeTx as buildOpenTradeTxDirect,
-  calculateTakeProfitMultiplier,
-} from '@/lib/avantisEncoder';
-import { AVANTIS_V2_ENABLED } from '@/lib/avantisV2';
 import type { Trade, ClosedTrade, PnLData } from '@/types';
 import { fetchRecentClosedTradeMatch } from '@/lib/avantisApi';
 import { MIN_DEPOSIT, POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
@@ -64,8 +61,8 @@ export default function HomePage() {
     flipExcludedPositionKey,
     setStage,
     userAddress,
-    delegateStatus,
-    loadDelegateStatusForUser,
+    setupStatus,
+    loadSetupStatusForUser,
     collateral,
     currentTrade,
     setCurrentTrade,
@@ -83,6 +80,7 @@ export default function HomePage() {
     lastClosedTradeForShare,
     setLastClosedTradeForShare,
     setPositionSource,
+    positionSource,
   } = useTradeStore();
 
   /** Latest trade while on PnL — read inside async after await (avoids stale effect closure). */
@@ -91,19 +89,19 @@ export default function HomePage() {
   const flipExcludedKeyRef = useRef(flipExcludedPositionKey);
   flipExcludedKeyRef.current = flipExcludedPositionKey;
   
-  const { delegateAddress } = useDelegateWallet();
   const { isOnline } = useNetworkStatus();
-  const { checkDelegateStatus } = useAvantisAPI();
-  
-  // Load cached delegate status for authenticated user; verify on-chain when cache says setup is complete.
+  const { checkUsdcAllowance, getTrades } = useAvantisAPI();
+
+  // Load cached setup status for the authenticated user, then confirm the USDC
+  // allowance on-chain so a revoked approval can't leave a stale "ready" cache.
   useEffect(() => {
-    async function verifyDelegateStatus() {
+    async function verifySetupStatus() {
       if (authenticated && user?.wallet?.address) {
         const address = user.wallet.address as `0x${string}`;
-        // Always refresh delegate cache from localStorage when wallet is known (do not gate on
-        // address !== userAddress — Strict Mode / re-renders can skip that branch and leave stale
-        // delegateStatus so SetupFlow never appears.)
-        loadDelegateStatusForUser(address);
+        // Always refresh from localStorage when the wallet is known (do not gate on
+        // address !== userAddress — Strict Mode / re-renders can skip that branch and
+        // leave a stale status so SetupFlow never appears.)
+        loadSetupStatusForUser(address);
 
         // Onboarding: once per wallet per mount session
         if (onboardingBootstrappedForRef.current !== address) {
@@ -129,77 +127,43 @@ export default function HomePage() {
           }
         }
 
-        // CRITICAL FIX: Always verify on-chain delegate status if cache says setup is complete
-        // This prevents delegate mismatch issues
-        const { delegateStatus: cachedStatus } = useTradeStore.getState();
-        if (cachedStatus.isSetup && cachedStatus.delegateAddress) {
-          // Prevent multiple simultaneous verifications for the same address
+        const { setupStatus: cachedStatus } = useTradeStore.getState();
+        if (cachedStatus.isSetup) {
           if (verifyingRef.current === address) {
             return; // Already verifying this address
           }
-          
-          // Set verifying state to prevent trading during verification
+
           verifyingRef.current = address;
-          setIsVerifyingDelegate(true);
-          
+          setIsVerifyingSetup(true);
+
           try {
-            // Use the hook's checkDelegateStatus function
-            const status = await checkDelegateStatus(address);
-            
-            // Check for delegate mismatch
-            const onChainDelegate = status.delegateAddress?.toLowerCase();
-            const cachedDelegate = cachedStatus.delegateAddress?.toLowerCase();
-            const localDelegate = delegateAddress?.toLowerCase();
-            
-            if (!status.isSetup) {
-              // On-chain says not set up, but cache says it is - clear cache
-              useTradeStore.getState().setDelegateStatus({
+            const allowance = await checkUsdcAllowance(address);
+            if (!allowance.hasSufficient) {
+              useTradeStore.getState().setSetupStatus({
                 isSetup: false,
-                delegateAddress: null,
-                usdcApproved: false,
-              });
-            } else if (onChainDelegate && cachedDelegate && onChainDelegate !== cachedDelegate) {
-              // Delegate mismatch - clear cache and force re-setup
-              // User will see error message in SetupFlow guiding them to remove old delegate
-              useTradeStore.getState().setDelegateStatus({
-                isSetup: false,
-                delegateAddress: null,
-                usdcApproved: false,
-              });
-            } else if (onChainDelegate && localDelegate && onChainDelegate !== localDelegate) {
-              // On-chain delegate doesn't match local delegate - clear cache and force re-setup
-              useTradeStore.getState().setDelegateStatus({
-                isSetup: false,
-                delegateAddress: null,
                 usdcApproved: false,
               });
             }
           } catch (err) {
-            console.error('Failed to verify delegate status:', err);
-            // On error, don't trust cache - force re-verification
-            useTradeStore.getState().setDelegateStatus({
-              isSetup: false,
-              delegateAddress: null,
-              usdcApproved: false,
-            });
+            // A failed read is not proof the approval is gone. Keep the cached
+            // status rather than bouncing a working user back into setup.
+            console.warn('Failed to verify USDC allowance:', err);
           } finally {
-            // Always clear verifying state
             verifyingRef.current = null;
-            setIsVerifyingDelegate(false);
+            setIsVerifyingSetup(false);
           }
         } else {
-          // No cached status to verify, clear verifying state
           verifyingRef.current = null;
-          setIsVerifyingDelegate(false);
+          setIsVerifyingSetup(false);
         }
       } else if (!authenticated) {
         onboardingBootstrappedForRef.current = null;
-        // Clear delegate status, onboarding status, and access cache when logged out
+        // Clear setup status, onboarding status, and access cache when logged out
         if (userAddress) {
           clearOnboardingStatus(userAddress);
           clearLocalAccess(userAddress);
         }
-        loadDelegateStatusForUser(null);
+        loadSetupStatusForUser(null);
         setIsOnboardingComplete(false);
         setIsCheckingOnboarding(false);
         setIsReturningUser(false);
@@ -208,9 +172,8 @@ export default function HomePage() {
       }
     }
 
-    verifyDelegateStatus();
-  }, [authenticated, user, userAddress, loadDelegateStatusForUser, delegateAddress, checkDelegateStatus, reset]);
-  const { signAndBroadcast, signAndWait } = useTxSigner();
+    verifySetupStatus();
+  }, [authenticated, user, userAddress, loadSetupStatusForUser, checkUsdcAllowance, reset]);
   const { openMarket, closeMarket } = useAvantisTradeExecution();
   const { playWin, playLose } = useSound();
   const {
@@ -275,10 +238,7 @@ export default function HomePage() {
 
   // Collect chart data in background for all assets (pre-load for instant charts)
   useChartDataCollector();
-  
-  // Pre-build transactions when selection changes
-  usePrebuiltTx();
-  
+
   // Track if trade was confirmed via Pusher before wheel finished
   const tradeConfirmedRef = useRef(false);
   const confirmationLatencyRef = useRef<number | null>(null);
@@ -328,7 +288,7 @@ export default function HomePage() {
   const [isDepositComplete, setIsDepositComplete] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
-  const [isVerifyingDelegate, setIsVerifyingDelegate] = useState(false);
+  const [isVerifyingSetup, setIsVerifyingSetup] = useState(false);
   const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(false);
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [showInsufficientFundsModal, setShowInsufficientFundsModal] = useState(false);
@@ -359,18 +319,20 @@ export default function HomePage() {
   }, [openTrades, prices]);
 
   const needsAddFunds = useMemo(
-    () => delegateStatus.isSetup && usdcBalance !== null && usdcBalance < collateral,
-    [delegateStatus.isSetup, usdcBalance, collateral]
+    () => setupStatus.isSetup && usdcBalance !== null && usdcBalance < collateral,
+    [setupStatus.isSetup, usdcBalance, collateral]
   );
 
   const openInsufficientFundsModal = useCallback(() => {
     setShowInsufficientFundsModal(true);
   }, []);
 
+  const handleSpinStartRef = useRef<(() => Promise<void>) | null>(null);
+
   // Handle spin start - fire trade immediately
   const handleSpinStart = useCallback(async () => {
     // CRITICAL: Prevent trading if setup is not complete
-    if (!delegateStatus.isSetup) {
+    if (!setupStatus.isSetup) {
       console.error('[handleSpinStart] Trading blocked: Setup not complete');
       setError('Please complete setup before trading. Enable trading in the setup flow first.');
       setStage('error');
@@ -397,12 +359,11 @@ export default function HomePage() {
     // Get selection directly from store to avoid stale closure
     const storeState = useTradeStore.getState();
     const currentSelection = storeState.selection;
-    const storedPrebuiltTx = storeState.prebuiltTx;
-    
+
     // Get user address - from store or directly from Privy user
     const traderAddress = userAddress || (user?.wallet?.address as `0x${string}` | undefined);
-    
-    if (!traderAddress || !delegateAddress || !currentSelection) return;
+
+    if (!traderAddress || !currentSelection) return;
 
     // Check USDC balance before proceeding
     if (usdcBalance !== null && usdcBalance < collateral) {
@@ -413,15 +374,32 @@ export default function HomePage() {
       return;
     }
 
-    // Validate minimum position size ($100 minimum)
-    const MIN_POSITION_SIZE_USD = 100;
-    const positionSize = collateral * currentSelection.leverage.value;
-    if (positionSize < MIN_POSITION_SIZE_USD) {
-      const minCollateral = MIN_POSITION_SIZE_USD / currentSelection.leverage.value;
-      setError(
-        `Position size $${positionSize.toFixed(2)} is below minimum $${MIN_POSITION_SIZE_USD.toFixed(2)}. ` +
-        `With ${currentSelection.leverage.value}x leverage, minimum collateral is $${minCollateral.toFixed(2)} USDC.`
-      );
+    await loadPairCatalog();
+    const pairIndex = currentSelection.asset.pairIndex;
+    const leverage = currentSelection.leverage.value;
+
+    if (!isPairTradable(pairIndex)) {
+      const msg = `${currentSelection.asset.name} is not currently tradable.`;
+      setError(msg);
+      showToast(msg, 'error');
+      setStage('error');
+      return;
+    }
+
+    const maxLev = maxLeverageFor(pairIndex);
+    if (maxLev > 0 && leverage > maxLev) {
+      const msg = `${currentSelection.asset.name} max leverage is ${maxLev}x (selected ${leverage}x).`;
+      setError(msg);
+      showToast(msg, 'error');
+      setStage('error');
+      return;
+    }
+
+    const sizeCheck = validatePositionSize(collateral, leverage, pairIndex);
+    if (!sizeCheck.valid) {
+      const msg = sizeCheck.error ?? 'Position size is below the pair minimum.';
+      setError(msg);
+      showToast(msg, 'error');
       setStage('error');
       return;
     }
@@ -431,44 +409,15 @@ export default function HomePage() {
       const openPrice = prices[getPairKey(currentSelection.asset)]?.price || 0;
       const signStart = Date.now();
 
-      let hash: `0x${string}`;
-      if (AVANTIS_V2_ENABLED) {
-        hash = await openMarket({
-          trader: traderAddress,
-          pairIndex: currentSelection.asset.pairIndex,
-          collateral,
-          leverage: currentSelection.leverage.value,
-          isLong: currentSelection.direction.isLong,
-          openPrice,
-          takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent,
-        });
-      } else {
-        // v1: Use pre-built tx if available, otherwise build on-demand
-        const unsignedTx = storedPrebuiltTx ?? buildOpenTradeTxDirect({
-          trader: traderAddress,
-          pairIndex: currentSelection.asset.pairIndex,
-          collateral: collateral,
-          leverage: currentSelection.leverage.value,
-          isLong: currentSelection.direction.isLong,
-          openPrice,
-          takeProfitMultiplier: calculateTakeProfitMultiplier(
-            currentSelection.direction.isLong,
-            currentSelection.leverage.value,
-            useTradeStore.getState().settings.takeProfitPercent
-          ),
-        });
-        if (!unsignedTx) {
-          setError('Failed to build trade transaction');
-          setStage('error');
-          return;
-        }
-        hash = await signAndBroadcast({
-          to: unsignedTx.to as `0x${string}`,
-          data: unsignedTx.data as `0x${string}`,
-          value: unsignedTx.value,
-          chainId: unsignedTx.chainId,
-        });
-      }
+      const hash = await openMarket({
+        trader: traderAddress,
+        pairIndex: currentSelection.asset.pairIndex,
+        collateral,
+        leverage: currentSelection.leverage.value,
+        isLong: currentSelection.direction.isLong,
+        openPrice,
+        takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent,
+      });
 
       const txEncodeTime = Date.now() - txBuildStart;
       const txSentTime = Date.now();
@@ -478,10 +427,7 @@ export default function HomePage() {
       debug(`📤 [Trade Timing] Transaction sent (${elapsedFromSpinStart}ms from spin start)`);
       debug(`   ⏱️  Breakdown: Encoding=${txEncodeTime}ms, Sign+Relay=${signAndRelayTime}ms`);
       setTxHash(hash);
-      
-      // Clear the pre-built tx (it's been used)
-      useTradeStore.getState().setPrebuiltTx(null);
-      
+
       // Start fast confirmation tracking via Pusher + polling
       startConfirmation(hash);
       
@@ -492,18 +438,23 @@ export default function HomePage() {
       setStage('executing');
     } catch (err) {
       console.error('Trade execution error:', err);
-      setError(err instanceof Error ? err.message : 'Trade failed');
+      const msg = err instanceof Error ? err.message : 'Trade failed';
+      setError(msg);
       setStage('error');
+      showToast(msg, 'error', undefined, {
+        label: 'RETRY',
+        onClick: () => {
+          void handleSpinStartRef.current?.();
+        },
+      });
     }
   }, [
     userAddress,
     user,
-    delegateAddress,
-    delegateStatus.isSetup,
+    setupStatus.isSetup,
     collateral,
     usdcBalance,
     prices,
-    signAndBroadcast,
     openMarket,
     setTxHash,
     setStage,
@@ -511,7 +462,9 @@ export default function HomePage() {
     addPendingTradeHash,
     addPendingOpenTxHash,
     startConfirmation,
+    showToast,
   ]);
+  handleSpinStartRef.current = handleSpinStart;
 
   // Transition to PnL — called when BOTH wheel finished AND confirmation received
   const transitionToPnL = useCallback(() => {
@@ -619,59 +572,78 @@ export default function HomePage() {
     }
   }, [stage]);
 
+  // usePnL hydrates currentTrade from user-data but does not set positionSource.
+  // Promote placeholder → poll once we have a real on-chain timestamp + liq price
+  // so CLOSE/FLIP can enable without waiting for Pusher.
+  useEffect(() => {
+    if (stage !== 'pnl') return;
+    if (positionSource !== 'placeholder') return;
+    if (currentTrade && currentTrade.openedAt > 0 && currentTrade.liquidationPrice > 0) {
+      setPositionSource('poll');
+    }
+  }, [stage, positionSource, currentTrade, setPositionSource]);
+
   // Ref for retry handler to avoid stale closure in toast
   const handleCloseTradeRef = useRef<(() => Promise<void>) | null>(null);
 
-  // Handle close trade - uses pre-built tx or direct encoding (no SDK)
   // Optimized: Show success immediately using pnlData, reconcile in background
   const handleCloseTrade = useCallback(async () => {
     // CRITICAL: Prevent closing trades if setup is not complete (defensive check)
-    if (!delegateStatus.isSetup) {
+    if (!setupStatus.isSetup) {
       console.error('[handleCloseTrade] Trade close blocked: Setup not complete');
-      setError('Please complete setup before closing trades. Enable trading in the setup flow first.');
+      setError('Please complete setup before closing trades. Approve USDC in the setup flow first.');
       return;
     }
 
-    const { currentTrade, pnlData, prebuiltCloseTx, setPrebuiltCloseTx, setIsIntentionalClose } = useTradeStore.getState();
-    if (!userAddress || !delegateAddress || !currentTrade) return;
+    const {
+      currentTrade,
+      pnlData,
+      setIsIntentionalClose,
+      positionSource: source,
+    } = useTradeStore.getState();
+    if (!userAddress || !currentTrade) return;
 
-    // Set BEFORE any await - prevents PnL poll from false liquidation during close
+    // Lock the button before the user-data round-trip so a double-tap
+    // cannot submit two close intents.
     setIsIntentionalClose(true);
     setIsClosing(true);
 
+    const resolved = await resolveClosePosition({
+      trade: currentTrade,
+      positionSource: source,
+      fetchTrades: () => getTrades(userAddress),
+    });
+    if (!resolved) {
+      setIsClosing(false);
+      setIsIntentionalClose(false);
+      showToast(POSITION_NOT_READY_MESSAGE, 'error');
+      return;
+    }
+    if (
+      resolved.tradeIndex !== currentTrade.tradeIndex ||
+      resolved.openedAt !== currentTrade.openedAt
+    ) {
+      setCurrentTrade(resolved);
+      setPositionSource('poll');
+    }
+
     try {
-      let closeTxHash: `0x${string}`;
-      if (AVANTIS_V2_ENABLED) {
-        const expectedPrice =
+      const closeTxHash = await closeMarket({
+        trader: userAddress,
+        pairIndex: resolved.pairIndex,
+        tradeIndex: resolved.tradeIndex,
+        collateralToClose: resolved.collateral,
+        openTimestamp: resolved.openedAt,
+        expectedPrice:
           pnlData?.currentPrice ??
-          prices[currentTrade.pair]?.price ??
-          currentTrade.openPrice;
-        closeTxHash = await closeMarket({
-          trader: userAddress,
-          pairIndex: currentTrade.pairIndex,
-          tradeIndex: currentTrade.tradeIndex,
-          collateralToClose: currentTrade.collateral,
-          openTimestamp: currentTrade.openedAt,
-          expectedPrice,
-          isPnl: true,
-        });
-        setPrebuiltCloseTx(null);
-      } else {
-        // Use pre-built tx if available, otherwise build on-demand
-        const closeTx = prebuiltCloseTx 
-          ? (setPrebuiltCloseTx(null), prebuiltCloseTx)
-          : buildCloseTradeTxDirect({
-              trader: userAddress,
-              pairIndex: currentTrade.pairIndex,
-              tradeIndex: currentTrade.tradeIndex,
-              collateralToClose: currentTrade.collateral,
-            });
-        ({ hash: closeTxHash } = await signAndWait(closeTx));
-      }
+          prices[resolved.pair]?.price ??
+          resolved.openPrice,
+        isPnl: resolved.isPnl,
+      });
 
       // Use existing pnlData for immediate feedback (Avantis v3 feed prices)
       // Use NET PnL (what user sees on screen) for share card consistency
-      const closePrice = pnlData?.currentPrice ?? currentTrade.openPrice;
+      const closePrice = pnlData?.currentPrice ?? resolved.openPrice;
       const netPnl = pnlData?.pnl ?? 0;
       const netPnlPct = pnlData?.pnlPercentage ?? 0;
 
@@ -684,13 +656,13 @@ export default function HomePage() {
       const pnlStr = netPnl >= 0 ? `+$${netPnl.toFixed(2)}` : `-$${Math.abs(netPnl).toFixed(2)}`;
       showToast(`Closed! PnL: ${pnlStr}`, 'success');
 
-      if (userAddress && currentTrade) {
-        saveClosedTrade(userAddress, currentTrade, pnlData, {
+      if (userAddress && resolved) {
+        saveClosedTrade(userAddress, resolved, pnlData, {
           closeTxHash,
           isLiquidated: false,
         });
         const closedTrade: ClosedTrade = {
-          ...currentTrade,
+          ...resolved,
           closedAt: Date.now(),
           finalPnL: netPnl,
           finalPnLPercentage: netPnlPct,
@@ -702,8 +674,8 @@ export default function HomePage() {
         setLastClosedTradeForShare(closedTrade);
         logTradeCloseByPosition({
           wallet: userAddress,
-          pairIndex: currentTrade.pairIndex,
-          tradeIndex: currentTrade.tradeIndex,
+          pairIndex: resolved.pairIndex,
+          tradeIndex: resolved.tradeIndex,
           exitPrice: closePrice,
           pnl: netPnl,
           closedAt: new Date().toISOString(),
@@ -717,7 +689,7 @@ export default function HomePage() {
       void refetchOpenTrades();
 
       // Background reconciliation: update saved trade if API shows different data (e.g., liquidation)
-      const tradeToReconcile = currentTrade;
+      const tradeToReconcile = resolved;
       const userToReconcile = userAddress;
       void (async () => {
         try {
@@ -745,7 +717,7 @@ export default function HomePage() {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, signAndWait, closeMarket, prices, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades]);
+  }, [userAddress, setupStatus.isSetup, closeMarket, prices, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades, getTrades, setCurrentTrade, setPositionSource]);
 
   handleCloseTradeRef.current = handleCloseTrade;
 
@@ -855,10 +827,10 @@ export default function HomePage() {
     );
   }
 
-  // Authenticated - check onboarding first (only if delegate not set up)
-  // If delegate is already set up, skip onboarding (returning user)
+  // Authenticated — check onboarding first (only if USDC is not yet approved)
+  // If trading is already set up, skip onboarding (returning user)
   // Backend API is source of truth for returning users (new device); localStorage is fast path for same device
-  const needsOnboarding = userAddress && !delegateStatus.isSetup && !isOnboardingComplete;
+  const needsOnboarding = userAddress && !setupStatus.isSetup && !isOnboardingComplete;
   if (needsOnboarding) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
@@ -876,8 +848,8 @@ export default function HomePage() {
     );
   }
 
-  // Show loading while verifying delegate status (prevents race condition)
-  if (isVerifyingDelegate) {
+  // Show loading while verifying USDC approval (prevents race condition)
+  if (isVerifyingSetup) {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
         <div className="text-xl sm:text-2xl font-bold text-white mb-4">VERIFYING SETUP...</div>
@@ -893,7 +865,7 @@ export default function HomePage() {
   const needsDeposit =
     isOnboardingComplete &&
     !isReturningUser &&
-    !delegateStatus.isSetup &&
+    !setupStatus.isSetup &&
     !isSetupComplete &&
     !usdcBalanceError &&
     (usdcBalance === null || usdcBalance < MIN_DEPOSIT || !isDepositComplete);
@@ -912,7 +884,7 @@ export default function HomePage() {
   }
 
   // Authenticated but not set up (onboarding complete, deposit done)
-  if (!delegateStatus.isSetup && !isSetupComplete) {
+  if (!setupStatus.isSetup && !isSetupComplete) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
         <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
@@ -1073,6 +1045,7 @@ export default function HomePage() {
                 onClose={handleCloseTrade}
                 onRollAgain={handleRollAgain}
                 isClosing={isClosing}
+                positionReady={hasSyncedCloseIdentity(currentTrade, positionSource)}
               />
             </section>
           )}
@@ -1107,7 +1080,7 @@ export default function HomePage() {
           rollButton={
             <button
               onClick={() => {
-                if (stage !== 'idle' || !delegateStatus.isSetup) return;
+                if (stage !== 'idle' || !setupStatus.isSetup) return;
                 if (needsAddFunds) {
                   openInsufficientFundsModal();
                   return;
@@ -1115,11 +1088,11 @@ export default function HomePage() {
                 setShouldSpin(true);
                 setTimeout(() => setShouldSpin(false), 100);
               }}
-              disabled={stage !== 'idle' || !delegateStatus.isSetup || !isOnline}
+              disabled={stage !== 'idle' || !setupStatus.isSetup || !isOnline}
               aria-label={
                 !isOnline
                   ? 'You are offline. Reconnect to trade'
-                  : !delegateStatus.isSetup
+                  : !setupStatus.isSetup
                   ? 'Please complete setup before trading'
                   : stage === 'idle' && needsAddFunds
                   ? 'Add USDC to meet collateral requirement'

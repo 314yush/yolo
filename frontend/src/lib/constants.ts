@@ -1,36 +1,32 @@
 import type { Asset, Leverage, Direction } from '@/types';
 
-// Assets available for zero-fee perps (PnL order type)
-// Pair indices verified via Avantis pairs_cache on Base; leverage capped per asset (protocol limits).
+// Assets traded on Avantis Upside markets (the v2 name for zero-fee perps).
+// Upside is a property of the pair, not a flag: ETH_UPSIDE/USD (115) is a
+// separate market from ETH/USD (0), sharing its price feed. `maxLeverage` is
+// the pair's pnlMaxLeverage; `legacyPairIndexes` are the pre-v2 indices that
+// carried-over positions still report, kept so the UI can resolve them.
+// Verified against https://tx-builder.avantisfi.com/v2/pairs.
+// Every wheel asset is an Upside market, so every trade is zero-fee, $100
+// minimum notional, and open 24/7 — no market-hours handling needed. Each one
+// is pinned to its pair's `pnlMaxLeverage`, so the leverage ring is decided by
+// the asset that lands. Forex and commodities were dropped at the v2 cutover:
+// they have no Upside listing, and their $300 minimum against the new caps
+// needs $6–$30 of collateral against a $10 default.
 export const ASSETS: Asset[] = [
-  { name: 'ETH', color: '#627EEA', icon: '/logos/eth.svg', pairIndex: 0, maxLeverage: 500 },
-  { name: 'BTC', color: '#FF9500', icon: '/logos/btc.svg', pairIndex: 1, maxLeverage: 500 },
-  { name: 'SOL', color: '#14F195', icon: '/logos/sol.svg', pairIndex: 2, maxLeverage: 500 },
-  // Forex — closed Fri 17:00 ET – Sun 17:00 ET; protocol caps ZFP leverage (~50x on socket)
-  {
-    name: 'USDJPY',
-    pairKey: 'USD/JPY',
-    color: '#2DD4BF',
-    icon: '/logos/usdjpy.svg',
-    pairIndex: 12,
-    maxLeverage: 50,
-    fixedLeverage: 50,
-    hasMarketHours: true,
-    marketHoursKind: 'fx_weekends',
-  },
-  // Commodities - fixed 250x leverage, market hours restricted (closed on weekends)
-  { name: 'XAU', color: '#FFD700', icon: '/logos/xau.svg', pairIndex: 21, maxLeverage: 250, fixedLeverage: 250, hasMarketHours: true },
-  { name: 'XAG', color: '#C0C0C0', icon: '/logos/xag.svg', pairIndex: 20, maxLeverage: 250, fixedLeverage: 250, hasMarketHours: true },
+  { name: 'BTC', color: '#FF9500', icon: '/logos/btc.svg', pairIndex: 116, legacyPairIndexes: [1], maxLeverage: 250, fixedLeverage: 250 },
+  { name: 'ETH', color: '#627EEA', icon: '/logos/eth.svg', pairIndex: 115, legacyPairIndexes: [0], maxLeverage: 200, fixedLeverage: 200 },
+  { name: 'SOL', color: '#14F195', icon: '/logos/sol.svg', pairIndex: 117, legacyPairIndexes: [2], maxLeverage: 150, fixedLeverage: 150 },
+  { name: 'XRP', color: '#23292F', icon: '/logos/xrp.svg', pairIndex: 118, legacyPairIndexes: [59], maxLeverage: 75, fixedLeverage: 75 },
+  { name: 'HYPE', color: '#97FCE4', icon: '/logos/hype.svg', pairIndex: 119, legacyPairIndexes: [62], maxLeverage: 75, fixedLeverage: 75 },
 ];
 
-// Leverage options (color-coded by risk level)
-// High leverage only - minimum 250x for maximum excitement
-// Weights determine probability: higher leverage = more likely to be selected
+// Leverage ring: the distinct Upside caps across the assets above. Each asset
+// pins its own, so this list exists to render the ring and land the spin on it.
 export const LEVERAGES: Leverage[] = [
-  { name: '250x', value: 250, color: '#FFD60A', weight: 20 },  // 20% chance
-  { name: '300x', value: 300, color: '#FF9500', weight: 20 },  // 20% chance
-  { name: '400x', value: 400, color: '#FF006E', weight: 25 },  // 25% chance
-  { name: '500x', value: 500, color: '#FF006E', weight: 35 },  // 35% chance - MAX DEGEN
+  { name: '75x', value: 75, color: '#FFD60A', weight: 0 },
+  { name: '150x', value: 150, color: '#FF9500', weight: 0 },
+  { name: '200x', value: 200, color: '#FF006E', weight: 0 },
+  { name: '250x', value: 250, color: '#FF006E', weight: 0 }, // MAX DEGEN — BTC only
 ];
 
 // Direction options
@@ -64,15 +60,11 @@ export const COLORS = {
 };
 
 // Chain config
-// Set NEXT_PUBLIC_BASE_RPC_URL environment variable in your .env.local file
-const baseRpcUrl = process.env.NEXT_PUBLIC_BASE_RPC_URL;
-if (!baseRpcUrl) {
-  throw new Error(
-    'NEXT_PUBLIC_BASE_RPC_URL environment variable is required. ' +
-    'Please create a .env.local file in the frontend directory and add: ' +
-    'NEXT_PUBLIC_BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY'
-  );
-}
+// Alchemy is preferred to avoid public-endpoint rate limits. Fall back to
+// Base's public RPC so a missing env does not blank the app at import time.
+const configuredBaseRpcUrl = process.env.NEXT_PUBLIC_BASE_RPC_URL;
+export const missingBaseRpcUrl = !configuredBaseRpcUrl;
+const baseRpcUrl = configuredBaseRpcUrl || 'https://mainnet.base.org';
 
 // Flashblock RPC for faster preconfirmations (optional)
 // Base Flashblocks provide ~200ms preconfirmation vs ~2s block time
@@ -93,34 +85,6 @@ export const CHAIN_CONFIG = {
 export const CONTRACTS = {
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`,
 };
-
-// Local storage keys
-export const STORAGE_KEYS = {
-  DELEGATE_KEY: 'yolo_delegate_key',
-  DELEGATE_ADDRESS: 'yolo_delegate_address',
-  DELEGATE_7702_DELEGATED: 'yolo_delegate_7702_delegated', // EIP-7702 delegation status
-};
-
-// ============================================================
-// TACHYON CONFIGURATION (Gas Sponsorship)
-// ============================================================
-
-// Tachyon API key - get from https://rath.fi
-export const TACHYON_API_KEY = process.env.NEXT_PUBLIC_TACHYON_API_KEY || '';
-
-// ERC-4337 Account implementation to delegate to (Base mainnet)
-// From official Rath Finance example: https://github.com/RathFinance/tachyon-examples
-export const ERC4337_DELEGATION_CONTRACT = '0xd6CEDDe84be40893d153Be9d467CD6aD37875b28' as `0x${string}`;
-
-// EntryPoint v0.7 address on Base (same across all EVM chains)
-export const ENTRY_POINT_ADDRESS = '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as `0x${string}`;
-
-// Beneficiary for handleOps (receives leftover gas) - set to your own address
-export const TACHYON_BENEFICIARY = '0x4C16955d8A0DcB2e7826d50f4114990c787b21E7' as `0x${string}`;
-
-// Toggle Privy embedded-wallet execution path for trade relay.
-// Keep off by default so existing delegate flow remains unchanged unless explicitly enabled.
-export const USE_PRIVY_EXECUTION_WALLET = process.env.NEXT_PUBLIC_USE_PRIVY_EXECUTION_WALLET === 'true';
 
 /** Delay after close toast/sound before opening the share card. */
 export const POST_CLOSE_SHARE_DELAY_MS = 1200;

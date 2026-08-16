@@ -30,6 +30,20 @@
 - [ ] Test full application flow
 - [ ] Monitor logs for any errors
 
+## V2 launch (do this before prod)
+
+Avantis v2 is live. Trades are local EIP-712 intents, self-signed by the Privy embedded wallet, and submitted to the batched-market relayer. There is no Tachyon and no delegate key.
+
+- [ ] Privy dashboard: **turn OFF** embedded wallet confirmation / wallet UIs (silent signing)
+- [ ] Privy dashboard: **enable gas sponsorship on Base** (one-time USDC approve)
+- [ ] No `TACHYON_*` (or any Tachyon) env var on Vercel / Railway
+- [ ] No Avantis API key / delegate key env var — do not point the app at `sdk.avantisfi.com` or `delegate.avantisfi.com`
+- [ ] USDC spender is **TradingStorage** `0x8a311D7048c35985aa31C131B9A13e03a5f7422d` (not Trading)
+- [ ] `NEXT_PUBLIC_BASE_RPC_URL` is an Alchemy (or equivalent) Base URL — not the public RPC
+- [ ] From `frontend/`: `npm run verify:vectors` passes
+- [ ] From `frontend/`: `npm run verify:v2` passes against live tx-builder + pair catalog
+- [ ] Optional: `npm run probe:selfsign` — self-sign reaches execution; third-party sig is rejected
+
 ## Quick Commands Reference
 
 ### Test Backend Locally

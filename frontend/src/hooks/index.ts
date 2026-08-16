@@ -1,16 +1,11 @@
 export { useAccessCheck } from './useAccessCheck';
 export { useNetworkStatus } from './useNetworkStatus';
 export { useAvantisAPI } from './useAvantisAPI';
-export { useDelegateWallet } from './useDelegateWallet';
 export { useFastConfirmation } from './useFastConfirmation';
 export { usePnL } from './usePnL';
-export { usePrebuiltTx } from './usePrebuiltTx';
-export { usePrebuiltCloseTx } from './usePrebuiltCloseTx';
-export { usePrebuiltFlipTx } from './usePrebuiltFlipTx';
 export { usePusherEvents, useAutoPusherEvents } from './usePusherEvents';
 export { useLivePrices, useLivePricesSync, type LiveMark, type UseLivePricesReturn } from './useLivePrices';
 export { useChartDataCollector, useChartData, getChartData, clearChartData, clearAllChartData } from './useChartDataCollector';
 export { useSound } from './useSound';
-export { useTxSigner } from './useTxSigner';
 export { useAvantisTradeExecution } from './useAvantisTradeExecution';
 export { useViewportDimensions, getChartHeightCSS, getChartWidthCSS } from './useViewportDimensions';

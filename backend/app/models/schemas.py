@@ -7,64 +7,7 @@ from enum import Enum
 WALLET_REGEX = re.compile(r"^0x[a-fA-F0-9]{40}$")
 
 
-# ============ Request Schemas ============
-
-class DelegateSetupRequest(BaseModel):
-    """Request to build a delegate setup transaction."""
-    trader: str = Field(..., description="Trader wallet address (user's Privy wallet)")
-    delegate_address: str = Field(..., description="Delegate wallet address")
-
-
-class OpenTradeRequest(BaseModel):
-    """Request to build an open trade transaction."""
-    trader: str = Field(..., description="Trader wallet address")
-    delegate: str = Field(..., description="Delegate wallet address")
-    pair: str = Field(..., description="Trading pair (e.g., 'BTC/USD')")
-    pair_index: int = Field(..., description="Pair index from Avantis")
-    leverage: int = Field(..., ge=250, le=500, description="Leverage (250-500)")
-    is_long: bool = Field(..., description="True for long, False for short")
-    collateral: float = Field(..., gt=0, description="Collateral amount in USDC")
-
-
-class CloseTradeRequest(BaseModel):
-    """Request to build a close trade transaction."""
-    trader: str = Field(..., description="Trader wallet address")
-    delegate: str = Field(..., description="Delegate wallet address")
-    pair_index: int = Field(..., description="Pair index")
-    trade_index: int = Field(..., description="Trade index")
-    collateral_to_close: float = Field(..., gt=0, description="Collateral to close")
-
-
-class UpdateTPSLRequest(BaseModel):
-    """Request to build a TP/SL update transaction."""
-    trader: str = Field(..., description="Trader wallet address")
-    delegate: str = Field(..., description="Delegate wallet address")
-    pair_index: int = Field(..., description="Pair index")
-    trade_index: int = Field(..., description="Trade index")
-    take_profit: float = Field(..., ge=0, description="Take profit price")
-    stop_loss: float = Field(..., ge=0, description="Stop loss price")
-
-
 # ============ Response Schemas ============
-
-class UnsignedTx(BaseModel):
-    """Unsigned transaction data to be signed by frontend."""
-    to: str = Field(..., description="Contract address")
-    data: str = Field(..., description="Encoded calldata")
-    value: str = Field(default="0x0", description="ETH value to send")
-    chain_id: int = Field(default=8453, description="Chain ID (Base)")
-
-
-class BuildTxResponse(BaseModel):
-    """Response containing an unsigned transaction."""
-    tx: UnsignedTx
-
-
-class DelegateStatusResponse(BaseModel):
-    """Response for delegate status check."""
-    is_setup: bool = Field(..., description="Whether delegation is set up")
-    delegate_address: Optional[str] = Field(None, description="Current delegate address")
-
 
 class PairInfo(BaseModel):
     """Trading pair information."""

@@ -4,112 +4,18 @@ import { useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
 import { fetchTrades, fetchPnL, fetchClosedTrades, fetchTotalVolume } from '@/lib/avantisApi';
 import { publicClient } from '@/lib/viemClient';
-import {
-  buildSetDelegateTx,
-  buildUsdcApprovalTx as buildUsdcApprovalTxDirect,
-  AVANTIS_CONTRACTS,
-  DELEGATIONS_ABI,
-  ERC20_ALLOWANCE_ABI,
-} from '@/lib/avantisEncoder';
-import {
-  AVANTIS_V2_ENABLED,
-  buildSetDelegateTxV2,
-  buildUsdcApprovalTxV2,
-  fetchDelegationStatus,
-} from '@/lib/avantisV2';
+import { AVANTIS_CONTRACTS, ERC20_ALLOWANCE_ABI } from '@/lib/avantisTradeMath';
+import { buildUsdcApprovalTxV2 } from '@/lib/avantisV2';
 import type { UnsignedTx } from '@/types';
 
 // Minimum USDC allowance considered "sufficient" (10,000 USDC in 6 decimals)
 const MIN_SUFFICIENT_ALLOWANCE = 10_000n * 10n ** 6n;
 
 export function useAvantisAPI() {
-  // Build delegation setup transaction - Direct encoding (no backend!)
-  const buildDelegateSetupTx = useCallback(
-    async (_trader: string, delegateAddress: string): Promise<UnsignedTx | null> => {
-      try {
-        const tx = AVANTIS_V2_ENABLED
-          ? buildSetDelegateTxV2(delegateAddress as `0x${string}`)
-          : buildSetDelegateTx(delegateAddress as `0x${string}`);
-        return {
-          to: tx.to,
-          data: tx.data,
-          value: tx.value,
-          chainId: tx.chainId,
-        };
-      } catch (error) {
-        console.error('Failed to build delegate setup tx:', error);
-        return null;
-      }
-    },
-    []
-  );
-
-  // Check delegate status — v2 multi-delegate via API; v1 single mapping via RPC
-  const checkDelegateStatus = useCallback(
-    async (trader: string) => {
-      if (AVANTIS_V2_ENABLED) {
-        try {
-          const { getDelegateAddress } = await import('@/lib/delegateWallet');
-          const delegate = getDelegateAddress();
-          if (!delegate) {
-            return { isSetup: false, delegateAddress: null, error: null };
-          }
-          const status = await fetchDelegationStatus(trader, delegate);
-          const isSetup =
-            status.isEnabled &&
-            (status.canSignIntents || status.canDelegatedAction) &&
-            (status.expiry === 0 || status.expiry > Math.floor(Date.now() / 1000));
-          return {
-            isSetup,
-            delegateAddress: isSetup ? (delegate as `0x${string}`) : null,
-            error: null,
-          };
-        } catch (error) {
-          console.error('Failed to check v2 delegate status:', error);
-          return { isSetup: false, delegateAddress: null, error: 'Failed to read delegation' };
-        }
-      }
-
-      const MAX_RETRIES = 3;
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          const delegateAddress = await publicClient.readContract({
-            address: AVANTIS_CONTRACTS.Trading,
-            abi: DELEGATIONS_ABI,
-            functionName: 'delegations',
-            args: [trader as `0x${string}`],
-          });
-
-          const isSetup = delegateAddress !== '0x0000000000000000000000000000000000000000';
-          return {
-            isSetup,
-            delegateAddress: isSetup ? delegateAddress : null,
-            error: null,
-          };
-        } catch (error) {
-          if (attempt < MAX_RETRIES) {
-            await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
-            continue;
-          }
-          console.error('Failed to check delegate status after retries:', error);
-          return { isSetup: false, delegateAddress: null, error: 'Failed to read contract' };
-        }
-      }
-      return { isSetup: false, delegateAddress: null, error: 'Failed to read contract' };
-    },
-    []
-  );
-
-  // Build USDC approval transaction - Direct encoding (no backend!)
-  // Approves 10,000 USDC limit
   const buildUsdcApprovalTx = useCallback(
     async (_trader: string): Promise<UnsignedTx | null> => {
       try {
-        // 10,000 USDC in 6 decimals
-        const approvalLimit = 10_000n * 10n ** 6n;
-        const tx = AVANTIS_V2_ENABLED
-          ? buildUsdcApprovalTxV2(approvalLimit)
-          : buildUsdcApprovalTxDirect(approvalLimit);
+        const tx = buildUsdcApprovalTxV2(MIN_SUFFICIENT_ALLOWANCE);
         return {
           to: tx.to,
           data: tx.data,
@@ -205,8 +111,6 @@ export function useAvantisAPI() {
 
   return {
     // Setup operations - Direct encoding (no backend!)
-    buildDelegateSetupTx,
-    checkDelegateStatus,
     buildUsdcApprovalTx,
     checkUsdcAllowance,
     // Read operations - Direct from Avantis API (no backend!)

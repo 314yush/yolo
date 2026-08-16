@@ -2,7 +2,8 @@
 
 import React from 'react';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
-import { ASSETS, DIRECTIONS } from '@/lib/constants';
+import { DIRECTIONS } from '@/lib/constants';
+import { findAssetByPairIndex } from '@/lib/assetPair';
 
 interface TradeCardProps {
   trade: Trade | ClosedTrade;
@@ -60,7 +61,7 @@ function formatRelativeTime(timestampMs: number | null | undefined): string {
 }
 
 export const TradeCard = React.memo(function TradeCard({ trade, pnlData, onFlip, onClose, onShare, isFlipping, isClosing, isClosed = false, actionsDisabled = false }: TradeCardProps) {
-  const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
+  const asset = findAssetByPairIndex(trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   
   // Check if this is a ClosedTrade

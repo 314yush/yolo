@@ -5,8 +5,7 @@
  * Prices come exclusively from Avantis v3 feed (via store) — no Hermes fallback.
  */
 
-import { ASSETS } from './constants';
-import { getPairKey } from './assetPair';
+import { getPairKeyByIndex } from './assetPair';
 import { PNL_FEES, pnlFeeByGrossProfitP } from './pnlFees';
 import { logger } from './logger';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
@@ -34,22 +33,15 @@ interface AvantisPosition {
   tp: string;              // 10 decimals
   liquidationPrice: string; // 10 decimals
   rolloverFee: string;     // 6 decimals - accumulated margin fee
+  fundingFee?: string;     // 6 decimals - present on some v2 user-data payloads
   lossProtection: string;
   openedAt: number;        // unix timestamp
-  isPnl: boolean;          // true = zero-fee perp
+  isPnl: boolean;          // true = Upside / PnL path
 }
 
 interface AvantisUserDataResponse {
   positions: AvantisPosition[];
   limitOrders: unknown[];
-}
-
-/**
- * Get pair name from pairIndex
- */
-function getPairName(pairIndex: number): string {
-  const asset = ASSETS.find(a => a.pairIndex === pairIndex);
-  return asset ? getPairKey(asset) : `PAIR_${pairIndex}`;
 }
 
 /**
@@ -59,7 +51,8 @@ function parsePosition(pos: AvantisPosition): Trade {
   return {
     tradeIndex: pos.index,
     pairIndex: pos.pairIndex,
-    pair: getPairName(pos.pairIndex),
+    pair: getPairKeyByIndex(pos.pairIndex),
+    isPnl: pos.isPnl,
     collateral: Number(pos.collateral) / USDC_DECIMALS,
     leverage: Number(pos.leverage) / LEVERAGE_DECIMALS,
     isLong: pos.buy,
@@ -79,18 +72,19 @@ function isFinitePositive(n: number): boolean {
  * Calculate PnL for a position
  *
  * v2 note: protocol PnL now includes funding and applies spread on close.
- * This client estimate remains mark-vs-entry for UX speed; reconcile against
- * history/user-data after fills. Full UI-parity compute can replace this later.
+ * Funding is deducted when user-data exposes `fundingFee`; close-spread is
+ * only known at fill and is not estimated here. Reconcile against
+ * history/user-data after fills.
  *
  * Formula (from Avantis):
  * - For LONG: grossPnl = collateral * leverage * (currentPrice - openPrice) / openPrice
  * - For SHORT: grossPnl = collateral * leverage * (openPrice - currentPrice) / openPrice
  *
- * For zfp (isPnl) trades with profit: deduct tiered performance fee from gross.
+ * For Upside (isPnl) trades with profit: deduct tiered performance fee from gross.
  * "The More You Win, the More You Keep" - higher ROI = lower fee %.
- * Net = grossPnl * (1 - feeP/100) - rolloverFee
+ * Net = grossPnl * (1 - feeP/100) - rolloverFee - fundingFee
  *
- * For losses or non-zfp: Net = grossPnl - rolloverFee
+ * For losses or non-Upside: Net = grossPnl - rolloverFee - fundingFee
  */
 function calculatePnL(
   pos: AvantisPosition,
@@ -100,6 +94,8 @@ function calculatePnL(
   const leverage = Number(pos.leverage) / LEVERAGE_DECIMALS;
   const openPrice = Number(pos.openPrice) / PRICE_DECIMALS;
   const rolloverFee = Number(pos.rolloverFee) / USDC_DECIMALS;
+  const rawFunding = pos.fundingFee != null ? Number(pos.fundingFee) / USDC_DECIMALS : 0;
+  const fundingFee = Number.isFinite(rawFunding) ? rawFunding : 0;
 
   if (!isFinitePositive(openPrice)) {
     logger.warn('[calculatePnL] Invalid openPrice:', pos.openPrice, 'pairIndex:', pos.pairIndex, 'index:', pos.index);
@@ -133,9 +129,9 @@ function calculatePnL(
   if (pos.isPnl && grossPnl > 0) {
     const grossPnlP = (grossPnl / collateral) * 100;
     const feeP = pnlFeeByGrossProfitP(grossPnlP, PNL_FEES.tierP, PNL_FEES.feesP);
-    pnl = grossPnl * (1 - feeP / 100) - rolloverFee;
+    pnl = grossPnl * (1 - feeP / 100) - rolloverFee - fundingFee;
   } else {
-    pnl = grossPnl - rolloverFee;
+    pnl = grossPnl - rolloverFee - fundingFee;
   }
 
   const pnlPercentage = Number.isFinite(pnl) ? (pnl / collateral) * 100 : 0;
@@ -345,8 +341,7 @@ export async function fetchClosedTrades(
     return data.portfolio.map((item) => {
       const t = item.event.args.t;
       const args = item.event.args;
-      const asset = ASSETS.find(a => a.pairIndex === t.pairIndex);
-      const pair = asset ? getPairKey(asset) : `PAIR_${t.pairIndex}`;
+      const pair = getPairKeyByIndex(t.pairIndex);
       
       // Avantis history: closed collateral is args.positionSizeUSDC (fallback to initialPosToken)
       const collateral = Math.max(args.positionSizeUSDC > 0 ? args.positionSizeUSDC : t.initialPosToken, 1e-10);

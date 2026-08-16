@@ -2,7 +2,8 @@
 
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ClosedTrade } from '@/types';
-import { ASSETS, DIRECTIONS } from '@/lib/constants';
+import { DIRECTIONS } from '@/lib/constants';
+import { findAssetByPairIndex } from '@/lib/assetPair';
 import { pickShareCardBackground } from '@/lib/shareCardBackgrounds';
 
 const LIME = '#CCFF00';
@@ -46,7 +47,7 @@ export const ShareCard = forwardRef<ShareCardRef, ShareCardProps>(function Share
     getElement: () => containerRef.current,
   }));
 
-  const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
+  const asset = findAssetByPairIndex(trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   const isProfit = trade.finalPnL >= 0;
   const accent = isProfit ? LIME : PINK;

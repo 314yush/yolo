@@ -5,11 +5,11 @@ Spin the wheel, open a trade. Zero-fee perpetuals on Base.
 ## Overview
 
 YOLO is a hypercasual trading app where users spin a wheel to randomly select:
-- **Asset**: BTC, ETH, SOL, USD/JPY, XAU (Gold), XAG (Silver)
-- **Leverage**: 100x-500x
+- **Asset**: BTC, ETH, SOL, XRP, HYPE — all Avantis Upside markets (pair indexes 115–119)
+- **Leverage**: fixed per asset at that market's cap (BTC 250x, ETH 200x, SOL 150x, XRP/HYPE 75x)
 - **Direction**: LONG or SHORT
 
-The trade executes automatically with zero opening fees using Avantis Protocol. Gas fees are sponsored via Tachyon relay.
+Minimum notional is **$100**. The trade executes automatically with zero opening fees on Avantis v2. Gas is paid by the Avantis batched-market relayer, so users never hold ETH.
 
 ## Architecture
 
@@ -17,36 +17,30 @@ The trade executes automatically with zero opening fees using Avantis Protocol. 
 ┌─────────────────────────────────────────────────────────────────┐
 │                        FRONTEND (Next.js 16)                   │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │ Privy Auth  │  │ Picker Wheel│  │ PnL Screen              │ │
-│  │ (External   │  │ (SVG +      │  │ (Real-time updates)     │ │
-│  │  Wallets)   │  │  Animation) │  │ Price Chart             │ │
+│  │ Privy Auth  │  │ Picker Wheel│  │ PnL Screen              │
+│  │ (email +    │  │ (SVG +      │  │ (Real-time updates)     │
+│  │  OAuth)     │  │  Animation) │  │ Price Chart             │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
 │         │                │                      │               │
 │         ▼                ▼                      ▼               │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │              Delegate Wallet (localStorage)               │  │
-│  │         Signs trade txs without user interaction          │  │
-│  │         Uses EIP-7702 delegation (one-time setup)       │  │
+│  │        Privy embedded wallet (no delegate key)            │  │
+│  │   Signs an EIP-712 intent per trade, silently (~1ms)      │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │         │                                                      │
 │         ▼                                                      │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │         Relay Service (Tachyon/Gelato)                    │  │
-│  │         Sponsors gas fees for trade transactions         │  │
+│  │      Avantis batched-market relayer (gasless)             │  │
+│  │   https://prod-api.avantisfi.com/batched-market           │  │
+│  │   Registers + fills the order in one Base transaction     │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               │
-                              ▼ API Calls
+                              ▼ access / activity (optional)
 ┌─────────────────────────────────────────────────────────────────┐
 │                     BACKEND (FastAPI + Python)                  │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                    Avantis Trader SDK                    │   │
-│  │         Builds unsigned transactions only                │   │
-│  │         (No private keys on backend)                     │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │         Avantis SDK (prices for optional tx building)    │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  Access codes, activity logging, optional price/trade reads     │
+│  No private keys. Does not build or sign trades.                │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -56,26 +50,28 @@ The trade executes automatically with zero opening fees using Avantis Protocol. 
                     └─────────────────┘
 ```
 
+Trades never go through the backend. The frontend builds the EIP-712 intent locally (`LocalIntentBuilder`), the Privy embedded wallet self-signs it, and the batched-market relayer submits it on Base. There is no Tachyon, no Gelato, and no delegate key.
+
+YOLO does **not** use the Avantis Python SDK 2.x on the frontend, and does not call `sdk.avantisfi.com` or `delegate.avantisfi.com`. Those hosts generate API keys (delegate keys); this app signs as the trader.
+
 ## Tech Stack
 
 ### Frontend
 - **Next.js 16.1.4** (App Router, React Server Components)
 - **React 19.2.3** + **TypeScript 5**
 - **Tailwind CSS 4** (PostCSS)
-- **Privy 3.11.0** (authentication - external wallets only)
+- **Privy 3.15** (authentication + embedded wallets; email and OAuth only)
 - **wagmi 3.3.4** + **viem 2.44.4** (Web3)
 - **Zustand 5.0.10** (state management)
 - **lightweight-charts 5.1.0** (price charts with area series)
 - **Howler.js 2.2.4** (sound effects)
 - **Framer Motion 12.27.5** (animations)
-- **Tachyon SDK** (`@rathfi/tachyon`) (gas sponsorship relay)
 - **Pusher** (real-time price updates)
 - **PostHog** (analytics)
 
 ### Backend
 - **FastAPI 0.109+** (Python web framework)
-- **Avantis Trader SDK 0.8.13+** (transaction building)
-- **Avantis SDK** (server-side price lookups when building txs)
+- **Avantis Trader SDK 0.8.16+** (read-only: pairs, trades, PnL — pinned `<2`)
 - **Uvicorn** (ASGI server)
 
 ## Getting Started
@@ -91,7 +87,7 @@ The trade executes automatically with zero opening fees using Avantis Protocol. 
 cd frontend
 npm install
 cp .env.example .env.local
-# Edit .env.local with your Privy App ID
+# Edit .env.local with your Privy App ID and Alchemy Base RPC URL
 npm run dev
 ```
 
@@ -110,25 +106,20 @@ uvicorn app.main:app --reload --port 8000
 ### Frontend (.env.local)
 ```bash
 # Privy Authentication
+# Dashboard requirements (trades break without these):
+#   1. Turn OFF embedded wallet confirmation UIs (silent EIP-712 signing)
+#   2. Enable gas sponsorship on Base (one-time USDC approve is sponsored)
 NEXT_PUBLIC_PRIVY_APP_ID=your-privy-app-id
 
 # API Configuration (used by /api/backend proxy)
 BACKEND_URL=http://localhost:8000
 
-# Blockchain RPC
-NEXT_PUBLIC_BASE_RPC_URL=https://mainnet.base.org
-
-# Tachyon Relay (Gas Sponsorship)
-NEXT_PUBLIC_TACHYON_API_KEY=your-tachyon-api-key
-
-# Pusher (Real-time Price Updates)
-NEXT_PUBLIC_PUSHER_KEY=your-pusher-key
-NEXT_PUBLIC_PUSHER_CLUSTER=your-pusher-cluster
-
-# PostHog Analytics (Optional)
-NEXT_PUBLIC_POSTHOG_KEY=your-posthog-key
-NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
+# Blockchain RPC — required in production. Alchemy preferred.
+# Public Base RPC (https://mainnet.base.org) is a last-resort fallback.
+NEXT_PUBLIC_BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_API_KEY
 ```
+
+There is no `TACHYON` key and no Avantis API key. Signing is the user's own embedded wallet.
 
 ### Backend (.env)
 ```bash
@@ -145,43 +136,47 @@ DEBUG=true
 ## How It Works
 
 ### One-Time Setup
-1. User connects external wallet via Privy (MetaMask, Coinbase Wallet, etc.)
-2. Frontend generates a delegate wallet → stores in localStorage
-3. User signs EIP-7702 delegation tx (allows delegate to trade on their behalf)
-4. User approves USDC spending to Avantis Trading contract
-5. Setup can be batched (delegate + approval in one transaction) if wallet supports EIP-5792
+1. User signs in with email or OAuth; Privy creates an embedded wallet
+2. User deposits USDC
+3. User approves USDC to Avantis **TradingStorage** — one Privy-sponsored transaction
+
+That is the whole setup. There is no delegate key and no `setDelegate`: Avantis v2 accepts an intent signed by the trader, and every user has an embedded wallet that can sign for itself.
 
 ### Trading Flow
 1. User taps ROLL
 2. **Immediately**: Select random asset/leverage/direction
-3. **Immediately**: Send trade request to backend (parallel with animation)
-4. Wheel animates for ~8 seconds (hides blockchain latency)
-5. Backend builds unsigned transaction
-6. Delegate wallet signs transaction
-7. Transaction relayed via Tachyon (gas sponsored)
-8. Trade confirms → Show PnL screen
-9. PnL updates in real-time via live marks (Avantis feed-v3 + Hermes fallback)
-10. Price chart displays with Entry/LIQ labels
+3. **Immediately**: Build the EIP-712 intent locally and sign it with the embedded wallet (~1ms)
+4. Submit to the Avantis batched-market relayer while the wheel animates
+5. Relayer registers and fills the order in a single Base transaction
+6. Trade confirms → Show PnL screen
+7. PnL updates in real-time via live marks (Avantis feed-v3 + Hermes fallback)
+8. Price chart displays with Entry/LIQ labels
 
 ### Key Innovations
-- **Rigged Wheel Animation**: Pre-selects outcome and fires trade immediately. The wheel animates to land on that selection, hiding 8-10 second blockchain latency.
-- **Gas Sponsorship**: Tachyon relay sponsors gas fees, making trades feel instant and free for users.
-- **Delegate Wallet Pattern**: One-time delegation allows instant trading without repeated wallet approvals.
+- **Rigged Wheel Animation**: Pre-selects outcome and fires trade immediately. The wheel animates to land on that selection, hiding blockchain latency.
+- **Local intent building**: Intents are built and signed in-browser in under a millisecond, skipping a ~120ms round-trip to the tx-builder.
+- **Gasless by default**: The Avantis relayer pays gas and settles registration plus fill atomically, so tap-to-fill is dominated by Base's 2s block time.
 - **Progressive Chart Loading**: Charts load with 10 data points initially, then enhance to 30 for faster perceived performance.
 
 ## API Endpoints
 
+Backend is access codes + activity + optional reads. It does not build trades.
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
-| `/pairs` | GET | Available trading pairs |
-| `/price/{pair}` | GET | Current price (Avantis SDK feed client) |
-| `/delegate/setup` | POST | Build delegation tx |
-| `/delegate/status/{trader}` | GET | Check delegation status |
-| `/trade/build-open` | POST | Build open trade tx |
-| `/trade/build-close` | POST | Build close trade tx |
-| `/trades/{address}` | GET | Get open trades |
-| `/trades/{address}/pnl` | GET | Get PnL for positions |
+| `/access/check/{wallet}` | GET | Whether the wallet has redeemed an access code |
+| `/access/redeem` | POST | Redeem an access code |
+| `/activity/stats` | GET | Per-wallet activity stats |
+| `/activity/trades` | GET | Logged trade history |
+| `/activity/onboarding-status` | GET | Onboarding flag |
+| `/activity/onboarding-complete` | POST | Mark onboarding done |
+| `/trades/log-open` | POST | Fire-and-forget open-trade log |
+| `/trades/log-close-by-position` | POST | Fire-and-forget close-trade log |
+| `/trades/{address}` | GET | Open trades (SDK read, optional) |
+| `/trades/{address}/pnl` | GET | PnL for open positions (optional) |
+| `/pairs` | GET | Available trading pairs (optional) |
+| `/price/{pair}` | GET | Current price (optional) |
 
 ## Key Features
 
@@ -192,17 +187,16 @@ DEBUG=true
 - **Progressive Loading**: Renders with 10 points initially, then enhances to 30
 - **1-minute Resolution**: Aggregated from 1-second tick data
 
-### Relay System
-- **Tachyon Relay**: Primary gas sponsorship provider (default)
-- **Gelato Relay**: Alternative provider (stub implementation)
-- **Modular Architecture**: Easy to switch between providers
-- **Performance Tracking**: Built-in timing instrumentation
+### Execution
+- **Local EIP-712 intents**: Built in-browser via `LocalIntentBuilder`
+- **Silent self-sign**: Privy embedded wallet, no confirmation modal
+- **Batched-market relayer**: Gasless register+fill on Base
+- **No delegate**: trader signature only
 
 ### State Management
 - **Zustand Store**: Centralized trade state, prices, and UI state
 - **Real-time Price Sync**: Live marks (Avantis SSE + Hermes fallback) into Zustand
 - **Chart Data Collector**: Background collection of 1-second tick data
-- **Pre-built Transactions**: Transactions pre-built for instant execution
 
 ## Deployment
 
@@ -217,14 +211,14 @@ docker build -t yolo-api .
 docker run -p 8000:8000 yolo-api
 ```
 
+See `DEPLOYMENT_CHECKLIST.md` for the v2 launch checklist (Privy silent signing + Base gas sponsorship, TradingStorage spender, `verify:vectors` / `verify:v2`).
+
 ## Security Notes
 
-- **No backend signing**: Backend only builds unsigned transactions
-- **Delegate isolation**: Each user has their own delegate wallet (stored in localStorage)
-- **Delegate permissions**: Can only trade via Avantis contract, cannot withdraw funds
-- **USDC approval**: User explicitly approves spending limit to Trading contract
-- **EIP-7702 Delegation**: One-time delegation using modern Ethereum standard
-- **Gas Sponsorship**: Tachyon sponsors gas, but delegate must have ETH for transaction value
+- **No backend signing**: Backend never holds private keys and does not build trade transactions
+- **No delegate key**: The user's Privy embedded wallet signs its own intents
+- **USDC approval**: User explicitly approves spending to **TradingStorage** (not Trading)
+- **Gas**: Relayer pays trade gas; Privy sponsors the one-time approve. Users never need ETH
 
 ## Project Structure
 
@@ -235,40 +229,39 @@ yolo/
 │   │   ├── app/             # Next.js app router pages
 │   │   │   ├── page.tsx     # Main trading interface
 │   │   │   ├── activity/    # Trade history page
-│   │   │   └── settings/    # Settings page
+│   │   │   ├── settings/    # Settings page
+│   │   │   └── api/         # Proxies (Avantis v2 meta/pairs, backend, user-data)
 │   │   ├── components/      # React components
-│   │   │   ├── PickerWheel.tsx    # Wheel selection component
-│   │   │   ├── PnLScreen.tsx       # Profit/Loss display
-│   │   │   ├── PriceChart.tsx     # Price chart with Entry/LIQ labels
-│   │   │   └── SetupFlow.tsx      # One-time setup flow
+│   │   │   ├── PickerWheel.tsx
+│   │   │   ├── PnLScreen.tsx
+│   │   │   ├── PriceChart.tsx
+│   │   │   └── SetupFlow.tsx
 │   │   ├── hooks/           # Custom React hooks
-│   │   │   ├── useChartDataCollector.ts  # Chart data collection
-│   │   │   ├── useLivePrices.ts          # Avantis feed-v3 + Hermes fallback
-│   │   │   ├── useTxSigner.ts            # Transaction signing
-│   │   │   └── useRelayProvider.ts       # Relay provider management
-│   │   ├── lib/             # Utility libraries
-│   │   │   ├── providers/   # Relay provider implementations
-│   │   │   │   ├── tachyonProvider.ts
-│   │   │   │   └── gelatoProvider.ts
-│   │   │   ├── relayService.ts    # Relay service abstraction
-│   │   │   └── avantisApi.ts      # Backend API client
-│   │   └── store/           # Zustand state store
+│   │   │   ├── useAvantisTradeExecution.ts
+│   │   │   ├── useBatchedSetup.ts   # One-time USDC approve
+│   │   │   └── useLivePrices.ts
+│   │   ├── lib/
+│   │   │   ├── avantisV2/   # Local intents, Privy signer, batched-market
+│   │   │   ├── avantisApi.ts
+│   │   │   └── setupStatus.ts
+│   │   └── store/
 │   │       └── tradeStore.ts
-│   └── public/              # Static assets
-│       ├── sounds/          # Sound effects
-│       └── logos/           # Asset logos
+│   ├── scripts/             # verify-vectors, verify-v2-live, probe-selfsign
+│   └── public/
 │
 └── backend/                 # FastAPI backend
     ├── app/
-    │   ├── routers/         # API route handlers
-    │   │   ├── trades.py    # Trade endpoints
-    │   │   ├── delegate.py # Delegation endpoints
-    │   │   └── prices.py     # Price endpoints
-    │   ├── services/         # Business logic
-    │   │   ├── avantis.py   # Avantis SDK integration
-    │   │   └── price_feed.py # Avantis SDK prices
-    │   └── main.py          # FastAPI app
-    └── Dockerfile           # Container configuration
+    │   ├── routers/
+    │   │   ├── trades.py    # GET /trades/{address}, /pnl
+    │   │   ├── prices.py
+    │   │   ├── access.py
+    │   │   ├── admin.py
+    │   │   └── activity.py
+    │   ├── services/
+    │   │   ├── avantis.py   # SDK reads only
+    │   │   └── price_feed.py
+    │   └── main.py
+    └── Dockerfile
 ```
 
 ## Development
@@ -292,6 +285,15 @@ yolo/
    ```
 
 3. **Access App**: http://localhost:3000
+
+### Verification
+
+```bash
+cd frontend
+npm run verify:vectors   # golden EIP-712 digests (offline)
+npm run verify:v2        # live tx-builder + pair catalog
+npm run probe:selfsign   # live relayer: self-sign vs third-party
+```
 
 ### Building for Production
 

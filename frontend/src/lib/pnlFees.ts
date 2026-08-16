@@ -115,8 +115,10 @@ export function grossPnlPForNetPnlP(
  * @param isLong - true for LONG
  * @param openPrice - Entry price
  * @param currentPrice - Current oracle mark (Avantis / Hermes)
- * @param isPnl - true for ZFP trades (default); applies tiered fee on profits
+ * @param isPnl - true for Upside/PnL trades (default); applies tiered fee on profits
  * @param rolloverFee - Rollover fee to deduct (default 0 for new positions)
+ * @param fundingFee - Accrued funding if user-data exposed it (default 0).
+ *   Close-spread is only known at fill — do not fake a spread.
  * @returns { pnl, pnlPercentage } - Net values for display
  */
 export function computeClientPnL(
@@ -126,7 +128,8 @@ export function computeClientPnL(
   openPrice: number,
   currentPrice: number,
   isPnl: boolean = true,
-  rolloverFee: number = 0
+  rolloverFee: number = 0,
+  fundingFee: number = 0
 ): { pnl: number; pnlPercentage: number } {
   if (
     !isFiniteNumber(collateral) || collateral <= 0 ||
@@ -146,9 +149,9 @@ export function computeClientPnL(
   if (isPnl && grossPnl > 0) {
     const grossPnlP = (grossPnl / collateral) * 100;
     const feeP = pnlFeeByGrossProfitP(grossPnlP, PNL_FEES.tierP, PNL_FEES.feesP);
-    pnl = grossPnl * (1 - feeP / 100) - rolloverFee;
+    pnl = grossPnl * (1 - feeP / 100) - rolloverFee - fundingFee;
   } else {
-    pnl = grossPnl - rolloverFee;
+    pnl = grossPnl - rolloverFee - fundingFee;
   }
 
   const pnlPercentage = Number.isFinite(pnl) ? (pnl / collateral) * 100 : 0;

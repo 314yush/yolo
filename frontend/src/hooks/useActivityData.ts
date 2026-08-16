@@ -6,13 +6,13 @@ import { useAvantisAPI } from '@/hooks/useAvantisAPI';
 import { loadClosedTrades, mergeClosedTradesDuplicate } from '@/lib/closedTrades';
 import { getActivityStats, getActivityTrades, type ActivityTrade } from '@/lib/activityApi';
 import { ASSETS } from '@/lib/constants';
-import { getPairKey } from '@/lib/assetPair';
+import { findAssetByPairIndex, getPairKey } from '@/lib/assetPair';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 /** Map Activity API trade to ClosedTrade for TradeCard. */
 function activityTradeToClosedTrade(at: ActivityTrade): ClosedTrade {
   const assetMatch =
-    ASSETS.find((a) => a.pairIndex === at.pair_index) ??
+    (at.pair_index != null ? findAssetByPairIndex(at.pair_index) : undefined) ??
     ASSETS.find((a) => at.pair === getPairKey(a)) ??
     ASSETS.find((a) => !a.pairKey && at.pair.includes(a.name));
   const pairIndex = assetMatch?.pairIndex ?? at.pair_index ?? 0;

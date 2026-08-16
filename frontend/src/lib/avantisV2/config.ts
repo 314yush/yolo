@@ -1,43 +1,25 @@
 /**
- * Avantis v2 network + feature-flag config.
+ * Avantis v2 config. Base mainnet only.
  *
- * Enable with NEXT_PUBLIC_AVANTIS_V2=true.
- * Network: NEXT_PUBLIC_AVANTIS_NETWORK=testnet|mainnet (default testnet while v2 rolls out).
+ * There is deliberately no testnet switch. The chain id, contract addresses and
+ * the wagmi/Privy chain are all Base mainnet, so pointing only the API hosts at
+ * testnet would sign a mainnet EIP-712 domain against testnet contracts and
+ * fail in a way that is tedious to diagnose. If a staging rehearsal is ever
+ * needed, the chain has to move with it.
  */
 
-export type AvantisNetwork = 'testnet' | 'mainnet';
-
-export const AVANTIS_V2_ENABLED =
-  process.env.NEXT_PUBLIC_AVANTIS_V2 === 'true';
-
-export const AVANTIS_NETWORK: AvantisNetwork =
-  process.env.NEXT_PUBLIC_AVANTIS_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
-
-const PROFILES = {
-  testnet: {
-    name: 'testnet' as const,
-    apiBaseUrl: 'https://staging-api.avantisfi.com',
-    txBuilderUrl: 'https://tx-builder-testnet.avantisfi.com',
-    batchedMarketUrl: 'https://batched-market-testnet.avantisfi.com',
-    relayerUrl: 'https://relayer-testnet.avantisfi.com',
-    coreApiUrl: 'https://core-testnet.avantisfi.com',
-    historyApiUrl: 'https://testnet-api.avantisfi.com',
-    feedUrl: 'https://feed-v3.avantisfi.com',
-  },
-  mainnet: {
-    name: 'mainnet' as const,
-    apiBaseUrl: 'https://prod-api.avantisfi.com',
-    txBuilderUrl: 'https://tx-builder.avantisfi.com',
-    batchedMarketUrl: 'https://prod-api.avantisfi.com/batched-market',
-    relayerUrl: 'https://prod-api.avantisfi.com/blitz',
-    coreApiUrl: 'https://core.avantisfi.com',
-    historyApiUrl: 'https://api.avantisfi.com',
-    feedUrl: 'https://feed-v3.avantisfi.com',
-  },
+const AVANTIS_HOSTS = {
+  apiBaseUrl: 'https://prod-api.avantisfi.com',
+  txBuilderUrl: 'https://tx-builder.avantisfi.com',
+  batchedMarketUrl: 'https://prod-api.avantisfi.com/batched-market',
+  relayerUrl: 'https://prod-api.avantisfi.com/blitz',
+  coreApiUrl: 'https://core.avantisfi.com',
+  historyApiUrl: 'https://api.avantisfi.com',
+  feedUrl: 'https://feed-v3.avantisfi.com',
 } as const;
 
 export function getAvantisV2Config() {
-  return PROFILES[AVANTIS_NETWORK];
+  return AVANTIS_HOSTS;
 }
 
 /** Fallback addresses from /v2/meta (proxies unchanged across v1→v2). */
@@ -55,12 +37,13 @@ export const OPEN_ORDER_TYPE = {
   MARKET: 0,
   STOP_LIMIT: 1,
   LIMIT: 2,
-  MARKET_PNL: 3, // zero-fee / ZFP
+  MARKET_PNL: 3, // Upside markets (formerly zero-fee / ZFP)
 } as const;
 
 /**
  * AggregatorOrderType for POST /market/execute-batched.
- * ZFP open = MARKET_OPEN_PNL (6), ZFP close = MARKET_CLOSE_PNL (7).
+ * The _PNL variants are only valid on Upside pairs; the contract rejects any
+ * mismatch, so pick these from the pair rather than from user intent.
  */
 export const AGGREGATOR_ORDER_TYPE = {
   MARKET_OPEN: 0,
@@ -70,5 +53,3 @@ export const AGGREGATOR_ORDER_TYPE = {
 } as const;
 
 export const DEFAULT_INTENT_DEADLINE_MS = 120_000;
-/** Default delegate expiry: 1 year from registration. */
-export const DEFAULT_DELEGATE_TTL_SECONDS = 365 * 24 * 60 * 60;

@@ -6,8 +6,7 @@ import { useAvantisAPI } from './useAvantisAPI';
 import { useAutoPusherEvents, parseOrderFilledPayload } from './usePusherEvents';
 import type { PusherEvent, ParsedOrderFilled } from './usePusherEvents';
 import type { ClosedTrade } from '@/types';
-import { ASSETS } from '@/lib/constants';
-import { getPairKey } from '@/lib/assetPair';
+import { findAssetByPairIndex, getPairKey } from '@/lib/assetPair';
 import { debug } from '@/lib/debug';
 import { shouldExcludePositionForFlip } from '@/lib/flipExcludedPosition';
 
@@ -23,7 +22,7 @@ function closedTradeFromEvent(parsed: ParsedOrderFilled): ClosedTrade | null {
     return null;
   }
 
-  const asset = ASSETS.find((a) => a.pairIndex === parsed.pairIndex);
+  const asset = findAssetByPairIndex(parsed.pairIndex);
   const pair = asset ? getPairKey(asset) : `Pair ${parsed.pairIndex}`;
   const closePrice = parsed.closePrice ?? parsed.openPrice;
 

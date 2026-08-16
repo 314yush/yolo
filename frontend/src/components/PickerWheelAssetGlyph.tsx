@@ -54,6 +54,18 @@ export function PickerWheelAssetGlyph({
           />
         </svg>
       );
+    case 'HYPE':
+      return (
+        <svg {...common} viewBox="0 0 24 24" fill="#000000">
+          <path d="M2.6 14.1c1.9-4.9 4.3-7.4 7-7.4 1.9 0 3.1 1.1 3.7 3.2.4 1.5 1 2.3 1.7 2.3 1.1 0 2.3-1.5 3.6-4.4l2.8 1.2c-2 4.9-4.4 7.4-7.1 7.4-1.9 0-3.1-1.1-3.7-3.2-.4-1.5-1-2.3-1.7-2.3-1.1 0-2.2 1.5-3.5 4.4l-2.8-1.2z" />
+        </svg>
+      );
+    case 'XRP':
+      return (
+        <svg {...common} viewBox="0 0 24 24" fill="#000000">
+          <path d="M17.9 3h2.94l-6.12 6.06a4.02 4.02 0 0 1-5.64 0L2.95 3h2.94l4.65 4.6a1.94 1.94 0 0 0 2.71 0L17.9 3zM5.85 21H2.91l6.16-6.1a4.02 4.02 0 0 1 5.64 0L20.87 21h-2.94l-4.69-4.64a1.94 1.94 0 0 0-2.71 0L5.85 21z" />
+        </svg>
+      );
     case 'USDJPY':
       // Official pair art (developer.avantisfi.com — embedded raster in SVG)
       return (

@@ -4,7 +4,7 @@ const TX_BUILDER = 'https://tx-builder.avantisfi.com';
 
 export async function GET() {
   try {
-    const res = await fetch(`${TX_BUILDER}/v2/meta`, {
+    const res = await fetch(`${TX_BUILDER}/v2/pairs`, {
       headers: { accept: 'application/json' },
       next: { revalidate: 300 },
     });
@@ -16,7 +16,7 @@ export async function GET() {
         ok: false,
         error: {
           code: 'PROXY_ERROR',
-          message: err instanceof Error ? err.message : 'meta proxy failed',
+          message: err instanceof Error ? err.message : 'pairs proxy failed',
         },
       },
       { status: 502 }

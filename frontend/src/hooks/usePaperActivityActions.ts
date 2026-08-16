@@ -7,6 +7,7 @@ import { closePaperTrade, openPaperTrade } from '@/lib/paperTradeEngine';
 import { computePaperPnL, loadOpenPaperTrades } from '@/lib/paperTrades';
 import { refreshPaperStats } from '@/lib/paperStats';
 import { ASSETS, DIRECTIONS, LEVERAGES } from '@/lib/constants';
+import { findAssetByPairIndex } from '@/lib/assetPair';
 import type { ClosedTrade, Trade } from '@/types';
 
 interface UsePaperActivityActionsOptions {
@@ -56,7 +57,7 @@ export function usePaperActivityActions({
         const closePrice = prices[trade.pair]?.price ?? trade.openPrice;
         closePaperTrade(guestId, trade, closePrice);
 
-        const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex) ?? ASSETS[0];
+        const asset = findAssetByPairIndex(trade.pairIndex) ?? ASSETS[0];
         const leverage = LEVERAGES.find((l) => l.value === trade.leverage) ?? LEVERAGES[0];
         const direction = trade.isLong ? DIRECTIONS[1] : DIRECTIONS[0];
 

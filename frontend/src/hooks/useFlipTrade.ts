@@ -4,7 +4,7 @@
  * useFlipTrade — Optimized flip flow
  *
  * Flow:
- * 1. Use trade from UI (no getPnL API call for resolution)
+ * 1. Resolve on-chain openedAt + tradeIndex before signing close
  * 2. Close, read balance, open (sequential — parallel causes nonce collision)
  * 3. Use pnlData from store for logging
  * 4. Exclude old position from PnL matching for 30s to prevent entry price jump
@@ -12,30 +12,29 @@
 
 import { useCallback, useState } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from './useDelegateWallet';
-import { useTxSigner } from './useTxSigner';
 import { useAvantisTradeExecution } from './useAvantisTradeExecution';
 import { useSound } from './useSound';
 import { useUsdcBalance } from './useUsdcBalance';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { logTradeCloseByPosition } from '@/lib/activityApi';
-import {
-  buildFlipTradeTxs,
-  validatePositionSize,
-  AVANTIS_CONTRACTS,
-} from '@/lib/avantisEncoder';
-import { AVANTIS_V2_ENABLED } from '@/lib/avantisV2';
+import { validatePositionSize, AVANTIS_CONTRACTS } from '@/lib/avantisTradeMath';
 import type { Trade } from '@/types';
-import { DIRECTIONS, ASSETS, LEVERAGES } from '@/lib/constants';
+import { DIRECTIONS, LEVERAGES } from '@/lib/constants';
+import { findAssetByPairIndex } from '@/lib/assetPair';
 import { publicClient } from '@/lib/viemClient';
 import { debug } from '@/lib/debug';
 import { buildFlipExcludedPositionKey } from '@/lib/flipExcludedPosition';
+import { useAvantisAPI } from './useAvantisAPI';
+import {
+  POSITION_NOT_READY_MESSAGE,
+  resolveClosePosition,
+} from '@/lib/resolveClosePosition';
 
 const BALANCE_OF_ABI = [
   { constant: true, inputs: [{ name: '_owner', type: 'address' }], name: 'balanceOf', outputs: [{ name: 'balance', type: 'uint256' }], type: 'function' },
 ] as const;
 
-async function readUsdcBalanceWithRetry(address: `0x${string}`): Promise<number> {
+export async function readUsdcBalanceWithRetry(address: `0x${string}`): Promise<number> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -58,8 +57,6 @@ async function readUsdcBalanceWithRetry(address: `0x${string}`): Promise<number>
   return 0;
 }
 
-const MIN_POSITION_SIZE_USD = 100;
-
 export function useFlipTrade() {
   const {
     userAddress,
@@ -80,32 +77,48 @@ export function useFlipTrade() {
     prices,
     setIsIntentionalClose,
   } = useTradeStore();
-  const { delegateAddress } = useDelegateWallet();
-  const { signAndBroadcast } = useTxSigner();
   const { openMarket, closeMarket } = useAvantisTradeExecution();
+  const { getTrades } = useAvantisAPI();
   const { refetch: refetchBalance } = useUsdcBalance();
   const { playFlip } = useSound();
   const [isFlipping, setIsFlipping] = useState(false);
 
   const flipTrade = useCallback(
     async (trade: Trade) => {
-      const { delegateStatus } = useTradeStore.getState();
-      if (!delegateStatus.isSetup) {
-        throw new Error('Please complete setup before trading. Enable trading in the setup flow first.');
+      const { setupStatus } = useTradeStore.getState();
+      if (!setupStatus.isSetup) {
+        throw new Error('Please complete setup before trading. Approve USDC in the setup flow first.');
       }
 
-      if (!userAddress || !delegateAddress) {
-        throw new Error('Missing user address or delegate address');
+      if (!userAddress) {
+        throw new Error('Missing user address');
       }
 
-      const excludedKey = buildFlipExcludedPositionKey(trade);
+      const { positionSource } = useTradeStore.getState();
+      const resolved = await resolveClosePosition({
+        trade,
+        positionSource,
+        fetchTrades: () => getTrades(userAddress),
+      });
+      if (!resolved) {
+        throw new Error(POSITION_NOT_READY_MESSAGE);
+      }
+      if (
+        resolved.tradeIndex !== trade.tradeIndex ||
+        resolved.openedAt !== trade.openedAt
+      ) {
+        setCurrentTrade(resolved);
+        setPositionSource('poll');
+      }
+
+      const excludedKey = buildFlipExcludedPositionKey(resolved);
       setFlipExcludedPositionKey(excludedKey);
 
-      if (trade.pairIndex === undefined || trade.tradeIndex === undefined) {
-        throw new Error(`Invalid trade data: missing pairIndex or tradeIndex. Trade: ${JSON.stringify(trade)}`);
+      if (resolved.pairIndex === undefined || resolved.tradeIndex === undefined) {
+        throw new Error(`Invalid trade data: missing pairIndex or tradeIndex. Trade: ${JSON.stringify(resolved)}`);
       }
 
-      const validation = validatePositionSize(trade.collateral, trade.leverage);
+      const validation = validatePositionSize(resolved.collateral, resolved.leverage, resolved.pairIndex);
       if (!validation.valid) {
         throw new Error(validation.error);
       }
@@ -113,8 +126,8 @@ export function useFlipTrade() {
       setIsFlipping(true);
       setIsIntentionalClose(true);
 
-      const pairToUse = trade.pair;
-      const flippedIsLong = !trade.isLong;
+      const pairToUse = resolved.pair;
+      const flippedIsLong = !resolved.isLong;
 
       try {
         const currentPrice = prices[pairToUse]?.price;
@@ -124,90 +137,52 @@ export function useFlipTrade() {
 
         debug(`[flipTrade] Close then open: ${pairToUse} ${trade.isLong ? 'LONG' : 'SHORT'} → ${flippedIsLong ? 'LONG' : 'SHORT'}`);
 
-        let closeTxHash: `0x${string}`;
-        let openTxHash: `0x${string}`;
-
-        if (AVANTIS_V2_ENABLED) {
-          closeTxHash = await closeMarket({
-            trader: userAddress,
-            pairIndex: trade.pairIndex,
-            tradeIndex: trade.tradeIndex,
-            collateralToClose: trade.collateral,
-            openTimestamp: trade.openedAt,
-            expectedPrice: currentPrice,
-            isPnl: true,
-          });
-        } else {
-          const closeTx = buildFlipTradeTxs({
-            trader: userAddress,
-            pairIndex: trade.pairIndex,
-            tradeIndex: trade.tradeIndex,
-            collateral: trade.collateral,
-            leverage: trade.leverage,
-            currentIsLong: trade.isLong,
-            currentPrice,
-            takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
-          }).closeTx;
-          closeTxHash = await signAndBroadcast({
-            to: closeTx.to,
-            data: closeTx.data,
-            value: closeTx.value,
-            chainId: closeTx.chainId,
-          });
-        }
+        const closeTxHash = await closeMarket({
+          trader: userAddress,
+          pairIndex: resolved.pairIndex,
+          tradeIndex: resolved.tradeIndex,
+          collateralToClose: resolved.collateral,
+          openTimestamp: resolved.openedAt,
+          expectedPrice: currentPrice,
+          isPnl: resolved.isPnl,
+        });
 
         // Read balance immediately — close already waited for confirmation/fill
         const actualUsdcBalance = await readUsdcBalanceWithRetry(userAddress);
-        const availableCollateral = Math.min(actualUsdcBalance, trade.collateral);
+        const availableCollateral = Math.min(actualUsdcBalance, resolved.collateral);
 
-        const positionSizeWithAvailable = availableCollateral * trade.leverage;
-        if (positionSizeWithAvailable < MIN_POSITION_SIZE_USD) {
+        const afterClose = validatePositionSize(
+          availableCollateral,
+          resolved.leverage,
+          resolved.pairIndex
+        );
+        if (!afterClose.valid) {
           throw new Error(
-            `Cannot flip: After closing, available balance (${actualUsdcBalance.toFixed(2)} USDC) ` +
-              `is insufficient. With ${trade.leverage}x leverage, minimum is $${(MIN_POSITION_SIZE_USD / trade.leverage).toFixed(2)} USDC.`
+            `Cannot flip: After closing, available balance (${actualUsdcBalance.toFixed(2)} USDC) is insufficient. ${afterClose.error}`
           );
         }
 
-        if (AVANTIS_V2_ENABLED) {
-          openTxHash = await openMarket({
-            trader: userAddress,
-            pairIndex: trade.pairIndex,
-            collateral: availableCollateral,
-            leverage: trade.leverage,
-            isLong: flippedIsLong,
-            openPrice: currentPrice,
-            takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
-          });
-        } else {
-          const { openTx } = buildFlipTradeTxs({
-            trader: userAddress,
-            pairIndex: trade.pairIndex,
-            tradeIndex: trade.tradeIndex,
-            collateral: availableCollateral,
-            leverage: trade.leverage,
-            currentIsLong: trade.isLong,
-            currentPrice,
-            takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
-          });
-          openTxHash = await signAndBroadcast({
-            to: openTx.to,
-            data: openTx.data,
-            value: openTx.value,
-            chainId: openTx.chainId,
-          });
-        }
+        const openTxHash = await openMarket({
+          trader: userAddress,
+          pairIndex: resolved.pairIndex,
+          collateral: availableCollateral,
+          leverage: resolved.leverage,
+          isLong: flippedIsLong,
+          openPrice: currentPrice,
+          takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent ?? 200,
+        });
 
         const finalPnL =
           pnlData &&
-          pnlData.trade.pairIndex === trade.pairIndex &&
-          pnlData.trade.tradeIndex === trade.tradeIndex
+          pnlData.trade.pairIndex === resolved.pairIndex &&
+          pnlData.trade.tradeIndex === resolved.tradeIndex
             ? pnlData
             : null;
-        saveClosedTrade(userAddress, trade, finalPnL, { closeTxHash });
+        saveClosedTrade(userAddress, resolved, finalPnL, { closeTxHash });
         logTradeCloseByPosition({
           wallet: userAddress,
-          pairIndex: trade.pairIndex,
-          tradeIndex: trade.tradeIndex,
+          pairIndex: resolved.pairIndex,
+          tradeIndex: resolved.tradeIndex,
           exitPrice: finalPnL?.currentPrice,
           pnl: finalPnL?.grossPnl,
           closedAt: new Date().toISOString(),
@@ -223,13 +198,13 @@ export function useFlipTrade() {
         const storeNow = useTradeStore.getState();
         const pusherAlreadyResolved =
           storeNow.positionSource === 'pusher' &&
-          storeNow.currentTrade?.pairIndex === trade.pairIndex &&
+          storeNow.currentTrade?.pairIndex === resolved.pairIndex &&
           storeNow.currentTrade?.tradeIndex !== 0 &&
           storeNow.currentTrade?.isLong === flippedIsLong;
 
         if (!pusherAlreadyResolved) {
           const optimisticTrade: Trade = {
-            ...trade,
+            ...resolved,
             isLong: flippedIsLong,
             openPrice: currentPrice,
             collateral: availableCollateral,
@@ -254,18 +229,18 @@ export function useFlipTrade() {
 
         if (selection) {
           const newDirection = DIRECTIONS.find((d) => d.isLong === flippedIsLong) || DIRECTIONS[0];
-          const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex) || selection.asset;
-          const leverage = LEVERAGES.find((l) => l.value === trade.leverage) || selection.leverage;
+          const asset = findAssetByPairIndex(resolved.pairIndex) || selection.asset;
+          const leverage = LEVERAGES.find((l) => l.value === resolved.leverage) || selection.leverage;
           setSelection({ asset, leverage, direction: newDirection });
         }
 
         incrementTotalTrades();
-        incrementVolume(availableCollateral, trade.leverage);
+        incrementVolume(availableCollateral, resolved.leverage);
         removePendingTradeHash(openTxHash);
 
         const directionText = flippedIsLong ? 'LONG' : 'SHORT';
         showToast(
-          `Flip trade opened! ${pairToUse} ${directionText} at ${trade.leverage}x leverage`,
+          `Flip trade opened! ${pairToUse} ${directionText} at ${resolved.leverage}x leverage`,
           'success',
           5000
         );
@@ -283,11 +258,9 @@ export function useFlipTrade() {
     },
     [
       userAddress,
-      delegateAddress,
       refetchBalance,
       pnlData,
       setFlipExcludedPositionKey,
-      signAndBroadcast,
       openMarket,
       closeMarket,
       setCurrentTrade,
@@ -305,6 +278,7 @@ export function useFlipTrade() {
       prices,
       playFlip,
       setIsIntentionalClose,
+      getTrades,
     ]
   );
 

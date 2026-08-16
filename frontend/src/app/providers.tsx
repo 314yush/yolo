@@ -4,10 +4,12 @@ import { PrivyProvider } from '@privy-io/react-auth';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base } from 'wagmi/chains';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { AuthenticatedPriceSync } from '@/components/AuthenticatedPriceSync';
 import { PrivyWalletAddressSync } from '@/components/PrivyWalletAddressSync';
+import { primeAvantisV2 } from '@/lib/avantisV2';
+import { missingBaseRpcUrl } from '@/lib/constants';
 
 // Wagmi config for Base
 const wagmiConfig = createConfig({
@@ -23,7 +25,12 @@ interface ProvidersProps {
 
 export function Providers({ children }: ProvidersProps) {
   const [queryClient] = useState(() => new QueryClient());
-  
+
+  // Warm the v2 meta + pair caches so the first spin doesn't wait on them.
+  useEffect(() => {
+    void primeAvantisV2();
+  }, []);
+
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
 
   // If no Privy App ID, show error (dev mode)
@@ -61,6 +68,10 @@ export function Providers({ children }: ProvidersProps) {
           ethereum: {
             createOnLogin: 'users-without-wallets',
           },
+          // Every trade is an EIP-712 intent signed by this wallet. A modal per
+          // spin would defeat the point, and the user already confirmed the
+          // trade by spinning, so sign without prompting.
+          showWalletUIs: false,
         },
         defaultChain: base,
         supportedChains: [base],
@@ -70,6 +81,14 @@ export function Providers({ children }: ProvidersProps) {
         <WagmiProvider config={wagmiConfig}>
           <PrivyWalletAddressSync />
           <OfflineBanner />
+          {missingBaseRpcUrl && (
+            <div
+              className="fixed top-0 left-0 right-0 z-[90] py-1 px-3 bg-[#FFD60A] text-black text-center text-[11px] font-mono font-bold"
+              role="status"
+            >
+              Public Base RPC — set NEXT_PUBLIC_BASE_RPC_URL (Alchemy preferred)
+            </div>
+          )}
           <AuthenticatedPriceSync />
           {children}
         </WagmiProvider>

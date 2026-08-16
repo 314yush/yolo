@@ -6,7 +6,7 @@ import { useTradeStore } from '@/store/tradeStore';
 import { usePaperSimulatedConfirmation } from './usePaperSimulatedConfirmation';
 import { usePaperBalance } from './usePaperBalance';
 import { useSound } from './useSound';
-import { getPairKey } from '@/lib/assetPair';
+import { findAssetByPairIndex, getPairKey } from '@/lib/assetPair';
 import { openPaperTrade, closePaperTrade } from '@/lib/paperTradeEngine';
 import { computePaperPnL, loadOpenPaperTrades } from '@/lib/paperTrades';
 import { refreshPaperStats } from '@/lib/paperStats';
@@ -16,7 +16,7 @@ import type { Trade, WheelSelection } from '@/types';
 const MIN_POSITION_SIZE_USD = 100;
 
 function buildFlipSelection(trade: Trade): WheelSelection {
-  const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex) ?? ASSETS[0];
+  const asset = findAssetByPairIndex(trade.pairIndex) ?? ASSETS[0];
   const leverage = LEVERAGES.find((l) => l.value === trade.leverage) ?? LEVERAGES[0];
   const direction = trade.isLong ? DIRECTIONS[1] : DIRECTIONS[0];
   return { asset, leverage, direction };

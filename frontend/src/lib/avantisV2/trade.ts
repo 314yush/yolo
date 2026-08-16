@@ -2,16 +2,18 @@
  * High-level v2 trade execution: local intent → sign → batched-market.
  */
 
-import { getOrCreateDelegateWallet } from '@/lib/delegateWallet';
 import { AGGREGATOR_ORDER_TYPE, OPEN_ORDER_TYPE } from './config';
 import { executeBatchedMarket, type BatchedMarketOutcome } from './batchedMarket';
 import { LocalIntentBuilder, type IntentPayload } from './localIntents';
 import { fetchAvantisMeta } from './meta';
-import { signIntentWithPrivateKey } from './signIntent';
-import { calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
+import { isPnlPair, loadPairCatalog } from './pairs';
+import { signIntentWithAccount, type IntentSigner } from './signIntent';
+import { calculateTakeProfitMultiplier } from '@/lib/avantisTradeMath';
 
 export type OpenTradeV2Params = {
   trader: `0x${string}`;
+  /** The trader's own wallet. v2 accepts a self-signed intent, so there is no delegate. */
+  signer: IntentSigner;
   pairIndex: number;
   collateral: number;
   leverage: number;
@@ -25,12 +27,17 @@ export type OpenTradeV2Params = {
 
 export type CloseTradeV2Params = {
   trader: `0x${string}`;
+  signer: IntentSigner;
   pairIndex: number;
   tradeIndex: number;
   collateralToClose: number;
   openTimestamp: number;
   expectedPrice: number;
-  /** ZFP positions must close with MARKET_CLOSE_PNL. Default true for YOLO. */
+  /**
+   * Whether the position was opened on the PnL path. Pass the `isPnl` flag the
+   * positions API reports — positions carried over from v1 can be PnL trades on
+   * a pair that is no longer PnL-capable, so the pair alone can't decide this.
+   */
   isPnl?: boolean;
   wait?: boolean;
 };
@@ -46,11 +53,21 @@ let builderPromise: Promise<LocalIntentBuilder> | null = null;
 
 async function getBuilder(): Promise<LocalIntentBuilder> {
   if (!builderPromise) {
-    builderPromise = fetchAvantisMeta().then((meta) =>
-      LocalIntentBuilder.fromMeta(meta)
+    // Both are cached and fetched in parallel, so this is one round trip. The
+    // catalog has to be in before isPnlPair() decides how an order routes.
+    builderPromise = Promise.all([fetchAvantisMeta(), loadPairCatalog()]).then(
+      ([meta]) => LocalIntentBuilder.fromMeta(meta)
     );
   }
   return builderPromise;
+}
+
+/**
+ * Warm the meta + pair caches so the first trade doesn't pay for them.
+ * Safe to call repeatedly; callers can ignore the result.
+ */
+export function primeAvantisV2(): Promise<unknown> {
+  return getBuilder().catch(() => undefined);
 }
 
 export async function buildOpenIntent(
@@ -64,9 +81,7 @@ export async function buildOpenIntent(
       params.leverage,
       params.takeProfitPercent ?? 200
     );
-  const tp = params.isLong
-    ? params.openPrice * tpMult
-    : params.openPrice * tpMult;
+  const tp = params.openPrice * tpMult;
 
   return builder.openTrade({
     trader: params.trader,
@@ -75,7 +90,9 @@ export async function buildOpenIntent(
     collateralUsdc: params.collateral,
     leverage: params.leverage,
     openPrice: params.openPrice,
-    orderType: OPEN_ORDER_TYPE.MARKET_PNL,
+    orderType: isPnlPair(params.pairIndex)
+      ? OPEN_ORDER_TYPE.MARKET_PNL
+      : OPEN_ORDER_TYPE.MARKET,
     tp,
     sl: 0,
     slippagePercent: params.slippagePercent ?? 1,
@@ -98,14 +115,11 @@ export async function buildCloseIntent(
 
 async function submitIntent(
   payload: IntentPayload,
+  signer: IntentSigner,
   orderType: number,
   wait: boolean
 ): Promise<TradeExecutionResult> {
-  const wallet = getOrCreateDelegateWallet();
-  const signed = await signIntentWithPrivateKey(
-    payload,
-    wallet.privateKey as `0x${string}`
-  );
+  const signed = await signIntentWithAccount(payload, signer);
 
   const outcome = await executeBatchedMarket({
     orderType,
@@ -136,7 +150,10 @@ export async function executeOpenTradeV2(
   const intent = await buildOpenIntent(params);
   return submitIntent(
     intent,
-    AGGREGATOR_ORDER_TYPE.MARKET_OPEN_PNL,
+    params.signer,
+    isPnlPair(params.pairIndex)
+      ? AGGREGATOR_ORDER_TYPE.MARKET_OPEN_PNL
+      : AGGREGATOR_ORDER_TYPE.MARKET_OPEN,
     params.wait !== false
   );
 }
@@ -145,9 +162,13 @@ export async function executeCloseTradeV2(
   params: CloseTradeV2Params
 ): Promise<TradeExecutionResult> {
   const intent = await buildCloseIntent(params);
-  const orderType =
-    params.isPnl === false
-      ? AGGREGATOR_ORDER_TYPE.MARKET_CLOSE
-      : AGGREGATOR_ORDER_TYPE.MARKET_CLOSE_PNL;
-  return submitIntent(intent, orderType, params.wait !== false);
+  const isPnl = params.isPnl ?? isPnlPair(params.pairIndex);
+  return submitIntent(
+    intent,
+    params.signer,
+    isPnl
+      ? AGGREGATOR_ORDER_TYPE.MARKET_CLOSE_PNL
+      : AGGREGATOR_ORDER_TYPE.MARKET_CLOSE,
+    params.wait !== false
+  );
 }

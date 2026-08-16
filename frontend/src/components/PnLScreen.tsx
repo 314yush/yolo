@@ -5,16 +5,14 @@ import { useTradeStore } from '@/store/tradeStore';
 import { useCountUp } from '@/hooks/useCountUp';
 import { usePnL } from '@/hooks/usePnL';
 import { useFlipTrade } from '@/hooks/useFlipTrade';
-import { usePrebuiltCloseTx } from '@/hooks/usePrebuiltCloseTx';
-import { usePrebuiltFlipTx } from '@/hooks/usePrebuiltFlipTx';
 import { useSound } from '@/hooks/useSound';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { vibrateMedium } from '@/lib/haptics';
 import confetti from 'canvas-confetti';
 import { PriceChart } from './PriceChart';
-import { ASSETS, LEVERAGES, DIRECTIONS } from '@/lib/constants';
-import { getPairKey } from '@/lib/assetPair';
-import { calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
+import { LEVERAGES, DIRECTIONS } from '@/lib/constants';
+import { findAssetByPairIndex, getPairKey } from '@/lib/assetPair';
+import { calculateTakeProfitMultiplier } from '@/lib/avantisTradeMath';
 import { computeClientPnL } from '@/lib/pnlFees';
 import { ArrowUpDown, Dice5, Loader2 } from 'lucide-react';
 
@@ -26,6 +24,8 @@ interface PnLScreenProps {
   paperMode?: boolean;
   onFlip?: () => Promise<void>;
   isFlippingExternal?: boolean;
+  /** False while home PnL is still on placeholder identity (no on-chain openedAt/index). */
+  positionReady?: boolean;
 }
 
 // Gamification messages based on PnL state
@@ -62,6 +62,7 @@ export function PnLScreen({
   paperMode = false,
   onFlip,
   isFlippingExternal = false,
+  positionReady = true,
 }: PnLScreenProps) {
   const { selection, pnlData, currentTrade, confirmationStage, txHash, isLiquidated, isTakeProfitHit, lastKnownPnLPercentage, showToast, settings } = useTradeStore();
   const { flipTrade, isFlipping: isFlippingOnChain } = useFlipTrade();
@@ -113,10 +114,6 @@ export function PnLScreen({
 
   // Check if trade is still confirming
   const isConfirming = confirmationStage !== 'none' && confirmationStage !== 'confirmed' && confirmationStage !== 'failed';
-
-  // Activate pre-building when trade exists
-  usePrebuiltCloseTx({ enabled: !paperMode });
-  usePrebuiltFlipTx({ enabled: !paperMode });
 
   // usePositionSync is mounted in page.tsx (has access to balance refetch + open trades).
   // usePnL runs as reconciliation + liquidation monitor at a slower interval.
@@ -204,6 +201,10 @@ export function PnLScreen({
 
   const handleFlip = async () => {
     if (!currentTrade) return;
+    if (!paperMode && !positionReady) {
+      showToast('Position still confirming — try again in a moment', 'error');
+      return;
+    }
     vibrateMedium();
     playFlip();
     try {
@@ -308,7 +309,7 @@ export function PnLScreen({
     : null;
 
   // Derive display values from actual trade data
-  const displayAsset = displayTrade ? ASSETS.find(a => a.pairIndex === displayTrade.pairIndex) : selection?.asset;
+  const displayAsset = displayTrade ? findAssetByPairIndex(displayTrade.pairIndex) : selection?.asset;
   const displayLeverage = displayTrade ? LEVERAGES.find(l => l.value === displayTrade.leverage) : selection?.leverage;
   const displayDirection = displayTrade ? DIRECTIONS.find(d => d.isLong === displayTrade.isLong) : selection?.direction;
 
@@ -634,8 +635,14 @@ export function PnLScreen({
                 vibrateMedium();
                 onClose();
               }}
-              disabled={isClosing || isFlipping || !isOnline}
-              aria-label={isClosing ? 'Closing trade...' : 'Close and take profit/loss'}
+              disabled={isClosing || isFlipping || !isOnline || !positionReady}
+              aria-label={
+                !positionReady
+                  ? 'Position still confirming'
+                  : isClosing
+                  ? 'Closing trade...'
+                  : 'Close and take profit/loss'
+              }
               aria-busy={isClosing}
               className={`flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black font-black font-mono uppercase ${
                 isProfit
@@ -661,8 +668,14 @@ export function PnLScreen({
             {/* Flip button */}
             <button
               onClick={handleFlip}
-              disabled={isFlipping || isClosing || !isOnline}
-              aria-label={isFlipping ? 'Flipping...' : `Flip to ${currentTrade?.isLong ? 'SHORT' : 'LONG'}`}
+              disabled={isFlipping || isClosing || !isOnline || !positionReady}
+              aria-label={
+                !positionReady
+                  ? 'Position still confirming'
+                  : isFlipping
+                  ? 'Flipping...'
+                  : `Flip to ${currentTrade?.isLong ? 'SHORT' : 'LONG'}`
+              }
               aria-busy={isFlipping}
               className="brutal-button brutal-button-secondary flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed touch-manipulation focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-2 focus:ring-offset-black"
               style={{

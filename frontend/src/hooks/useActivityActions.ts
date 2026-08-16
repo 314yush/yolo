@@ -2,17 +2,15 @@
 
 import { useState, useCallback } from 'react';
 import { useTradeStore } from '@/store/tradeStore';
-import { useDelegateWallet } from '@/hooks/useDelegateWallet';
 import { useAvantisAPI } from '@/hooks/useAvantisAPI';
-import { useTxSigner } from '@/hooks/useTxSigner';
 import { useAvantisTradeExecution } from '@/hooks/useAvantisTradeExecution';
 import { useSound } from '@/hooks/useSound';
 import { vibrateMedium } from '@/lib/haptics';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { logTradeCloseByPosition, logTradeOpen, getActivityStats } from '@/lib/activityApi';
-import { buildCloseTradeTx as buildCloseTradeTxDirect, buildOpenTradeTx as buildOpenTradeTxDirect, calculateTakeProfitMultiplier } from '@/lib/avantisEncoder';
-import { AVANTIS_V2_ENABLED } from '@/lib/avantisV2';
 import { POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
+import { validatePositionSize } from '@/lib/avantisTradeMath';
+import { readUsdcBalanceWithRetry } from '@/hooks/useFlipTrade';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 export interface UseActivityActionsProps {
@@ -41,10 +39,8 @@ export function useActivityActions({
   setStats,
   refresh,
 }: UseActivityActionsProps): UseActivityActionsReturn {
-  const { userAddress, delegateStatus, showToast, setIsIntentionalClose, addPendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, prices } = useTradeStore();
-  const { delegateAddress } = useDelegateWallet();
+  const { userAddress, setupStatus, showToast, setIsIntentionalClose, addPendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, prices } = useTradeStore();
   const { getTrades, getPnL } = useAvantisAPI();
-  const { signAndWait, signAndBroadcast } = useTxSigner();
   const { openMarket, closeMarket } = useAvantisTradeExecution();
   const { playWin, playLose, playFlip } = useSound();
 
@@ -52,12 +48,12 @@ export function useActivityActions({
   const [closingIndex, setClosingIndex] = useState<number | null>(null);
 
   const flip = useCallback(async (trade: Trade) => {
-    if (!delegateStatus.isSetup) {
-      showToast('Please complete setup before trading. Enable trading in the setup flow first.', 'error');
+    if (!setupStatus.isSetup) {
+      showToast('Please complete setup before trading. Approve USDC in the setup flow first.', 'error');
       return;
     }
 
-    if (!userAddress || !delegateAddress) return;
+    if (!userAddress) return;
 
     const tradeWithPnL = openTrades.find((t) => 
       t.trade.pairIndex === trade.pairIndex && t.trade.tradeIndex === trade.tradeIndex
@@ -80,15 +76,13 @@ export function useActivityActions({
     try {
       const finalPnL = tradeWithPnL.pnlData || null;
 
-      const MIN_POSITION_SIZE_USD = 100;
-      const positionSize = verifiedTrade.collateral * verifiedTrade.leverage;
-      if (positionSize < MIN_POSITION_SIZE_USD) {
-        const minCollateral = MIN_POSITION_SIZE_USD / verifiedTrade.leverage;
-        throw new Error(
-          `Cannot flip trade: Position size $${positionSize.toFixed(2)} is below minimum $${MIN_POSITION_SIZE_USD.toFixed(2)}. ` +
-          `With ${verifiedTrade.leverage}x leverage, minimum collateral is $${minCollateral.toFixed(2)} USDC. ` +
-          `Current collateral: $${verifiedTrade.collateral.toFixed(2)} USDC`
-        );
+      const preClose = validatePositionSize(
+        verifiedTrade.collateral,
+        verifiedTrade.leverage,
+        verifiedTrade.pairIndex
+      );
+      if (!preClose.valid) {
+        throw new Error(preClose.error);
       }
 
       const currentPrice = prices[verifiedTrade.pair]?.price;
@@ -96,26 +90,15 @@ export function useActivityActions({
         throw new Error(`No price available for ${verifiedTrade.pair}. Wait for the price feed.`);
       }
 
-      let closeTxHash: `0x${string}`;
-      if (AVANTIS_V2_ENABLED) {
-        closeTxHash = await closeMarket({
-          trader: userAddress,
-          pairIndex: verifiedTrade.pairIndex,
-          tradeIndex: verifiedTrade.tradeIndex,
-          collateralToClose: verifiedTrade.collateral,
-          openTimestamp: verifiedTrade.openedAt,
-          expectedPrice: currentPrice,
-          isPnl: true,
-        });
-      } else {
-        const closeTx = buildCloseTradeTxDirect({
-          trader: userAddress,
-          pairIndex: verifiedTrade.pairIndex,
-          tradeIndex: verifiedTrade.tradeIndex,
-          collateralToClose: verifiedTrade.collateral,
-        });
-        ({ hash: closeTxHash } = await signAndWait(closeTx));
-      }
+      const closeTxHash = await closeMarket({
+        trader: userAddress,
+        pairIndex: verifiedTrade.pairIndex,
+        tradeIndex: verifiedTrade.tradeIndex,
+        collateralToClose: verifiedTrade.collateral,
+        openTimestamp: verifiedTrade.openedAt,
+        expectedPrice: currentPrice,
+        isPnl: verifiedTrade.isPnl,
+      });
 
       if (userAddress) {
         saveClosedTrade(userAddress, verifiedTrade, finalPnL, { closeTxHash });
@@ -151,33 +134,28 @@ export function useActivityActions({
         setClosedTrades((prev) => [newClosed, ...prev.filter((t) => t.pairIndex !== verifiedTrade.pairIndex || t.tradeIndex !== verifiedTrade.tradeIndex)]);
       }
 
-      let openHash: `0x${string}`;
-      if (AVANTIS_V2_ENABLED) {
-        openHash = await openMarket({
-          trader: userAddress,
-          pairIndex: verifiedTrade.pairIndex,
-          collateral: verifiedTrade.collateral,
-          leverage: verifiedTrade.leverage,
-          isLong: !verifiedTrade.isLong,
-          openPrice: currentPrice,
-          takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent,
-        });
-      } else {
-        const openTx = buildOpenTradeTxDirect({
-          trader: userAddress,
-          pairIndex: verifiedTrade.pairIndex,
-          collateral: verifiedTrade.collateral,
-          leverage: verifiedTrade.leverage,
-          isLong: !verifiedTrade.isLong,
-          openPrice: currentPrice,
-          takeProfitMultiplier: calculateTakeProfitMultiplier(
-            !verifiedTrade.isLong,
-            verifiedTrade.leverage,
-            useTradeStore.getState().settings.takeProfitPercent
-          ),
-        });
-        openHash = await signAndBroadcast(openTx);
+      const actualUsdcBalance = await readUsdcBalanceWithRetry(userAddress);
+      const availableCollateral = Math.min(actualUsdcBalance, verifiedTrade.collateral);
+      const afterClose = validatePositionSize(
+        availableCollateral,
+        verifiedTrade.leverage,
+        verifiedTrade.pairIndex
+      );
+      if (!afterClose.valid) {
+        throw new Error(
+          `Cannot flip: After closing, available balance (${actualUsdcBalance.toFixed(2)} USDC) is insufficient. ${afterClose.error}`
+        );
       }
+
+      const openHash = await openMarket({
+        trader: userAddress,
+        pairIndex: verifiedTrade.pairIndex,
+        collateral: availableCollateral,
+        leverage: verifiedTrade.leverage,
+        isLong: !verifiedTrade.isLong,
+        openPrice: currentPrice,
+        takeProfitPercent: useTradeStore.getState().settings.takeProfitPercent,
+      });
       addPendingOpenTxHash(openHash);
       addPendingTradeHash(openHash);
 
@@ -243,15 +221,15 @@ export function useActivityActions({
       setFlippingIndex(null);
       setIsIntentionalClose(false);
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, openTrades, prices, showToast, setIsIntentionalClose, playFlip, signAndWait, signAndBroadcast, openMarket, closeMarket, addPendingOpenTxHash, addPendingTradeHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setStats, getTrades, getPnL]);
+  }, [userAddress, setupStatus.isSetup, openTrades, prices, showToast, setIsIntentionalClose, playFlip, openMarket, closeMarket, addPendingOpenTxHash, addPendingTradeHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setStats, getTrades, getPnL]);
 
   const close = useCallback(async (trade: Trade) => {
-    if (!delegateStatus.isSetup) {
-      showToast('Please complete setup before closing trades. Enable trading in the setup flow first.', 'error');
+    if (!setupStatus.isSetup) {
+      showToast('Please complete setup before closing trades. Approve USDC in the setup flow first.', 'error');
       return;
     }
 
-    if (!userAddress || !delegateAddress) return;
+    if (!userAddress) return;
 
     const tradeIndex = openTrades.findIndex((t) => 
       t.trade.pairIndex === trade.pairIndex && t.trade.tradeIndex === trade.tradeIndex
@@ -266,30 +244,16 @@ export function useActivityActions({
       );
       const finalPnL = tradeWithPnL?.pnlData || null;
 
-      let closeTxHash: `0x${string}`;
-      if (AVANTIS_V2_ENABLED) {
-        const expectedPrice =
-          finalPnL?.currentPrice ??
-          prices[trade.pair]?.price ??
-          trade.openPrice;
-        closeTxHash = await closeMarket({
-          trader: userAddress,
-          pairIndex: trade.pairIndex,
-          tradeIndex: trade.tradeIndex,
-          collateralToClose: trade.collateral,
-          openTimestamp: trade.openedAt,
-          expectedPrice,
-          isPnl: true,
-        });
-      } else {
-        const closeTx = buildCloseTradeTxDirect({
-          trader: userAddress,
-          pairIndex: trade.pairIndex,
-          tradeIndex: trade.tradeIndex,
-          collateralToClose: trade.collateral,
-        });
-        ({ hash: closeTxHash } = await signAndWait(closeTx));
-      }
+      const closeTxHash = await closeMarket({
+        trader: userAddress,
+        pairIndex: trade.pairIndex,
+        tradeIndex: trade.tradeIndex,
+        collateralToClose: trade.collateral,
+        openTimestamp: trade.openedAt,
+        expectedPrice:
+          finalPnL?.currentPrice ?? prices[trade.pair]?.price ?? trade.openPrice,
+        isPnl: trade.isPnl,
+      });
 
       const netPnlPct = finalPnL?.pnlPercentage ?? 0;
       if (netPnlPct >= 0) {
@@ -386,7 +350,7 @@ export function useActivityActions({
       setClosingIndex(null);
       setIsIntentionalClose(false);
     }
-  }, [userAddress, delegateAddress, delegateStatus.isSetup, openTrades, prices, showToast, setIsIntentionalClose, playWin, playLose, signAndWait, closeMarket, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setShowClosedTrades, openShareCard, setStats, getTrades, getPnL]);
+  }, [userAddress, setupStatus.isSetup, openTrades, prices, showToast, setIsIntentionalClose, playWin, playLose, closeMarket, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setShowClosedTrades, openShareCard, setStats, getTrades, getPnL]);
 
   return {
     flip,

@@ -3,10 +3,13 @@ export interface Asset {
   name: string;
   color: string;
   icon: string;
+  /** Pair index new trades open on — the Upside market where one exists. */
   pairIndex: number;
+  /** Pre-v2 indices this asset also answers to, so carried-over positions resolve. */
+  legacyPairIndexes?: number[];
   /** When set (e.g. USD/JPY), used as the canonical pair key instead of `${name}/USD`. */
   pairKey?: string;
-  maxLeverage: number; // Max leverage for ZFP (PnL mode)
+  maxLeverage: number; // Max leverage on the pair's active path (Upside where listed)
   fixedLeverage?: number; // If set, always use this leverage (ignores wheel randomization)
   hasMarketHours?: boolean; // If true, check market open/closed status before allowing trades
   /** When hasMarketHours — commodities NY schedule vs Fri–Sun forex closure */
@@ -32,7 +35,6 @@ export interface Direction {
 // Trade input for API
 export interface TradeParams {
   trader: string;
-  delegate: string;
   pair: string;
   pairIndex: number;
   leverage: number;
@@ -61,6 +63,12 @@ export interface Trade {
   sl: number;
   liquidationPrice: number;
   openedAt: number;
+  /**
+   * Opened on the Upside (PnL) path. Decides the close order type — a v1
+   * position can be PnL on a pair that is no longer PnL-capable, so this comes
+   * from the position itself rather than from its pair.
+   */
+  isPnl?: boolean;
 }
 
 // Path point for share card chart imprint
@@ -102,10 +110,13 @@ export interface WheelSelection {
   direction: Direction;
 }
 
-// Delegate status
-export interface DelegateStatus {
+/**
+ * Whether the wallet is ready to trade. On v2 that means one thing: USDC is
+ * approved to TradingStorage. Intents are signed by the user's own wallet, so
+ * there is no delegate registration step.
+ */
+export interface SetupStatus {
   isSetup: boolean;
-  delegateAddress: string | null;
   usdcApproved: boolean;
 }
 

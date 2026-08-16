@@ -1,8 +1,8 @@
-import { calculateTakeProfitMultiplier } from './avantisEncoder';
+import { calculateTakeProfitMultiplier } from './avantisTradeMath';
 
 /**
- * Approximate ZFP liquidation distance for high-leverage positions.
- * At 250x leverage, liq is ~0.4% from entry; at 500x ~0.2%.
+ * Approximate Upside liquidation distance for high-leverage positions.
+ * At 250x (BTC cap) liq is ~0.4% from entry; at 75x (XRP/HYPE) ~1.3%.
  */
 export function calculateLiquidationPrice(
   openPrice: number,

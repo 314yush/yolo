@@ -1,8 +1,10 @@
 """
 YOLO Trading API - FastAPI Backend
 
-This API builds unsigned transactions for the frontend to sign.
-No private keys are stored or used on the backend.
+Access codes, activity logging, and optional price/trade reads.
+Trade execution is client-side: the frontend builds EIP-712 intents, signs
+them with the user's Privy embedded wallet, and submits them to the Avantis
+batched-market relayer. No private keys are stored or used on the backend.
 """
 
 import ssl
@@ -16,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.models.schemas import HealthResponse
-from app.routers import delegate, trades, prices, access, admin, activity
+from app.routers import trades, prices, access, admin, activity
 
 
 settings = get_settings()
@@ -24,7 +26,7 @@ settings = get_settings()
 # Create FastAPI app
 app = FastAPI(
     title=settings.app_name,
-    description="API for building unsigned Avantis trading transactions",
+    description="Access codes, activity tracking, and optional Avantis price helpers",
     version="1.0.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
@@ -48,8 +50,6 @@ async def health_check():
 
 
 # Include routers
-app.include_router(delegate.router)
-app.include_router(trades.router)
 app.include_router(trades.trades_router)
 app.include_router(prices.router)
 # Activity tracking (requires DATABASE_URL)

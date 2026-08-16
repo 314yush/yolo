@@ -132,10 +132,20 @@ const CRYPTO_ICONS: Record<string, React.ReactNode> = {
       <path d="M333.1,120.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8,0-8.7,7-4.6,11.1l62.7,62.7c2.4,2.4,5.7,3.8,9.2,3.8h317.4c5.8,0,8.7-7,4.6-11.1L333.1,120.1z" />
     </svg>
   ),
+  XRP: (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
+      <path d="M17.9 3h2.94l-6.12 6.06a4.02 4.02 0 0 1-5.64 0L2.95 3h2.94l4.65 4.6a1.94 1.94 0 0 0 2.71 0L17.9 3zM5.85 21H2.91l6.16-6.1a4.02 4.02 0 0 1 5.64 0L20.87 21h-2.94l-4.69-4.64a1.94 1.94 0 0 0-2.71 0L5.85 21z" />
+    </svg>
+  ),
+  HYPE: (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
+      <path d="M2.6 14.1c1.9-4.9 4.3-7.4 7-7.4 1.9 0 3.1 1.1 3.7 3.2.4 1.5 1 2.3 1.7 2.3 1.1 0 2.3-1.5 3.6-4.4l2.8 1.2c-2 4.9-4.4 7.4-7.1 7.4-1.9 0-3.1-1.1-3.7-3.2-.4-1.5-1-2.3-1.7-2.3-1.1 0-2.2 1.5-3.5 4.4l-2.8-1.2z" />
+    </svg>
+  ),
 };
 
 // --- Premium Wheel: Semi-circle, 5 assets in fixed order ---
-const WHEEL_ASSETS = ['ETH', 'XAG', 'BTC', 'SOL', 'XAU'] as const;
+const WHEEL_ASSETS = ['ETH', 'XRP', 'BTC', 'SOL', 'HYPE'] as const;
 
 function PremiumWheel() {
   const SEGMENTS = useMemo(
@@ -230,15 +240,7 @@ function PremiumWheel() {
                     width={size}
                     height={size}
                   >
-                    {asset.name === 'XAU' || asset.name === 'XAG' ? (
-                      <img
-                        src={asset.icon}
-                        alt={asset.name}
-                        width={size}
-                        height={size}
-                        style={{ display: 'block', width: size, height: size, objectFit: 'contain' }}
-                      />
-                    ) : CRYPTO_ICONS[asset.name] ? (
+                    {CRYPTO_ICONS[asset.name] ? (
                       <div
                         role="img"
                         aria-label={asset.name}

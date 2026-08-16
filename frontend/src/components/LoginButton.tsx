@@ -57,7 +57,7 @@ export function LoginButton({ label = 'SIGN IN', variant = 'default' }: LoginBut
 
   async function handleLogout() {
     reset();
-    // Don't clear delegate wallet - same user logging back in should reuse it
+    // Embedded wallet persists on the Privy user — no extra cleanup on logout
     await logout();
   }
 

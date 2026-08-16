@@ -1,13 +1,12 @@
 import { create } from 'zustand';
-import type { AppStage, WheelSelection, Trade, PnLData, DelegateStatus, Settings, TradeStats, ClosedTrade } from '@/types';
+import type { AppStage, WheelSelection, Trade, PnLData, SetupStatus, Settings, TradeStats, ClosedTrade } from '@/types';
 import { ASSETS, LEVERAGES, DIRECTIONS, DEFAULT_COLLATERAL, COLORS } from '@/lib/constants';
 import { loadSettings, DEFAULT_SETTINGS } from '@/lib/settings';
 import { loadStats, saveStats } from '@/lib/stats';
-import { loadDelegateStatus, saveDelegateStatus } from '@/lib/delegateStatus';
+import { loadSetupStatus, saveSetupStatus } from '@/lib/setupStatus';
 import { isCommoditiesMarketOpen, isFxWeekendMarketOpen } from '@/lib/marketHours';
 import { debug } from '@/lib/debug';
 import type { Toast } from '@/components/Toast';
-import type { EncodedTransaction, FlipTradeResult } from '@/lib/avantisEncoder';
 
 // Confirmation stages for fast trading feedback
 export type ConfirmationStage = 
@@ -85,11 +84,10 @@ interface TradeState {
   error: string | null;
   setError: (error: string | null) => void;
 
-  // Delegate setup status
-  delegateStatus: DelegateStatus;
-  setDelegateStatus: (status: DelegateStatus) => void;
-  // Load delegate status for current user
-  loadDelegateStatusForUser: (userAddress: string | null) => void;
+  // Trading readiness (USDC allowance)
+  setupStatus: SetupStatus;
+  setSetupStatus: (status: SetupStatus) => void;
+  loadSetupStatusForUser: (userAddress: string | null) => void;
 
   // Collateral amount (now part of settings)
   collateral: number;
@@ -133,26 +131,6 @@ interface TradeState {
   prices: Record<string, { price: number; timestamp: number }>;
   setPrices: (prices: Record<string, { price: number; timestamp: number }>) => void;
   
-  // Pre-built transaction for instant execution
-  prebuiltTx: EncodedTransaction | null;
-  setPrebuiltTx: (tx: EncodedTransaction | null) => void;
-  isPrebuilding: boolean;
-  setIsPrebuilding: (building: boolean) => void;
-  prebuildError: string | null;
-  setPrebuildError: (error: string | null) => void;
-
-  // Pre-built CLOSE transaction (for current trade)
-  prebuiltCloseTx: EncodedTransaction | null;
-  setPrebuiltCloseTx: (tx: EncodedTransaction | null) => void;
-  isPrebuildingClose: boolean;
-  setIsPrebuildingClose: (building: boolean) => void;
-
-  // Pre-built FLIP transactions (close + open opposite)
-  prebuiltFlipTxs: FlipTradeResult | null;
-  setPrebuiltFlipTxs: (txs: FlipTradeResult | null) => void;
-  isPrebuildingFlip: boolean;
-  setIsPrebuildingFlip: (building: boolean) => void;
-
   // Last closed trade for share card modal (set when trade closes)
   lastClosedTradeForShare: ClosedTrade | null;
   setLastClosedTradeForShare: (trade: ClosedTrade | null) => void;
@@ -180,15 +158,8 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   txHash: null,
   isExecuting: false,
   error: null,
-  delegateStatus: (() => {
-    // Try to load from localStorage if we have a user address
-    // This will be updated when userAddress is set
-    return {
-      isSetup: false,
-      delegateAddress: null,
-      usdcApproved: false,
-    };
-  })(),
+  // Hydrated from localStorage once userAddress is known.
+  setupStatus: { isSetup: false, usdcApproved: false },
   collateral: (() => {
     // Load collateral from settings to stay in sync
     if (typeof window !== 'undefined') {
@@ -211,15 +182,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   confirmationTimestamp: null,
   // Real-time prices (Avantis feed-v3 stream, Hermes fallback)
   prices: {},
-  // Pre-built transaction
-  prebuiltTx: null,
-  isPrebuilding: false,
-  prebuildError: null,
-  // Pre-built close/flip transactions
-  prebuiltCloseTx: null,
-  isPrebuildingClose: false,
-  prebuiltFlipTxs: null,
-  isPrebuildingFlip: false,
   settings: (() => {
     // Load settings from localStorage on store init
     if (typeof window !== 'undefined') {
@@ -293,41 +255,25 @@ export const useTradeStore = create<TradeState>((set, get) => ({
   setTxHash: (txHash) => set({ txHash }),
   setIsExecuting: (isExecuting) => set({ isExecuting }),
   setError: (error) => set({ error }),
-  setDelegateStatus: (delegateStatus) => {
+  setSetupStatus: (setupStatus) => {
     const state = get();
-    // Persist to localStorage when status changes
     if (state.userAddress) {
-      saveDelegateStatus(state.userAddress, delegateStatus);
+      saveSetupStatus(state.userAddress, setupStatus);
     }
-    set({ delegateStatus });
+    set({ setupStatus });
   },
-  loadDelegateStatusForUser: (userAddress) => {
+  loadSetupStatusForUser: (userAddress) => {
     if (!userAddress) {
-      // Reset to default if no user
-      set({
-        delegateStatus: {
-          isSetup: false,
-          delegateAddress: null,
-          usdcApproved: false,
-        },
-      });
+      set({ setupStatus: { isSetup: false, usdcApproved: false } });
       return;
     }
 
-    // Load from localStorage
-    const cached = loadDelegateStatus(userAddress);
+    const cached = loadSetupStatus(userAddress);
     if (cached) {
-      debug('📦 Loaded cached delegate status:', cached);
-      set({ delegateStatus: cached });
+      debug('📦 Loaded cached setup status:', cached);
+      set({ setupStatus: cached });
     } else {
-      // No cached status, start with defaults
-      set({
-        delegateStatus: {
-          isSetup: false,
-          delegateAddress: null,
-          usdcApproved: false,
-        },
-      });
+      set({ setupStatus: { isSetup: false, usdcApproved: false } });
     }
   },
   setCollateral: (collateral) => set({ collateral }),
@@ -437,17 +383,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
 
   // Real-time prices
   setPrices: (prices) => set({ prices }),
-  
-  // Pre-built transaction
-  setPrebuiltTx: (prebuiltTx) => set({ prebuiltTx }),
-  setIsPrebuilding: (isPrebuilding) => set({ isPrebuilding }),
-  setPrebuildError: (prebuildError) => set({ prebuildError }),
-
-  // Pre-built close/flip transactions
-  setPrebuiltCloseTx: (prebuiltCloseTx) => set({ prebuiltCloseTx }),
-  setIsPrebuildingClose: (isPrebuildingClose) => set({ isPrebuildingClose }),
-  setPrebuiltFlipTxs: (prebuiltFlipTxs) => set({ prebuiltFlipTxs }),
-  setIsPrebuildingFlip: (isPrebuildingFlip) => set({ isPrebuildingFlip }),
 
   // Randomly select asset, leverage, direction
   // Uses weighted random selection for leverage - higher leverage = more likely
@@ -476,19 +411,30 @@ export const useTradeStore = create<TradeState>((set, get) => ({
           weight: 0,
         };
     } else {
-      // Filter leverages that are compatible with this asset's max leverage
+      // Filter leverages that are compatible with this asset's max leverage.
+      // Falls back to a synthesized tier at the cap when the wheel's lowest tier
+      // still exceeds it, so a protocol cap cut can never leave this empty.
       const compatibleLeverages = LEVERAGES.filter(l => l.value <= asset.maxLeverage);
-      
-      // Weighted random selection for leverage
-      const totalWeight = compatibleLeverages.reduce((sum, l) => sum + l.weight, 0);
-      let random = Math.random() * totalWeight;
-      leverage = compatibleLeverages[0];
-      
-      for (const l of compatibleLeverages) {
-        random -= l.weight;
-        if (random <= 0) {
-          leverage = l;
-          break;
+
+      if (compatibleLeverages.length === 0) {
+        leverage = {
+          name: `${asset.maxLeverage}x`,
+          value: asset.maxLeverage,
+          color: COLORS.WARNING,
+          weight: 0,
+        };
+      } else {
+        // Weighted random selection for leverage
+        const totalWeight = compatibleLeverages.reduce((sum, l) => sum + l.weight, 0);
+        let random = Math.random() * totalWeight;
+        leverage = compatibleLeverages[0];
+
+        for (const l of compatibleLeverages) {
+          random -= l.weight;
+          if (random <= 0) {
+            leverage = l;
+            break;
+          }
         }
       }
     }
@@ -518,13 +464,6 @@ export const useTradeStore = create<TradeState>((set, get) => ({
     error: null,
     confirmationStage: 'none',
     confirmationTimestamp: null,
-    prebuiltTx: null,
-    isPrebuilding: false,
-    prebuildError: null,
-    prebuiltCloseTx: null,
-    isPrebuildingClose: false,
-    prebuiltFlipTxs: null,
-    isPrebuildingFlip: false,
     flipExcludedPositionKey: null,
     positionSource: 'placeholder',
     lastPositionEventAt: null,

@@ -8,7 +8,8 @@
 
 import type { ClosedTrade } from '@/types';
 import type { ShareCardFormat } from '@/components/ShareCard';
-import { ASSETS, DIRECTIONS } from '@/lib/constants';
+import { DIRECTIONS } from '@/lib/constants';
+import { findAssetByPairIndex } from '@/lib/assetPair';
 import {
   pickShareCardBackground,
   SHARE_CARD_NEGATIVE_BACKGROUNDS,
@@ -95,7 +96,7 @@ export async function renderShareCardToBlob(
   trade: ClosedTrade,
   format: ShareCardFormat = 'square'
 ): Promise<Blob> {
-  const asset = ASSETS.find((a) => a.pairIndex === trade.pairIndex);
+  const asset = findAssetByPairIndex(trade.pairIndex);
   const direction = DIRECTIONS.find((d) => d.isLong === trade.isLong);
   const isProfit = trade.finalPnL >= 0;
   const accent = isProfit ? LIME : PINK;

@@ -6,12 +6,12 @@ import React from 'react';
 const SEGMENTS = [
   { label: '250x', type: 'multiplier', color: '#1a1a1a' },
   { label: 'BTC', type: 'logo', icon: '/logos/btc.svg', color: '#1a1a1a' },
-  { label: '500x', type: 'multiplier', color: '#1a1a1a' },
+  { label: '200x', type: 'multiplier', color: '#1a1a1a' },
   { label: 'ETH', type: 'logo', icon: '/logos/eth.svg', color: '#1a1a1a' },
-  { label: '300x', type: 'multiplier', color: '#1a1a1a' },
+  { label: '150x', type: 'multiplier', color: '#1a1a1a' },
   { label: 'SOL', type: 'logo', icon: '/logos/sol.svg', color: '#1a1a1a' },
-  { label: '250x', type: 'multiplier', color: '#1a1a1a' },
-  { label: 'USDJPY', type: 'logo', icon: '/logos/usdjpy.svg', color: '#1a1a1a' },
+  { label: '75x', type: 'multiplier', color: '#1a1a1a' },
+  { label: 'HYPE', type: 'logo', icon: '/logos/hype.svg', color: '#1a1a1a' },
 ];
 
 const SIZE = 200;
