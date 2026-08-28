@@ -38,7 +38,7 @@ const screens: OnboardingScreen[] = [
   },
   {
     title: 'ZERO FEES, INSTANT TRADES',
-    description: 'We use a secure trading session to execute trades instantly without gas fees. Your funds stay in your wallet—we never hold them. One-time setup, then trade freely.',
+    description: 'Trades execute instantly with no gas fees and no wallet pop-ups. Your funds stay in your own wallet—we never hold them.',
     icon: (
       <svg
         className="w-24 h-24 sm:w-32 sm:h-32 text-[#CCFF00]"
@@ -55,7 +55,7 @@ const screens: OnboardingScreen[] = [
   },
   {
     title: 'READY TO TRADE?',
-    description: 'Enable trading with a quick one-time setup. Authorize a secure trading session and approve USDC spending—then start spinning and trading on Base.',
+    description: 'Add USDC to your wallet on Base and you\u2019re live. No setup, no approvals, no gas—just spin.',
     icon: (
       <svg
         className="w-24 h-24 sm:w-32 sm:h-32 text-[#CCFF00]"
@@ -133,7 +133,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
               SKIP TUTORIAL?
             </h3>
             <p className="text-white/80 text-sm mb-6">
-              You&apos;ll figure it out, but FYI — there&apos;s a one-time setup step.
+              You&apos;ll figure it out — add USDC and spin.
             </p>
             <div className="flex gap-3">
               <button

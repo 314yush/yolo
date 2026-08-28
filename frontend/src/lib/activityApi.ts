@@ -188,7 +188,8 @@ export async function getOnboardingStatus(wallet: string): Promise<boolean> {
 }
 
 /**
- * Mark onboarding as complete for a wallet. Called when SetupFlow completes successfully.
+ * Mark onboarding as complete for a wallet. Called once the background USDC
+ * approval lands, which is the point the wallet can actually trade.
  */
 export async function markOnboardingCompleteApi(wallet: string): Promise<void> {
   try {

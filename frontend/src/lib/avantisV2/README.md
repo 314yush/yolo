@@ -11,7 +11,9 @@ has been removed rather than left behind a flag.
 2. Build EIP-712 intents locally (`LocalIntentBuilder`) — digests match on-chain golden vectors
 3. Sign with the user's **own** Privy embedded wallet (`privySigner.ts`)
 4. Submit to batched-market `POST /market/execute-batched` and wait for fill SSE
-5. Onboarding is a single Privy-sponsored USDC approve
+5. Onboarding is a single Privy-sponsored USDC approve, fired automatically in
+   the background on the deposit screen — the user never sees or pays for it
+   (`useUsdcApproval` in `hooks/useBatchedSetup.ts`)
 
 ## No delegate
 

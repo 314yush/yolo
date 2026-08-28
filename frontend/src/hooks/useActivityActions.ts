@@ -11,6 +11,7 @@ import { logTradeCloseByPosition, logTradeOpen, getActivityStats } from '@/lib/a
 import { POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
 import { validatePositionSize } from '@/lib/avantisTradeMath';
 import { readUsdcBalanceWithRetry } from '@/hooks/useFlipTrade';
+import { useUsdcApproval } from '@/hooks/useBatchedSetup';
 import type { Trade, PnLData, ClosedTrade } from '@/types';
 
 export interface UseActivityActionsProps {
@@ -39,21 +40,24 @@ export function useActivityActions({
   setStats,
   refresh,
 }: UseActivityActionsProps): UseActivityActionsReturn {
-  const { userAddress, setupStatus, showToast, setIsIntentionalClose, addPendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, prices } = useTradeStore();
+  const { userAddress, showToast, setIsIntentionalClose, addPendingTradeHash, addPendingOpenTxHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, prices } = useTradeStore();
   const { getTrades, getPnL } = useAvantisAPI();
   const { openMarket, closeMarket } = useAvantisTradeExecution();
   const { playWin, playLose, playFlip } = useSound();
+  const { ensureUsdcApproval } = useUsdcApproval();
 
   const [flippingIndex, setFlippingIndex] = useState<number | null>(null);
   const [closingIndex, setClosingIndex] = useState<number | null>(null);
 
   const flip = useCallback(async (trade: Trade) => {
-    if (!setupStatus.isSetup) {
-      showToast('Please complete setup before trading. Approve USDC in the setup flow first.', 'error');
+    if (!userAddress) return;
+
+    // A flip re-opens on the other side, so the allowance has to be in place.
+    const approval = await ensureUsdcApproval(userAddress);
+    if (!approval.ok) {
+      showToast(approval.error, 'error');
       return;
     }
-
-    if (!userAddress) return;
 
     const tradeWithPnL = openTrades.find((t) => 
       t.trade.pairIndex === trade.pairIndex && t.trade.tradeIndex === trade.tradeIndex
@@ -221,14 +225,11 @@ export function useActivityActions({
       setFlippingIndex(null);
       setIsIntentionalClose(false);
     }
-  }, [userAddress, setupStatus.isSetup, openTrades, prices, showToast, setIsIntentionalClose, playFlip, openMarket, closeMarket, addPendingOpenTxHash, addPendingTradeHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setStats, getTrades, getPnL]);
+  }, [userAddress, ensureUsdcApproval, openTrades, prices, showToast, setIsIntentionalClose, playFlip, openMarket, closeMarket, addPendingOpenTxHash, addPendingTradeHash, popPendingOpenTxHash, incrementTotalTrades, incrementVolume, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setStats, getTrades, getPnL]);
 
+  // Deliberately not gated on the USDC allowance: closing returns collateral
+  // rather than pulling it, so a stale approval must never trap a position.
   const close = useCallback(async (trade: Trade) => {
-    if (!setupStatus.isSetup) {
-      showToast('Please complete setup before closing trades. Approve USDC in the setup flow first.', 'error');
-      return;
-    }
-
     if (!userAddress) return;
 
     const tradeIndex = openTrades.findIndex((t) => 
@@ -350,7 +351,7 @@ export function useActivityActions({
       setClosingIndex(null);
       setIsIntentionalClose(false);
     }
-  }, [userAddress, setupStatus.isSetup, openTrades, prices, showToast, setIsIntentionalClose, playWin, playLose, closeMarket, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setShowClosedTrades, openShareCard, setStats, getTrades, getPnL]);
+  }, [userAddress, openTrades, prices, showToast, setIsIntentionalClose, playWin, playLose, closeMarket, updateActivePositions, refresh, setOpenTrades, setClosedTrades, setShowClosedTrades, openShareCard, setStats, getTrades, getPnL]);
 
   return {
     flip,

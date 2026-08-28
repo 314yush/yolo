@@ -1,4 +1,3 @@
-export { useAccessCheck } from './useAccessCheck';
 export { useNetworkStatus } from './useNetworkStatus';
 export { useAvantisAPI } from './useAvantisAPI';
 export { useFastConfirmation } from './useFastConfirmation';

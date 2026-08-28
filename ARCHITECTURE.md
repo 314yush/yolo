@@ -41,18 +41,40 @@ The Python SDK at `sdk.avantisfi.com` and the API-key generator at `delegate.ava
                 │
                 ▼ optional HTTP
 ┌─────────────────────────────────────────────────────────────┐
-│  FastAPI — access codes, activity log, optional SDK reads   │
+│  FastAPI — activity log, optional SDK reads                 │
 │  No private keys. Does not build or sign trades.            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Onboarding
 
-One Privy-sponsored transaction: `USDC.approve(TradingStorage, amount)`.
+A new user signs in, skips or reads a 3-screen tutorial, deposits USDC, and
+trades. There is no approval screen and no invite gate.
+
+The one on-chain prerequisite — `USDC.approve(TradingStorage, amount)` — fires
+**automatically in the background** the moment the user reaches the deposit
+screen, so the allowance is mined long before their USDC lands. Privy sponsors
+the gas (`sendTransaction(..., { sponsor: true })`) and `showWalletUIs: false`
+suppresses the confirmation modal, so the user neither pays nor sees anything.
 
 - Spender is **TradingStorage** (`0x8a311D7048c35985aa31C131B9A13e03a5f7422d`), not Trading.
 - No `setDelegate`. No EIP-7702. No second signature.
-- Returning users with a sufficient allowance skip setup.
+- `useUsdcApproval().ensureUsdcApproval()` is idempotent and deduplicated by a
+  module-level in-flight map, so the deposit screen, ROLL, and flip can never
+  race two sponsored approvals. It retries with backoff and polls the on-chain
+  allowance rather than trusting the receipt.
+- If a user reaches ROLL before it lands, the trade path awaits the in-flight
+  approval inline; it never blocks behind a full-screen gate.
+- `setupStatus` in localStorage is a cache only — it is re-verified against the
+  on-chain allowance on load and cleared if the approval was revoked.
+- **Closing a position is never gated on the allowance.** A close returns
+  collateral rather than pulling it, so a stale flag must not trap a position.
+
+Avantis relays trading intents gaslessly, but it cannot relay the approval:
+`approve` is a state write on Circle's USDC contract requiring
+`msg.sender == owner`. None of the 17 signable intent types is an approval, and
+`/v2/token/approve` returns an unsigned transaction. Sponsorship is therefore
+required — roughly $0.0008 per user at Base gas prices.
 
 ## Markets
 
@@ -89,9 +111,18 @@ Contract reads (USDC allowance) go through viem to Base RPC. Open positions and 
 FastAPI is **not** on the trade path. It serves:
 
 - `/health`
-- `/access/*` — invite codes
 - `/activity/*` and `/trades/log-*` — fire-and-forget activity
 - `GET /trades/{address}`, `GET /trades/{address}/pnl`, `/pairs`, `/price/{pair}` — optional SDK reads
+
+Access codes and the admin router were removed at the open-signup cutover; so
+was the `access_bypass` fallback that granted everyone access whenever
+`DATABASE_URL` was unset. Config now **fails closed**: an `ENVIRONMENT` setting
+defaulting to `production` rejects a missing or malformed `DATABASE_URL`,
+`DEBUG=true`, and wildcard CORS at import time, before uvicorn binds a port.
+
+The browser reaches all of this through `/api/backend/[...path]`, which
+forwards only an allowlist of prefixes (`activity`, `trades`, `pairs`, `price`,
+`health`), hard-blocks `/admin`, and strips client-supplied auth headers.
 
 `avantis-trader-sdk` stays pinned `>=0.8.16,<2`. Do not migrate this process to SDK 2.x without a separate task. v1 write builders (`openTrade` / `delegatedAction`) were removed; they revert on v2.
 

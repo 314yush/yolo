@@ -62,10 +62,9 @@ class AvantisService:
     def client(self) -> TraderClient:
         """Lazy-load the TraderClient with a dummy signer."""
         if self._client is None:
-            # Log RPC URL being used (without exposing full key)
-            rpc_display = self.settings.base_rpc_url[:50] + "..." if len(self.settings.base_rpc_url) > 50 else self.settings.base_rpc_url
-            logger.info(f"Initializing TraderClient with RPC: {rpc_display}")
-            
+            logger.info("Initializing TraderClient with RPC: %s", self.settings.redacted_rpc_url)
+
+
             self._client = TraderClient(self.settings.base_rpc_url)
             # Dummy signer satisfies SDK init; we never sign with it
             self._client.set_local_signer(DUMMY_PRIVATE_KEY)

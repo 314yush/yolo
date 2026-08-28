@@ -12,13 +12,11 @@ import { useUsdcBalance } from '@/hooks/useUsdcBalance';
 import { useOpenTrades } from '@/hooks/useOpenTrades';
 import { useFastConfirmation } from '@/hooks/useFastConfirmation';
 import { useChartDataCollector } from '@/hooks/useChartDataCollector';
-import { useAccessCheck } from '@/hooks/useAccessCheck';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { usePositionSync } from '@/hooks/usePositionSync';
+import { useUsdcApproval } from '@/hooks/useBatchedSetup';
 import { PickerWheel } from '@/components/PickerWheel';
-import { AccessCodeGate } from '@/components/AccessCodeGate';
 import { LoginButton } from '@/components/LoginButton';
-import { SetupFlow } from '@/components/SetupFlow';
 import { OnboardingFlow } from '@/components/OnboardingFlow';
 import { DepositUSDC } from '@/components/DepositUSDC';
 import { ToastContainer } from '@/components/Toast';
@@ -38,13 +36,12 @@ import {
   hasSyncedCloseIdentity,
   resolveClosePosition,
 } from '@/lib/resolveClosePosition';
-import { clearLocalAccess } from '@/lib/access';
 import { vibrateDouble } from '@/lib/haptics';
 import { saveClosedTrade } from '@/lib/closedTrades';
 import { logTradeCloseByPosition, getOnboardingStatus } from '@/lib/activityApi';
 import type { Trade, ClosedTrade, PnLData } from '@/types';
 import { fetchRecentClosedTradeMatch } from '@/lib/avantisApi';
-import { MIN_DEPOSIT, POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
+import { POST_CLOSE_SHARE_DELAY_MS } from '@/lib/constants';
 import { getPairKey } from '@/lib/assetPair';
 import { debug } from '@/lib/debug';
 import { Dice5, Loader2, Wallet } from 'lucide-react';
@@ -91,6 +88,7 @@ export default function HomePage() {
   
   const { isOnline } = useNetworkStatus();
   const { checkUsdcAllowance, getTrades } = useAvantisAPI();
+  const { ensureUsdcApproval } = useUsdcApproval();
 
   // Load cached setup status for the authenticated user, then confirm the USDC
   // allowance on-chain so a revoked approval can't leave a stale "ready" cache.
@@ -100,7 +98,7 @@ export default function HomePage() {
         const address = user.wallet.address as `0x${string}`;
         // Always refresh from localStorage when the wallet is known (do not gate on
         // address !== userAddress — Strict Mode / re-renders can skip that branch and
-        // leave a stale status so SetupFlow never appears.)
+        // leave a stale status so a revoked approval keeps reporting "ready".)
         loadSetupStatusForUser(address);
 
         // Onboarding: once per wallet per mount session
@@ -134,7 +132,6 @@ export default function HomePage() {
           }
 
           verifyingRef.current = address;
-          setIsVerifyingSetup(true);
 
           try {
             const allowance = await checkUsdcAllowance(address);
@@ -150,18 +147,15 @@ export default function HomePage() {
             console.warn('Failed to verify USDC allowance:', err);
           } finally {
             verifyingRef.current = null;
-            setIsVerifyingSetup(false);
           }
         } else {
           verifyingRef.current = null;
-          setIsVerifyingSetup(false);
         }
       } else if (!authenticated) {
         onboardingBootstrappedForRef.current = null;
-        // Clear setup status, onboarding status, and access cache when logged out
+        approvalKickedForRef.current = null;
         if (userAddress) {
           clearOnboardingStatus(userAddress);
-          clearLocalAccess(userAddress);
         }
         loadSetupStatusForUser(null);
         setIsOnboardingComplete(false);
@@ -181,10 +175,6 @@ export default function HomePage() {
     refetch: refetchUsdcBalance,
     error: usdcBalanceError,
   } = useUsdcBalance();
-  
-  // Access code check (for gating app access)
-  const walletAddress = authenticated ? user?.wallet?.address || null : null;
-  const { hasAccess, isChecking: isCheckingAccess, grantAccess } = useAccessCheck(walletAddress);
   
   // Start fetching open trades + PnL immediately when user logs in
   const { fetchTrades: refetchOpenTrades } = useOpenTrades();
@@ -283,12 +273,11 @@ export default function HomePage() {
     },
   });
   
-  const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [isOnboardingComplete, setIsOnboardingComplete] = useState(false);
   const [isDepositComplete, setIsDepositComplete] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [shouldSpin, setShouldSpin] = useState(false);
-  const [isVerifyingSetup, setIsVerifyingSetup] = useState(false);
+  const [isPreparingApproval, setIsPreparingApproval] = useState(false);
   const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(false);
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [showInsufficientFundsModal, setShowInsufficientFundsModal] = useState(false);
@@ -296,6 +285,29 @@ export default function HomePage() {
   const verifyingRef = useRef<string | null>(null); // Track which address is being verified
   /** Ensures onboarding bootstrap runs once per wallet (avoids skipping when userAddress already matched Privy). */
   const onboardingBootstrappedForRef = useRef<string | null>(null);
+  /** Wallet the background approval has already been kicked off for. */
+  const approvalKickedForRef = useRef<string | null>(null);
+
+  // Fire the sponsored USDC approval the moment the user reaches the deposit
+  // screen — i.e. once they've shown deposit intent, so abandoned signups don't
+  // burn gas sponsorship, but the allowance is mined by the time funds land.
+  // Fire-and-forget: nothing in the UI waits on this.
+  useEffect(() => {
+    if (!authenticated || !isOnboardingComplete) return;
+    const address = user?.wallet?.address as `0x${string}` | undefined;
+    if (!address) return;
+    if (setupStatus.isSetup) return;
+    if (approvalKickedForRef.current === address) return;
+
+    approvalKickedForRef.current = address;
+    void ensureUsdcApproval(address).then((result) => {
+      if (!result.ok) {
+        // Allow a later trigger (ROLL, or a remount) to try again.
+        approvalKickedForRef.current = null;
+        debug(`[page] background USDC approval failed: ${result.error}`);
+      }
+    });
+  }, [authenticated, isOnboardingComplete, user, setupStatus.isSetup, ensureUsdcApproval]);
 
   // Calculate total gross PnL for open trades (for warning banner)
   const totalOpenPnL = React.useMemo(() => {
@@ -319,8 +331,8 @@ export default function HomePage() {
   }, [openTrades, prices]);
 
   const needsAddFunds = useMemo(
-    () => setupStatus.isSetup && usdcBalance !== null && usdcBalance < collateral,
-    [setupStatus.isSetup, usdcBalance, collateral]
+    () => usdcBalance !== null && usdcBalance < collateral,
+    [usdcBalance, collateral]
   );
 
   const openInsufficientFundsModal = useCallback(() => {
@@ -331,14 +343,6 @@ export default function HomePage() {
 
   // Handle spin start - fire trade immediately
   const handleSpinStart = useCallback(async () => {
-    // CRITICAL: Prevent trading if setup is not complete
-    if (!setupStatus.isSetup) {
-      console.error('[handleSpinStart] Trading blocked: Setup not complete');
-      setError('Please complete setup before trading. Enable trading in the setup flow first.');
-      setStage('error');
-      return;
-    }
-
     const spinStartTime = Date.now();
     // Reset timing tracking
     timingRef.current = {
@@ -372,6 +376,19 @@ export default function HomePage() {
       useTradeStore.getState().showToast('Insufficient USDC balance', 'error');
       setShowInsufficientFundsModal(true);
       return;
+    }
+
+    // The relayer rejects an intent whose allowance isn't mined yet. Normally
+    // this resolves instantly because the approval landed during deposit; if it
+    // didn't, join the in-flight approval (or start one) while the wheel spins.
+    if (!useTradeStore.getState().setupStatus.isSetup) {
+      const approval = await ensureUsdcApproval(traderAddress);
+      if (!approval.ok) {
+        setError(approval.error);
+        setStage('error');
+        showToast(approval.error, 'error');
+        return;
+      }
     }
 
     await loadPairCatalog();
@@ -451,7 +468,7 @@ export default function HomePage() {
   }, [
     userAddress,
     user,
-    setupStatus.isSetup,
+    ensureUsdcApproval,
     collateral,
     usdcBalance,
     prices,
@@ -588,13 +605,6 @@ export default function HomePage() {
 
   // Optimized: Show success immediately using pnlData, reconcile in background
   const handleCloseTrade = useCallback(async () => {
-    // CRITICAL: Prevent closing trades if setup is not complete (defensive check)
-    if (!setupStatus.isSetup) {
-      console.error('[handleCloseTrade] Trade close blocked: Setup not complete');
-      setError('Please complete setup before closing trades. Approve USDC in the setup flow first.');
-      return;
-    }
-
     const {
       currentTrade,
       pnlData,
@@ -717,7 +727,7 @@ export default function HomePage() {
       setIsClosing(false);
       setIsIntentionalClose(false); // Clear flag after close attempt
     }
-  }, [userAddress, setupStatus.isSetup, closeMarket, prices, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades, getTrades, setCurrentTrade, setPositionSource]);
+  }, [userAddress, closeMarket, prices, setError, reset, playWin, playLose, showToast, setLastClosedTradeForShare, refetchOpenTrades, getTrades, setCurrentTrade, setPositionSource]);
 
   handleCloseTradeRef.current = handleCloseTrade;
 
@@ -736,6 +746,49 @@ export default function HomePage() {
   const handleRollAgain = useCallback(() => {
     reset();
   }, [reset]);
+
+  const handleRollRef = useRef<(() => Promise<void>) | null>(null);
+
+  // ROLL: on the happy path the approval already landed during deposit, so this
+  // spins immediately. Otherwise it shows "PREPARING..." on the button itself
+  // while the approval confirms, then spins.
+  const handleRoll = useCallback(async () => {
+    if (stage !== 'idle' || isPreparingApproval) return;
+    if (needsAddFunds) {
+      openInsufficientFundsModal();
+      return;
+    }
+
+    const address = userAddress ?? (user?.wallet?.address as `0x${string}` | undefined);
+    if (address && !useTradeStore.getState().setupStatus.isSetup) {
+      setIsPreparingApproval(true);
+      try {
+        const approval = await ensureUsdcApproval(address);
+        if (!approval.ok) {
+          showToast(approval.error, 'error', undefined, {
+            label: 'RETRY',
+            onClick: () => void handleRollRef.current?.(),
+          });
+          return;
+        }
+      } finally {
+        setIsPreparingApproval(false);
+      }
+    }
+
+    setShouldSpin(true);
+    setTimeout(() => setShouldSpin(false), 100);
+  }, [
+    stage,
+    isPreparingApproval,
+    needsAddFunds,
+    openInsufficientFundsModal,
+    userAddress,
+    user,
+    ensureUsdcApproval,
+    showToast,
+  ]);
+  handleRollRef.current = handleRoll;
 
   // Warn before closing tab/window when trade is in progress
   useEffect(() => {
@@ -769,49 +822,11 @@ export default function HomePage() {
     );
   }
 
-  // Embedded wallet created after login — wait before access check / redeem
-  const bypassAccess = process.env.NEXT_PUBLIC_BYPASS_ACCESS_CODE === 'true';
-  if (authenticated && !user?.wallet?.address && !bypassAccess) {
+  // Embedded wallet is created right after login — wait for it
+  if (authenticated && !user?.wallet?.address) {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
         <div className="text-xl sm:text-2xl font-bold text-[#CCFF00] mb-4 animate-pulse">PREPARING WALLET...</div>
-        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  // Checking access status
-  if (isCheckingAccess) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
-        <div className="text-xl sm:text-2xl font-bold text-[#CCFF00] mb-4 animate-pulse">CHECKING ACCESS...</div>
-        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  // No access - show access code gate
-  if (hasAccess === false) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
-        <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
-          <Link href="/" className="text-[#CCFF00] text-2xl sm:text-3xl font-black font-mono tracking-tighter hover:opacity-80 transition-opacity">YOLO</Link>
-          <LoginButton />
-        </header>
-        <main className="flex-1 flex items-center justify-center px-4" id="main-content">
-          <AccessCodeGate 
-            walletAddress={walletAddress as string} 
-            onAccessGranted={() => grantAccess(walletAddress as string)} 
-          />
-        </main>
-      </div>
-    );
-  }
-
-  if (hasAccess !== true) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
-        <div className="text-xl sm:text-2xl font-bold text-[#CCFF00] mb-4 animate-pulse">CHECKING ACCESS...</div>
         <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
       </div>
     );
@@ -848,27 +863,17 @@ export default function HomePage() {
     );
   }
 
-  // Show loading while verifying USDC approval (prevents race condition)
-  if (isVerifyingSetup) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center safe-area-top safe-area-bottom">
-        <div className="text-xl sm:text-2xl font-bold text-white mb-4">VERIFYING SETUP...</div>
-        <div className="w-8 h-8 sm:w-10 sm:h-10 border-4 border-[#CCFF00] border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  // After onboarding: prompt to deposit USDC before setup (until they have enough and click Continue)
-  // Only for first-time new users - returning users skip deposit
+  // After onboarding: prompt to deposit USDC (until they have enough and tap
+  // through). Only for first-time users — returning users skip this. Deliberately
+  // not gated on setupStatus.isSetup: the background approval lands while this
+  // screen is up, and that must not bounce the user off it.
   // If USDC balance RPC fails locally (bad key, rate limit), balance stays null and users were
-  // stuck on DEPOSIT forever while production skips this screen for returning users. Allow setup.
+  // stuck on DEPOSIT forever while production skips this screen for returning users. Let them in.
   const needsDeposit =
     isOnboardingComplete &&
     !isReturningUser &&
-    !setupStatus.isSetup &&
-    !isSetupComplete &&
-    !usdcBalanceError &&
-    (usdcBalance === null || usdcBalance < MIN_DEPOSIT || !isDepositComplete);
+    !isDepositComplete &&
+    !usdcBalanceError;
   if (needsDeposit) {
     return (
       <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
@@ -878,21 +883,6 @@ export default function HomePage() {
         </header>
         <main className="flex-1 flex items-center justify-center px-4" id="main-content">
           <DepositUSDC onDeposited={() => setIsDepositComplete(true)} />
-        </main>
-      </div>
-    );
-  }
-
-  // Authenticated but not set up (onboarding complete, deposit done)
-  if (!setupStatus.isSetup && !isSetupComplete) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col safe-area-top safe-area-bottom">
-        <header className="flex justify-between items-center px-4 sm:px-6 py-4 sm:py-6">
-          <Link href="/" className="text-[#CCFF00] text-xl sm:text-2xl font-bold hover:opacity-80 transition-opacity">YOLO</Link>
-          <LoginButton />
-        </header>
-        <main className="flex-1 flex items-center justify-center px-4" id="main-content">
-          <SetupFlow onSetupComplete={() => setIsSetupComplete(true)} />
         </main>
       </div>
     );
@@ -1079,39 +1069,36 @@ export default function HomePage() {
           showRollButton
           rollButton={
             <button
-              onClick={() => {
-                if (stage !== 'idle' || !setupStatus.isSetup) return;
-                if (needsAddFunds) {
-                  openInsufficientFundsModal();
-                  return;
-                }
-                setShouldSpin(true);
-                setTimeout(() => setShouldSpin(false), 100);
-              }}
-              disabled={stage !== 'idle' || !setupStatus.isSetup || !isOnline}
+              onClick={() => void handleRoll()}
+              disabled={stage !== 'idle' || isPreparingApproval || !isOnline}
               aria-label={
                 !isOnline
                   ? 'You are offline. Reconnect to trade'
-                  : !setupStatus.isSetup
-                  ? 'Please complete setup before trading'
+                  : isPreparingApproval
+                  ? 'Preparing your wallet for trading'
                   : stage === 'idle' && needsAddFunds
                   ? 'Add USDC to meet collateral requirement'
                   : stage === 'idle'
                   ? 'Spin the wheel to select trade parameters'
                   : 'Wheel is spinning, please wait'
               }
-              aria-busy={stage !== 'idle'}
+              aria-busy={stage !== 'idle' || isPreparingApproval}
               className={`
                 w-full py-4 text-2xl sm:text-3xl font-black brutal-button min-h-[56px] touch-manipulation
                 transition-all duration-200 shadow-[0_8px_0px_0px_rgba(0,0,0,0.3)]
                 focus:outline-none focus:ring-4 focus:ring-[#CCFF00] focus:ring-offset-4 focus:ring-offset-black
-                ${stage === 'idle'
+                ${stage === 'idle' && !isPreparingApproval
                   ? 'bg-[#CCFF00] text-black hover:shadow-[0_6px_0px_0px_rgba(0,0,0,0.3)] hover:translate-y-[2px] active:shadow-[0_2px_0px_0px_rgba(0,0,0,0.3)] active:translate-y-[6px]'
                   : 'bg-gray-700 text-gray-400 cursor-not-allowed shadow-[0_4px_0px_0px_rgba(0,0,0,0.3)]'
                 }
               `}
             >
-              {stage === 'idle' ? (
+              {isPreparingApproval ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" strokeWidth={2.5} />
+                  <span>PREPARING...</span>
+                </span>
+              ) : stage === 'idle' ? (
                 <span className="flex items-center justify-center gap-2">
                   {needsAddFunds ? (
                     <>

@@ -8,6 +8,12 @@ import httpx
 
 TEST_WALLET = "0x1111111111111111111111111111111111111111"
 
+# tx_hash is now validated as a 32-byte hex hash
+OPEN_TX = "0x" + "11" * 32
+CLOSE_TX = "0x" + "22" * 32
+OPEN_BY_POS_TX = "0x" + "33" * 32
+CLOSE_BY_POS_TX = "0x" + "44" * 32
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -26,7 +32,7 @@ async def test_log_open_invalid_wallet(client: httpx.AsyncClient):
             "entry_price": 95000.0,
             "tp_price": 285000.0,
             "liq_price": 94683.33,
-            "tx_hash": "0xabc",
+            "tx_hash": "0x" + "cd" * 32,
         },
     )
     assert resp.status_code == 422
@@ -48,7 +54,7 @@ async def test_log_open_success(client: httpx.AsyncClient):
             "entry_price": 95000.0,
             "tp_price": 285000.0,
             "liq_price": 94683.33,
-            "tx_hash": "0xabcdef1234567890abcdef1234567890abcdef12",
+            "tx_hash": "0x" + "ab" * 32,
         },
     )
     assert resp.status_code == 200
@@ -66,7 +72,7 @@ async def test_log_close_not_found(client: httpx.AsyncClient):
             "exit_price": 96000.0,
             "pnl": 15.0,
             "closed_at": "2026-03-04T10:54:00Z",
-            "tx_hash": "0xabcd1234",
+            "tx_hash": "0x" + "ef" * 32,
         },
     )
     assert resp.status_code == 404
@@ -101,7 +107,7 @@ async def test_log_open_and_close(client: httpx.AsyncClient):
             "entry_price": 3500.0,
             "tp_price": 1000.0,
             "liq_price": 3550.0,
-            "tx_hash": "0xopen123",
+            "tx_hash": OPEN_TX,
         },
     )
     assert open_resp.status_code == 200
@@ -115,7 +121,7 @@ async def test_log_open_and_close(client: httpx.AsyncClient):
             "exit_price": 3400.0,
             "pnl": 7.14,
             "closed_at": "2026-03-04T10:54:00Z",
-            "tx_hash": "0xclose456",
+            "tx_hash": CLOSE_TX,
         },
     )
     assert close_resp.status_code == 200
@@ -144,8 +150,8 @@ async def test_log_open_and_close(client: httpx.AsyncClient):
     assert t["direction"] == "SHORT"
     assert t["status"] == "closed"
     assert t["pnl"] == 7.14
-    assert t["tx_hash_open"] == "0xopen123"
-    assert t["tx_hash_close"] == "0xclose456"
+    assert t["tx_hash_open"] == OPEN_TX
+    assert t["tx_hash_close"] == CLOSE_TX
 
 
 async def test_activity_stats_invalid_wallet(client: httpx.AsyncClient):
@@ -191,7 +197,7 @@ async def test_log_close_by_position(client: httpx.AsyncClient):
             "entry_price": 200.0,
             "tp_price": 400.0,
             "liq_price": 198.0,
-            "tx_hash": "0xopen-by-pos",
+            "tx_hash": OPEN_BY_POS_TX,
         },
     )
     assert open_resp.status_code == 200
@@ -206,7 +212,7 @@ async def test_log_close_by_position(client: httpx.AsyncClient):
             "exit_price": 210.0,
             "pnl": 12.5,
             "closed_at": "2026-03-04T12:00:00Z",
-            "tx_hash": "0xclose-by-pos",
+            "tx_hash": CLOSE_BY_POS_TX,
             "is_liquidated": False,
         },
     )

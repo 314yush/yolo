@@ -357,7 +357,7 @@ export function LandingPremium({ onLogin }: { onLogin: () => void }) {
         </a>
         <nav className="flex items-center gap-3 sm:gap-4 md:gap-6">
           <a
-            href="https://docs.tradeonyolo.fun"
+            href="https://docs.tradeyolo.fun"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-white/60 hover:text-white/90 hover:bg-white/5 transition-colors touch-manipulation"

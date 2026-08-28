@@ -11,7 +11,7 @@ import type { Asset, Leverage, Direction } from '@/types';
 // is pinned to its pair's `pnlMaxLeverage`, so the leverage ring is decided by
 // the asset that lands. Forex and commodities were dropped at the v2 cutover:
 // they have no Upside listing, and their $300 minimum against the new caps
-// needs $6–$30 of collateral against a $10 default.
+// needs $6–$30 of collateral against a $5 default.
 export const ASSETS: Asset[] = [
   { name: 'BTC', color: '#FF9500', icon: '/logos/btc.svg', pairIndex: 116, legacyPairIndexes: [1], maxLeverage: 250, fixedLeverage: 250 },
   { name: 'ETH', color: '#627EEA', icon: '/logos/eth.svg', pairIndex: 115, legacyPairIndexes: [0], maxLeverage: 200, fixedLeverage: 200 },
@@ -38,8 +38,10 @@ export const DIRECTIONS: Direction[] = [
 // Minimum deposit to pass the deposit gate (first-time users)
 export const MIN_DEPOSIT = 5;
 
-// Default collateral amount when spinning
-export const DEFAULT_COLLATERAL = 10; // $10 USDC
+// Default collateral amount when spinning. Matched to MIN_DEPOSIT so a user who
+// deposits the minimum can immediately trade. At the lowest wheel tier (75x)
+// this is $375 notional, well clear of Avantis's $100 Upside minimum.
+export const DEFAULT_COLLATERAL = MIN_DEPOSIT; // $5 USDC
 
 // Animation timings (in ms) - Slower spin builds anticipation
 export const WHEEL_TIMINGS = {

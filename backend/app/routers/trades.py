@@ -31,8 +31,9 @@ async def get_trades(address: str):
     try:
         trades = await avantis_service.get_trades(address)
         return TradesResponse(trades=trades)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to fetch trades")
+        raise HTTPException(status_code=500, detail="Unable to fetch trades right now")
 
 
 @trades_router.get("/{address}/pnl", response_model=PnLResponse)
@@ -69,6 +70,6 @@ async def get_pnl(address: str):
             ))
         
         return PnLResponse(positions=positions)
-    except Exception as e:
-        logger.error(f"Error getting PnL: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to compute PnL")
+        raise HTTPException(status_code=500, detail="Unable to fetch PnL right now")

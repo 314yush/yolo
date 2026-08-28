@@ -1,4 +1,4 @@
-name: Verify V2
+name: CI
 
 on:
   pull_request:
@@ -8,7 +8,33 @@ on:
       - feat/avantis-v2-migration
 
 jobs:
-  verify-vectors:
+  frontend:
+    name: Frontend (typecheck, lint, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+        env:
+          # Build-time placeholders; real values come from Vercel project settings.
+          NEXT_PUBLIC_PRIVY_APP_ID: ci-placeholder
+          BACKEND_URL: https://ci.invalid
+
+  intents:
+    name: Avantis intent vectors
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,3 +52,41 @@ jobs:
       - name: Live tx-builder + pair catalog
         run: npm run verify:v2
         continue-on-error: true
+
+  backend:
+    name: Backend (tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      # Without a database the DB-backed tests skip themselves, which would
+      # hide regressions in activity logging and onboarding.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: yolo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the runtime in backend/Dockerfile.
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Tests
+        run: python -m pytest
+        env:
+          ENVIRONMENT: test
+          BASE_RPC_URL: https://base-mainnet.example/v2/ci-placeholder
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/yolo_test

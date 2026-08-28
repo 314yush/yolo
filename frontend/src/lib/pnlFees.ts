@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 /**
  * ZFP (zero-fee perp) performance fee schedule.
  * "The More You Win, the More You Keep" - higher ROI = lower fee %.
@@ -27,12 +29,12 @@ export function pnlFeeByGrossProfitP(
   feesP: readonly number[]
 ): number {
   if (!isFiniteNumber(grossPnlP)) {
-    console.warn('[pnlFeeByGrossProfitP] Invalid grossPnlP:', grossPnlP);
+    logger.warn('[pnlFeeByGrossProfitP] Invalid grossPnlP:', grossPnlP);
     return 0;
   }
 
   if (tierP.length !== feesP.length || tierP.length === 0) {
-    console.warn('[pnlFeeByGrossProfitP] Invalid tier/fees arrays: length mismatch or empty');
+    logger.warn('[pnlFeeByGrossProfitP] Invalid tier/fees arrays: length mismatch or empty');
     return 0;
   }
 
@@ -54,7 +56,7 @@ export function pnlFeeByGrossProfitP(
       const f1 = feesP[i + 1];
       const denom = t1 - t0;
       if (!isFiniteNumber(denom) || denom === 0) {
-        console.warn('[pnlFeeByGrossProfitP] Invalid tier bracket: t0=', t0, 't1=', t1);
+        logger.warn('[pnlFeeByGrossProfitP] Invalid tier bracket: t0=', t0, 't1=', t1);
         return f0;
       }
       const t = (grossPnlP - t0) / denom;

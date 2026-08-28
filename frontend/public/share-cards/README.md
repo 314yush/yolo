@@ -1,6 +1,6 @@
 # Share card backgrounds (anime / cartoon)
 
-**You only add the art here.** The app draws on top: YOLO logo, taglines, pair/leverage/direction, PnL, %, open/close times, and `tradeonyolo.fun`.
+**You only add the art here.** The app draws on top: YOLO logo, taglines, pair/leverage/direction, PnL, %, open/close times, and `tradeyolo.fun`.
 
 Add **four** images (square works best; cropped with `object-fit: cover`):
 

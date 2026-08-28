@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Diagnostic endpoint - verify backend proxy config.
- * Visit /api/proxy-status to see if BACKEND_URL is correct and reachable.
+ * Development-only diagnostic. Returns 404 in production builds so the
+ * environment shape is never exposed publicly.
  */
 export async function GET() {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
   let url = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || '';
   url = url.replace(/\/+$/, '');
   if (url && !/^https?:\/\//i.test(url)) {
@@ -37,15 +41,12 @@ export async function GET() {
     healthStatus,
     error: error ?? null,
     hint,
-    nodeEnv: process.env.NODE_ENV,
     privyConfigured: !!process.env.NEXT_PUBLIC_PRIVY_APP_ID,
-    bypassAccessCode: process.env.NEXT_PUBLIC_BYPASS_ACCESS_CODE === 'true',
     avantisNetwork: 'mainnet (Base 8453, no testnet path)',
     checklist: [
       'Privy dashboard: add http://localhost:3000 (and your LAN URL if used) under Allowed URLs.',
       'Privy dashboard: embedded wallet UIs must be off, or every trade prompts a modal.',
       'frontend/.env.local: BACKEND_URL, NEXT_PUBLIC_BASE_RPC_URL (match Vercel).',
-      'Optional local: NEXT_PUBLIC_BYPASS_ACCESS_CODE=true to skip access-code gate.',
     ],
   });
 }

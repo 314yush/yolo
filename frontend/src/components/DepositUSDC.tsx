@@ -90,9 +90,9 @@ export function DepositUSDC({ onDeposited }: DepositUSDCProps) {
         <button
           onClick={onDeposited}
           className="w-full py-4 sm:py-5 text-lg sm:text-xl font-bold brutal-button bg-[#CCFF00] text-black min-h-[56px] touch-manipulation"
-          aria-label="Continue to setup"
+          aria-label="Start trading"
         >
-          CONTINUE TO SETUP
+          START TRADING
         </button>
       ) : (
         <>

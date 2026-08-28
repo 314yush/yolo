@@ -1,0 +1,32 @@
+# Secrets — must never be baked into the image (Railway injects env at runtime)
+.env
+.env.*
+!.env.example
+
+# Local virtualenvs — dependencies are installed from requirements.txt
+venv/
+.venv/
+env/
+ENV/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Tests and tooling not needed at runtime
+tests/
+pytest.ini
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# VCS and editor noise
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

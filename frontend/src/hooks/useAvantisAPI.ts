@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
+import { logger } from '@/lib/logger';
 import { useTradeStore } from '@/store/tradeStore';
 import { fetchTrades, fetchPnL, fetchClosedTrades, fetchTotalVolume } from '@/lib/avantisApi';
 import { publicClient } from '@/lib/viemClient';
@@ -82,7 +83,7 @@ export function useAvantisAPI() {
       const msg = error instanceof Error ? error.message : String(error);
       console.error('[useAvantisAPI] Failed to fetch PnL:', msg);
       if (msg.includes('Cannot reach API') || msg.includes('backend')) {
-        console.warn('[useAvantisAPI] Hint: Start the backend with "cd backend && uvicorn app.main:app" to fix PnL updates.');
+        logger.warn('[useAvantisAPI] Hint: Start the backend with "cd backend && uvicorn app.main:app" to fix PnL updates.');
       }
       return [];
     }

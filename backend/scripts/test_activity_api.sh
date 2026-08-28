@@ -6,6 +6,10 @@
 
 BASE_URL="${1:-http://localhost:8000}"
 WALLET="0x1234567890123456789012345678901234567890"
+# tx_hash must be a 32-byte hex hash
+TX_OPEN_1="0x$(printf 'aa%.0s' {1..32})"
+TX_OPEN_2="0x$(printf 'bb%.0s' {1..32})"
+TX_CLOSE_2="0x$(printf 'cc%.0s' {1..32})"
 
 echo "Testing Activity API at $BASE_URL"
 echo "Wallet: $WALLET"
@@ -31,7 +35,7 @@ OPEN_RESP=$(curl -s -X POST "$BASE_URL/trades/log-open" \
     \"entry_price\": 95000.0,
     \"tp_price\": 285000.0,
     \"liq_price\": 94683.33,
-    \"tx_hash\": \"0xtest123\"
+    \"tx_hash\": \"$TX_OPEN_1\"
   }")
 echo "$OPEN_RESP" | python3 -m json.tool 2>/dev/null || echo "$OPEN_RESP"
 
@@ -56,7 +60,7 @@ curl -s -X POST "$BASE_URL/trades/log-open" \
     \"entry_price\": 3500.0,
     \"tp_price\": 1000.0,
     \"liq_price\": 3550.0,
-    \"tx_hash\": \"0xopen456\"
+    \"tx_hash\": \"$TX_OPEN_2\"
   }" | python3 -m json.tool 2>/dev/null || echo "Response above"
 echo ""
 
@@ -70,7 +74,7 @@ curl -s -X POST "$BASE_URL/trades/log-close-by-position" \
     \"exit_price\": 3400.0,
     \"pnl\": 7.14,
     \"closed_at\": \"2026-03-04T10:54:00Z\",
-    \"tx_hash\": \"0xclose789\",
+    \"tx_hash\": \"$TX_CLOSE_2\",
     \"is_liquidated\": false
   }"
 echo -e "\n"

@@ -25,6 +25,7 @@ import { publicClient } from '@/lib/viemClient';
 import { debug } from '@/lib/debug';
 import { buildFlipExcludedPositionKey } from '@/lib/flipExcludedPosition';
 import { useAvantisAPI } from './useAvantisAPI';
+import { useUsdcApproval } from './useBatchedSetup';
 import {
   POSITION_NOT_READY_MESSAGE,
   resolveClosePosition,
@@ -81,17 +82,19 @@ export function useFlipTrade() {
   const { getTrades } = useAvantisAPI();
   const { refetch: refetchBalance } = useUsdcBalance();
   const { playFlip } = useSound();
+  const { ensureUsdcApproval } = useUsdcApproval();
   const [isFlipping, setIsFlipping] = useState(false);
 
   const flipTrade = useCallback(
     async (trade: Trade) => {
-      const { setupStatus } = useTradeStore.getState();
-      if (!setupStatus.isSetup) {
-        throw new Error('Please complete setup before trading. Approve USDC in the setup flow first.');
-      }
-
       if (!userAddress) {
         throw new Error('Missing user address');
+      }
+
+      // A flip re-opens on the other side, so the allowance has to be in place.
+      const approval = await ensureUsdcApproval(userAddress);
+      if (!approval.ok) {
+        throw new Error(approval.error);
       }
 
       const { positionSource } = useTradeStore.getState();
@@ -258,6 +261,7 @@ export function useFlipTrade() {
     },
     [
       userAddress,
+      ensureUsdcApproval,
       refetchBalance,
       pnlData,
       setFlipExcludedPositionKey,

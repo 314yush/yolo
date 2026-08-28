@@ -1,34 +1,28 @@
 """
 Database configuration and session management using SQLAlchemy async.
+
+The legacy access_codes table is intentionally not modelled here: access codes
+were removed when signup became open. Historical migrations still create the
+table so existing deploys keep working, but no code reads it.
 """
 
+import logging
 from uuid import uuid4
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, text, Numeric, CheckConstraint, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
-from app.core.config import get_settings
+from app.core.config import get_settings, redact_url
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
     """Base class for SQLAlchemy models."""
     pass
-
-
-class AccessCode(Base):
-    """Access code model for gating app access."""
-    __tablename__ = "access_codes"
-
-    id = Column(Integer, primary_key=True)
-    code = Column(String(30), unique=True, nullable=False, index=True)  # Increased for memorable codes like YOLO-GIGA-DEGEN
-    is_used = Column(Boolean, default=False, nullable=False)
-    used_at = Column(DateTime(timezone=True), nullable=True)
-    used_by_wallet = Column(String(42), nullable=True, index=True)
-    campaign = Column(String(50), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class ActivityUser(Base):
@@ -144,7 +138,7 @@ async def run_activity_position_migration():
                 "WHERE status = 'open'"
             )
         )
-    print("✅ Activity position migration (002) applied")
+    logger.info("Activity position migration (002) applied")
 
 
 async def run_onboarding_migration():
@@ -154,7 +148,7 @@ async def run_onboarding_migration():
         await conn.execute(
             text("ALTER TABLE activity_users ADD COLUMN IF NOT EXISTS onboarding_complete BOOLEAN NOT NULL DEFAULT false")
         )
-    print("✅ Onboarding migration (003) applied")
+    logger.info("Onboarding migration (003) applied")
 
 
 async def init_db():
@@ -165,13 +159,13 @@ async def init_db():
     # Run activity position migration if activity_trades exists
     try:
         await run_activity_position_migration()
-    except Exception as e:
-        print(f"⚠️ Activity migration skipped (may already be applied): {e}")
+    except Exception:
+        logger.warning("Activity migration skipped (may already be applied)", exc_info=True)
     try:
         await run_onboarding_migration()
-    except Exception as e:
-        print(f"⚠️ Onboarding migration skipped (may already be applied): {e}")
-    print("✅ Database tables initialized")
+    except Exception:
+        logger.warning("Onboarding migration skipped (may already be applied)", exc_info=True)
+    logger.info("Database tables initialized")
 
 
 async def check_db_connection() -> bool:
@@ -182,5 +176,12 @@ async def check_db_connection() -> bool:
             await conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
-        print(f"❌ Database connection failed: {e}")
+        # asyncpg/SQLAlchemy errors can embed the DSN (with password), so only the
+        # exception type and the redacted target are logged.
+        settings = get_settings()
+        logger.error(
+            "Database connection failed (%s) for %s",
+            type(e).__name__,
+            redact_url(settings.database_url),
+        )
         return False

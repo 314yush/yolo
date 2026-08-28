@@ -1,10 +1,13 @@
 'use client';
 
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
+import { reportError } from '@/lib/logger';
 
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  /** Identifies which boundary caught the error in reports. */
+  name?: string;
 }
 
 interface State {
@@ -23,7 +26,10 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('[ErrorBoundary] Caught error:', error, errorInfo);
+    reportError(error, {
+      boundary: this.props.name ?? 'ErrorBoundary',
+      componentStack: errorInfo.componentStack ?? undefined,
+    });
   }
 
   handleRetry = () => {

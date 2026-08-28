@@ -7,12 +7,15 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db, ActivityUser, ActivityTrade
+from app.core.rate_limit import enforce_wallet_rate_limit, limiter
 from app.models.schemas import (
+    WALLET_REGEX,
     LogOpenRequest,
     LogOpenResponse,
     LogCloseRequest,
@@ -26,11 +29,20 @@ from app.models.schemas import (
 
 logger = logging.getLogger(__name__)
 
+WRITE_RATE_LIMIT = get_settings().rate_limit_write
+
 # Router for log-open / log-close (under /trades)
 trades_log_router = APIRouter(prefix="/trades", tags=["activity"])
 
 # Router for stats and trades list (under /activity)
 activity_router = APIRouter(prefix="/activity", tags=["activity"])
+
+
+def _validated_wallet_query(wallet: str) -> str:
+    """Normalise and validate a wallet supplied as a query parameter."""
+    if not WALLET_REGEX.match(wallet or ""):
+        raise HTTPException(status_code=400, detail="Invalid wallet address format")
+    return wallet.lower()
 
 
 def _parse_closed_at(closed_at_str: str | None) -> datetime | None:
@@ -47,19 +59,21 @@ def _parse_closed_at(closed_at_str: str | None) -> datetime | None:
 
 
 @trades_log_router.post("/log-open", response_model=LogOpenResponse)
+@limiter.limit(WRITE_RATE_LIMIT)
 async def log_trade_open(
-    request: LogOpenRequest,
+    request: Request,
+    response: Response,
+    payload: LogOpenRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Log an opened trade. Upserts user and inserts trade. Returns trade_id.
     """
-    wallet = request.wallet.lower()
-    direction = request.direction.upper()
-    if direction not in ("LONG", "SHORT"):
-        raise HTTPException(status_code=400, detail="direction must be LONG or SHORT")
+    wallet = payload.wallet
+    enforce_wallet_rate_limit(wallet)
+    direction = payload.direction
 
-    volume = float(request.collateral) * float(request.leverage)
+    volume = float(payload.collateral) * float(payload.leverage)
 
     try:
         # Upsert user
@@ -91,18 +105,18 @@ async def log_trade_open(
         # Insert trade
         trade = ActivityTrade(
             wallet_address=wallet,
-            pair=request.pair,
-            pair_index=request.pair_index,
-            trade_index=request.trade_index,
+            pair=payload.pair,
+            pair_index=payload.pair_index,
+            trade_index=payload.trade_index,
             direction=direction,
-            leverage=request.leverage,
-            collateral=Decimal(str(request.collateral)),
+            leverage=payload.leverage,
+            collateral=Decimal(str(payload.collateral)),
             volume=Decimal(str(volume)),
-            entry_price=Decimal(str(request.entry_price)),
-            tp_price=Decimal(str(request.tp_price)) if request.tp_price is not None else None,
-            liq_price=Decimal(str(request.liq_price)) if request.liq_price is not None else None,
+            entry_price=Decimal(str(payload.entry_price)),
+            tp_price=Decimal(str(payload.tp_price)) if payload.tp_price is not None else None,
+            liq_price=Decimal(str(payload.liq_price)) if payload.liq_price is not None else None,
             status="open",
-            tx_hash_open=request.tx_hash,
+            tx_hash_open=payload.tx_hash,
         )
         db.add(trade)
         await db.flush()  # Get trade.id
@@ -113,9 +127,9 @@ async def log_trade_open(
     except HTTPException:
         await db.rollback()
         raise
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        logger.exception("log-open failed: %s", e)
+        logger.exception("log-open failed")
         raise HTTPException(status_code=500, detail="Failed to log trade open")
 
 
@@ -123,8 +137,11 @@ async def log_trade_open(
 
 
 @trades_log_router.post("/log-close")
+@limiter.limit(WRITE_RATE_LIMIT)
 async def log_trade_close(
-    request: LogCloseRequest,
+    request: Request,
+    response: Response,
+    payload: LogCloseRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -132,7 +149,7 @@ async def log_trade_close(
     pnl = gross PnL (pre-fee, pre-rollover): collateral * leverage * priceDelta / openPrice.
     """
     try:
-        trade_uuid = UUID(request.trade_id)
+        trade_uuid = UUID(payload.trade_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid trade_id UUID")
 
@@ -144,10 +161,12 @@ async def log_trade_close(
     if trade.status != "open":
         raise HTTPException(status_code=400, detail=f"Trade already closed (status={trade.status})")
 
-    closed_at = _parse_closed_at(request.closed_at) or datetime.now(timezone.utc)
-    pnl = Decimal(str(request.pnl)) if request.pnl is not None else None
-    exit_price = Decimal(str(request.exit_price)) if request.exit_price is not None else None
-    status = "liquidated" if request.is_liquidated else "closed"
+    enforce_wallet_rate_limit(trade.wallet_address)
+
+    closed_at = _parse_closed_at(payload.closed_at) or datetime.now(timezone.utc)
+    pnl = Decimal(str(payload.pnl)) if payload.pnl is not None else None
+    exit_price = Decimal(str(payload.exit_price)) if payload.exit_price is not None else None
+    status = "liquidated" if payload.is_liquidated else "closed"
 
     try:
         # Update trade
@@ -155,7 +174,7 @@ async def log_trade_close(
         trade.exit_price = exit_price
         trade.pnl = pnl
         trade.closed_at = closed_at
-        trade.tx_hash_close = request.tx_hash
+        trade.tx_hash_close = payload.tx_hash
 
         # Update user total_pnl
         await db.execute(
@@ -169,9 +188,9 @@ async def log_trade_close(
 
         await db.commit()
         return {"success": True}
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        logger.exception("log-close failed: %s", e)
+        logger.exception("log-close failed")
         raise HTTPException(status_code=500, detail="Failed to log trade close")
 
 
@@ -179,8 +198,11 @@ async def log_trade_close(
 
 
 @trades_log_router.post("/log-close-by-position")
+@limiter.limit(WRITE_RATE_LIMIT)
 async def log_trade_close_by_position(
-    request: LogCloseByPositionRequest,
+    request: Request,
+    response: Response,
+    payload: LogCloseByPositionRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -188,13 +210,14 @@ async def log_trade_close_by_position(
     Use when frontend does not have our trade_id from log-open.
     pnl = gross PnL (pre-fee, pre-rollover): collateral * leverage * priceDelta / openPrice.
     """
-    wallet = request.wallet.lower()
+    wallet = payload.wallet
+    enforce_wallet_rate_limit(wallet)
 
     result = await db.execute(
         select(ActivityTrade).where(
             ActivityTrade.wallet_address == wallet,
-            ActivityTrade.pair_index == request.pair_index,
-            ActivityTrade.trade_index == request.trade_index,
+            ActivityTrade.pair_index == payload.pair_index,
+            ActivityTrade.trade_index == payload.trade_index,
             ActivityTrade.status == "open",
         )
     )
@@ -205,17 +228,17 @@ async def log_trade_close_by_position(
             detail="Open trade not found for this position. It may have been closed already.",
         )
 
-    closed_at = _parse_closed_at(request.closed_at) or datetime.now(timezone.utc)
-    pnl = Decimal(str(request.pnl)) if request.pnl is not None else None
-    exit_price = Decimal(str(request.exit_price)) if request.exit_price is not None else None
-    status = "liquidated" if request.is_liquidated else "closed"
+    closed_at = _parse_closed_at(payload.closed_at) or datetime.now(timezone.utc)
+    pnl = Decimal(str(payload.pnl)) if payload.pnl is not None else None
+    exit_price = Decimal(str(payload.exit_price)) if payload.exit_price is not None else None
+    status = "liquidated" if payload.is_liquidated else "closed"
 
     try:
         trade.status = status
         trade.exit_price = exit_price
         trade.pnl = pnl
         trade.closed_at = closed_at
-        trade.tx_hash_close = request.tx_hash
+        trade.tx_hash_close = payload.tx_hash
 
         await db.execute(
             update(ActivityUser)
@@ -228,9 +251,9 @@ async def log_trade_close_by_position(
 
         await db.commit()
         return {"success": True}
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        logger.exception("log-close-by-position failed: %s", e)
+        logger.exception("log-close-by-position failed")
         raise HTTPException(status_code=500, detail="Failed to log trade close")
 
 
@@ -246,9 +269,7 @@ async def get_onboarding_status(
     Check if a wallet has completed onboarding.
     Returns true if: activity_users.onboarding_complete is true, OR wallet has any activity_trades (legacy).
     """
-    wallet_lower = wallet.lower()
-    if len(wallet_lower) != 42 or not wallet_lower.startswith("0x"):
-        raise HTTPException(status_code=400, detail="Invalid wallet address format")
+    wallet_lower = _validated_wallet_query(wallet)
 
     # Check activity_users for onboarding_complete
     result = await db.execute(select(ActivityUser).where(ActivityUser.wallet_address == wallet_lower))
@@ -271,15 +292,19 @@ async def get_onboarding_status(
 
 
 @activity_router.post("/onboarding-complete", response_model=OnboardingStatusResponse)
+@limiter.limit(WRITE_RATE_LIMIT)
 async def mark_onboarding_complete(
-    request: OnboardingCompleteRequest,
+    request: Request,
+    response: Response,
+    payload: OnboardingCompleteRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Mark onboarding as complete for a wallet. Upserts activity_users if needed.
     Called when SetupFlow completes successfully.
     """
-    wallet = request.wallet
+    wallet = payload.wallet
+    enforce_wallet_rate_limit(wallet)
 
     result = await db.execute(select(ActivityUser).where(ActivityUser.wallet_address == wallet))
     user = result.scalar_one_or_none()
@@ -314,9 +339,7 @@ async def get_activity_stats(
     Get activity stats for a wallet: total_trades, volume, pnl, win_rate, open_trades.
     total_pnl and trade pnl = gross PnL (pre-fee, pre-rollover).
     """
-    wallet_lower = wallet.lower()
-    if len(wallet_lower) != 42 or not wallet_lower.startswith("0x"):
-        raise HTTPException(status_code=400, detail="Invalid wallet address format")
+    wallet_lower = _validated_wallet_query(wallet)
 
     # Get user aggregate
     result = await db.execute(select(ActivityUser).where(ActivityUser.wallet_address == wallet_lower))
@@ -399,9 +422,7 @@ async def get_activity_trades(
     """
     Get paginated trade history for a wallet, newest first.
     """
-    wallet_lower = wallet.lower()
-    if len(wallet_lower) != 42 or not wallet_lower.startswith("0x"):
-        raise HTTPException(status_code=400, detail="Invalid wallet address format")
+    wallet_lower = _validated_wallet_query(wallet)
 
     # Total count
     count_result = await db.execute(
@@ -431,72 +452,4 @@ async def get_activity_trades(
         page=page,
         has_more=has_more,
     )
-
-
-# ---------- GET /activity/onboarding-status ----------
-
-
-@activity_router.get("/onboarding-status", response_model=OnboardingStatusResponse)
-async def get_onboarding_status(
-    wallet: str = Query(..., description="Wallet address (0x...)"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Check if a wallet has completed onboarding.
-    Returns true if activity_users.onboarding_complete is set, or if wallet has any activity_trades (legacy).
-    """
-    wallet_lower = wallet.lower()
-    if len(wallet_lower) != 42 or not wallet_lower.startswith("0x"):
-        raise HTTPException(status_code=400, detail="Invalid wallet address format")
-
-    # Check activity_users.onboarding_complete
-    result = await db.execute(select(ActivityUser).where(ActivityUser.wallet_address == wallet_lower))
-    user = result.scalar_one_or_none()
-    if user is not None and getattr(user, "onboarding_complete", False):
-        return OnboardingStatusResponse(completed=True)
-
-    # Legacy: if wallet has any activity_trades, they've completed setup (they traded)
-    count_result = await db.execute(
-        select(func.count(ActivityTrade.id)).where(ActivityTrade.wallet_address == wallet_lower)
-    )
-    trade_count = count_result.scalar_one() or 0
-    if trade_count > 0:
-        return OnboardingStatusResponse(completed=True)
-
-    return OnboardingStatusResponse(completed=False)
-
-
-# ---------- POST /activity/onboarding-complete ----------
-
-
-@activity_router.post("/onboarding-complete", response_model=OnboardingStatusResponse)
-async def mark_onboarding_complete(
-    request: OnboardingCompleteRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Mark onboarding as complete for a wallet. Upserts activity_users if needed.
-    """
-    wallet = request.wallet
-
-    result = await db.execute(select(ActivityUser).where(ActivityUser.wallet_address == wallet))
-    user = result.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
-
-    if user is None:
-        user = ActivityUser(
-            wallet_address=wallet,
-            created_at=now,
-            total_trades=0,
-            total_volume=Decimal("0"),
-            total_pnl=Decimal("0"),
-            onboarding_complete=True,
-        )
-        db.add(user)
-    else:
-        user.onboarding_complete = True
-
-    await db.commit()
-    return OnboardingStatusResponse(completed=True)
-
 

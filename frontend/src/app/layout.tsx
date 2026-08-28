@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Outfit, Oswald, Syne, IBM_Plex_Sans } from 'next/font/google';
 import Script from 'next/script';
 import { Providers } from './providers';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import './globals.css';
 
 // Force dynamic rendering - app requires Privy auth
@@ -33,8 +34,11 @@ const ibmPlexSans = IBM_Plex_Sans({
   display: 'swap',
 });
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://tradeonyolo.fun';
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.tradeyolo.fun';
 const disableClientConsole = process.env.NODE_ENV === 'production';
+
+// Matches the X account linked from the landing page (x.com/yolotradefun).
+const twitterHandle = process.env.NEXT_PUBLIC_TWITTER_HANDLE || '@yolotradefun';
 
 export const metadata: Metadata = {
   title: 'YOLO - Hypercasual Leverage Trading',
@@ -80,7 +84,8 @@ export const metadata: Metadata = {
     title: 'YOLO - Hypercasual Leverage Trading',
     description: 'Spin the wheel, open a trade. Zero-fee perpetuals on Base.',
     images: [`${siteUrl}/twitter-image.png`],
-    creator: '@yolo', // Update with actual Twitter handle
+    creator: twitterHandle,
+    site: twitterHandle,
   },
   robots: {
     index: true,
@@ -134,7 +139,9 @@ export default function RootLayout({
 })();`}
           </Script>
         ) : null}
-        <Providers>{children}</Providers>
+        <ErrorBoundary name="RootLayout">
+          <Providers>{children}</Providers>
+        </ErrorBoundary>
       </body>
     </html>
   );
