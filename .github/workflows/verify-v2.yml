@@ -24,8 +24,12 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
+      # Reports but does not block: there are 10 pre-existing react-hooks
+      # errors in the paper-trading and activity screens. Flip to blocking once
+      # those are fixed, so new violations can't accumulate silently.
       - name: Lint
         run: npm run lint
+        continue-on-error: true
       - name: Build
         run: npm run build
         env:

@@ -137,10 +137,29 @@ def test_startup_failure_does_not_leak_environment_secrets(monkeypatch):
     assert "secret-key" not in message
 
 
+def _iter_routes(routes):
+    """
+    Newer Starlette exposes included routers as `_IncludedRouter` objects that
+    have no `.path` and nest their real routes, so walk the tree instead of
+    assuming a flat list of concrete routes.
+    """
+    for route in routes:
+        if getattr(route, "path", None) is not None:
+            yield route
+        nested = getattr(route, "routes", None)
+        if nested:
+            yield from _iter_routes(nested)
+
+
+def _route_paths(app):
+    return [route.path for route in _iter_routes(app.routes)]
+
+
 def test_access_and_admin_routes_are_gone():
     from app.main import app
 
-    paths = {route.path for route in app.routes}
+    paths = set(_route_paths(app))
+    assert paths, "no routes discovered; route introspection is broken"
     assert not any(p.startswith("/access") for p in paths)
     assert not any(p.startswith("/admin") for p in paths)
     assert "/health" in paths
@@ -150,9 +169,10 @@ def test_no_duplicate_route_registrations():
     from app.main import app
 
     seen = []
-    for route in app.routes:
+    for route in _iter_routes(app.routes):
         for method in getattr(route, "methods", set()):
             seen.append((method, route.path))
+    assert seen, "no routes discovered; route introspection is broken"
     assert len(seen) == len(set(seen)), "duplicate route registration"
 
 
