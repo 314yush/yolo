@@ -63,6 +63,38 @@ async def test_log_open_success(client: httpx.AsyncClient):
     assert len(data["trade_id"]) == 36  # UUID format
 
 
+async def test_log_open_is_idempotent_for_same_position(client: httpx.AsyncClient):
+    """
+    A unique index allows one open row per (wallet, pair_index, trade_index).
+    The client posts this from several paths and retries it, so a duplicate
+    must return the existing trade_id rather than a 500, and must not
+    double-count the trade in the user's stats.
+    """
+    payload = {
+        "wallet": TEST_WALLET,
+        "pair": "SOL/USD",
+        "pair_index": 7,
+        "trade_index": 3,
+        "direction": "LONG",
+        "leverage": 150,
+        "collateral": 5.0,
+        "entry_price": 200.0,
+    }
+
+    first = await client.post("/trades/log-open", json=payload)
+    assert first.status_code == 200
+
+    stats_after_first = await client.get(f"/activity/stats?wallet={TEST_WALLET}")
+    trades_after_first = stats_after_first.json()["total_trades"]
+
+    second = await client.post("/trades/log-open", json=payload)
+    assert second.status_code == 200, second.text
+    assert second.json()["trade_id"] == first.json()["trade_id"]
+
+    stats_after_second = await client.get(f"/activity/stats?wallet={TEST_WALLET}")
+    assert stats_after_second.json()["total_trades"] == trades_after_first
+
+
 async def test_log_close_not_found(client: httpx.AsyncClient):
     """Log close with non-existent trade_id returns 404."""
     resp = await client.post(

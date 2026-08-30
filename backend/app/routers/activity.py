@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, update, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -127,6 +128,26 @@ async def log_trade_open(
     except HTTPException:
         await db.rollback()
         raise
+    except IntegrityError:
+        # idx_activity_trades_position_open makes one open position per
+        # (wallet, pair_index, trade_index). The client fires this call from
+        # several paths and retries it, so a duplicate is expected traffic, not
+        # a server error. Return the existing row so the caller still gets the
+        # trade_id it needs to log the close.
+        await db.rollback()
+        existing = await db.scalar(
+            select(ActivityTrade).where(
+                ActivityTrade.wallet_address == wallet,
+                ActivityTrade.pair_index == payload.pair_index,
+                ActivityTrade.trade_index == payload.trade_index,
+                ActivityTrade.status == "open",
+            )
+        )
+        if existing is None:
+            logger.exception("log-open integrity error with no existing open trade")
+            raise HTTPException(status_code=500, detail="Failed to log trade open")
+        logger.info("log-open deduplicated to existing trade %s", existing.id)
+        return LogOpenResponse(trade_id=str(existing.id))
     except Exception:
         await db.rollback()
         logger.exception("log-open failed")

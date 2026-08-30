@@ -230,3 +230,20 @@ def test_log_open_rejects_unknown_fields():
 def test_onboarding_request_normalises_wallet():
     request = OnboardingCompleteRequest(wallet="0x" + "AB" * 20)
     assert request.wallet == "0x" + "ab" * 20
+
+
+def test_schema_endpoints_are_closed_in_production():
+    """
+    /docs and /redoc being disabled is not enough: FastAPI serves the raw
+    schema at /openapi.json independently, which enumerates every route.
+    """
+    from app.main import app
+
+    assert app.docs_url is None
+    assert app.redoc_url is None
+    assert app.openapi_url is None
+
+    paths = set(_route_paths(app))
+    assert "/openapi.json" not in paths
+    assert "/docs" not in paths
+    assert "/redoc" not in paths

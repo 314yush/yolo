@@ -69,6 +69,9 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
+    # Without this the raw schema stays public and enumerates every route even
+    # though /docs and /redoc are closed.
+    openapi_url="/openapi.json" if settings.debug else None,
     lifespan=lifespan,
 )
 
